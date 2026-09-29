@@ -46,7 +46,11 @@ start() {
 	command -v emulator >/dev/null 2>&1 || die "emulator not on PATH (is ANDROID_HOME set?)"
 
 	# -no-metrics: the emulator's metrics notice is due to become a blocking prompt.
-	local args=(-avd "$avd" -port "$port" -no-window -no-audio -no-boot-anim -no-metrics -gpu swiftshader -accel on)
+	# -crash-report-mode disabled: the crash reporter's hang detector kills the
+	# emulator when a vCPU thread stalls for 15 s, which cold boots two
+	# virtualization levels deep (this VM on its host) do; with it off they boot.
+	local args=(-avd "$avd" -port "$port" -no-window -no-audio -no-boot-anim -no-metrics
+		-crash-report-mode disabled -gpu swiftshader -accel on)
 	if [[ "${AGENT_EMULATOR_SAVE_SNAPSHOT:-0}" != "1" ]]; then
 		args+=(-no-snapshot-save)
 	fi
