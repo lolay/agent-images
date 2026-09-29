@@ -6,9 +6,10 @@ container, and the manual `linux-image-smoke` workflow runs them on a hosted
 `ubuntu-24.04` runner. On that runner the emulator is two virtualization levels
 deep, the same as inside an LXD runner VM. There, on 2026-09-29:
 - the build's cold boot of API 37.0 (Android 17, x86_64) reached `boot_completed` in
-  94 s and saved the snapshot;
-- a session's boot loaded the snapshot in 3.5 s and was ready in 55 s;
-- KVM reported usable.
+  49–94 s and saved the snapshot;
+- a session's boot loaded the snapshot in about 3.5 s and was ready in 9–55 s;
+- KVM reported usable;
+- the scripts, run as the hosted image's own user, wrote nothing to stderr.
 
 The LXD side waits for a box; see [Open items](#open-items).
 
