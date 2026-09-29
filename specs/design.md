@@ -6,6 +6,34 @@ Mac build capacity for coding agents that the vendor's service dispatches work t
 Nobody works inside these VMs, even over SSH. The image supplies Xcode, Simulator, and
 a logged-in GUI session; the vendor's runner supplies the work.
 
+### Track the latest; pin only on breakage
+
+This is an informal development environment. Everything in it follows the newest
+release by default, the way `claude-code@latest` does. Staying current matters more
+than stability here, so breakage from a new release is something to see and fix, not
+something to avoid by pinning.
+
+| What | How it stays current |
+| --- | --- |
+| Base image | `make build` pulls the newest Xcode image for the host's macOS |
+| Homebrew packages (`images/macos/Brewfile`) | No versions in the Brewfile; each `make build` installs the current release |
+| Claude Code | The `claude-code@latest` cask, upgraded by the runner at every VM start |
+| Anything a session installs | Whatever Homebrew has that day, discarded with the VM |
+
+Everything except Claude Code moves only when the image is rebuilt, so rebuild
+regularly. It's safe while runners are up: Packer builds `agent-macos-next`, and only a
+finished build is swapped into `agent-macos`, which new runner VMs then clone on their
+own.
+
+When a release does break something, pin just that one thing: a versioned formula or a
+base image digest, with a comment saying why and linking the upstream issue. Remove
+the pin once upstream is fixed. The README's version table records what was current at
+the last lookup; it doesn't pin anything.
+
+The CI gate is the exception. GitHub Actions stay on release tags (a supply-chain
+guard), and CI installs the Packer version that `required_version` asks for, so a
+failing `make ci` points at a change in this repo rather than a tool update.
+
 ## 2. Constraints
 
 | Constraint | Consequence |
@@ -24,6 +52,7 @@ a logged-in GUI session; the vendor's runner supplies the work.
 | Runner model only; no Remote Control | Headless, no interactive login, fits dispatch from the vendor's UI |
 | Claude only for now | The only runner that gives a clean VM per session without an Enterprise plan; Cursor is documented in [cursor.md](cursor.md) |
 | One runner, one simulator per VM | Keeps sizing predictable: ~12 GB per VM |
+| The base image tracks the latest, like the Claude CLI | Newest Xcode image for the host's macOS, pulled every build; breakage is fixed as it comes rather than avoided by pinning |
 | Ephemeral VMs: one session per clone | A session can `brew install` or decrypt secrets without affecting the next, like a GitHub Actions runner |
 | One image; runner chosen at configure time | The Xcode image is ~150 GB; variants would differ by almost nothing |
 | Secrets in the host Keychain, pushed over `tart exec` stdin | Never in the repo, the image, or a process list |
@@ -130,7 +159,6 @@ built yet.
 | `--remove-session-state` accepts the bare form | Help shows `[bool]` |
 | `/etc/kcpassword` + `autoLoginUser` override the base image's admin auto-login | Golden Gate sets auto-login through Tart's provisioning options |
 | `tart exec` runs as a user with passwordless sudo | Every `vm-*` script relies on it |
-| Pin `base_image` to a specific Xcode tag | `latest` moves |
 | The orchestrator LaunchAgent (`make runner-install`) starts at login and keeps running | Designed for it; not yet exercised (Anthropic's examples are Kubernetes and EC2) |
 | A standby VM registered with a work order claims the next queued session | A runner registered with the environment secret does (tested by hand); the docs say standby work orders behave the same |
 | 300 s covers clone, boot, auto-login, configure, and `brew upgrade` | `--expected-spawn-seconds` is the server lease; too short re-offers the session |

@@ -1,7 +1,11 @@
 variable "base_image" {
   type        = string
-  description = "Tart base image. Pin a specific Xcode tag once you've picked one."
-  default     = "ghcr.io/cirruslabs/macos-golden-gate-xcode:latest"
+  description = "Tart base image. The Makefile sets it (PKR_VAR_base_image) to the newest Xcode image for the build host's macOS."
+}
+
+variable "vm_name" {
+  type        = string
+  description = "The VM Packer builds. The Makefile sets it (PKR_VAR_vm_name) to a staging name and renames it to the image name once the build succeeds."
 }
 
 variable "cpu_count" {

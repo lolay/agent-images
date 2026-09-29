@@ -41,6 +41,7 @@ debugging. Dotted arrows are independent gates.
 | `NAME` | none | `secret-set`: `claude-environment-secret` |
 | `LOG_LINES` | `100` | `vm-logs` |
 | `REGISTRY` | from `.env` | `publish` |
+| `PKR_VAR_base_image` | `ghcr.io/cirruslabs/macos-$(MACOS_CODENAME)-xcode:latest` | `build`, `test`; the codename comes from the host's macOS major version (`MACOS_CODENAME_<major>`); set it in `.env` to override |
 
 ## Targets
 
@@ -51,7 +52,7 @@ debugging. Dotted arrows are independent gates.
 | `help` | List targets (default goal) |
 | `init` | Creates `.env` from `.env.example`; runs `packer init` when Packer is installed |
 | `doctor` | Checks host tools for `MODE` and `.env` presence. Read-only |
-| `build` | `packer build`; needs `PKR_VAR_user_password` |
+| `build` | `tart pull` the base image, `packer build` into `agent-macos-next`, then swap it into `agent-macos` so runner VMs never clone a half-built image; needs `PKR_VAR_user_password` |
 | `lint` | `packer fmt -check`, `shellcheck`, `shfmt -d`, `plutil -lint` |
 | `format` | `packer fmt`, `shfmt -w` |
 | `test` | `packer validate` and the kcpassword helper's unit tests |
@@ -86,6 +87,7 @@ Every LaunchAgent and job writes stdout to `.out` and stderr to `.err`.
 | Target | Description |
 | --- | --- |
 | `image-pull` | `tart pull $(IMAGE_REF)` on run hosts |
+| `image-prune` | `tart prune --entries caches --space-budget $(TART_CACHE_GB)` (default 200 GB). Each newer base image `make build` pulls adds ~80 GB to the cache; this drops the least recently used |
 | `vm-create` | `tart clone` then `tart set --cpu --memory` |
 | `vm-start` | `tart run --no-graphics` in the background; log in `build/logs/` |
 | `vm-configure` | `scripts/vm-configure.sh`: hostname, secrets, `runner.env`, runner restart. Idempotent |

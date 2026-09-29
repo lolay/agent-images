@@ -1,5 +1,7 @@
-# Packages installed into every macOS image. Homebrew installs the current
-# release at build time; README.md records the baseline.
+# Packages installed into every macOS image. No versions on purpose: each build
+# installs the current release, and a version gets pinned only when a release
+# breaks something (see "Track the latest" in specs/design.md). README.md records
+# what was current at the last lookup.
 #
 # Every tap listed here is trusted by install-packages.sh before the bundle runs.
 tap "lolay/tap"

@@ -22,14 +22,16 @@ Up to two macOS VMs run at once per host (Apple's license, enforced by macOS).
 | Run host (a Mac with a display, logged in) | `tart`, `make`, the macOS Keychain, Claude Code (`claude-code@latest` cask) for the orchestrator |
 | Build host | the above plus `packer`, `python3`, `shellcheck`, `shfmt` |
 
-Version baseline, looked up 2026-09-28:
+Versions current at the last lookup, 2026-09-28. Nothing in the image is pinned: it
+tracks the latest and pins only on breakage
+([specs/design.md](specs/design.md#track-the-latest-pin-only-on-breakage)).
 
-| Component | Version | Where it's pinned |
+| Component | Version | Where it's set |
 | --- | --- | --- |
 | Tart | 2.38.0 | Host install (`brew install openai/tools/tart`) |
 | Packer | 1.16.1 | `required_version` in `images/macos/plugins.pkr.hcl` |
 | packer-plugin-tart | 1.21.0 | `~> 1.21` in `images/macos/plugins.pkr.hcl` |
-| Base image | `macos-golden-gate-xcode:latest` | `base_image` in `images/macos/variables.pkr.hcl` |
+| Base image | `macos-<host codename>-xcode:latest`, today `macos-golden-gate-xcode` | Not pinned: `make build` pulls the newest Xcode image for the host's macOS (`MACOS_CODENAME_<major>` in the Makefile) |
 | Claude Code | `claude-code@latest` cask (2.1.284) | `images/macos/Brewfile`; the Claude runner upgrades it at each start |
 | Image packages | xcodegen 2.46.0, xcbeautify 3.2.1, swiftlint 0.65.1, swiftformat 0.63.0, sops 3.13.3, age 1.3.2, triage 0.4.0 (`lolay/tap`), asccli 0.18.4 | `images/macos/Brewfile`; current release at build time |
 | shellcheck / shfmt | 0.11.0 / 3.14.1 | Build host tools for `make lint` |

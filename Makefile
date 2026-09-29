@@ -25,7 +25,7 @@ export
 
 .PHONY: help init build lint format test ci pre-commit doctor clean \
         runner-run runner-install runner-uninstall runner-stop runner-status \
-        image-pull vm-create vm-start vm-configure vm-up vm-stop vm-status vm-logs \
+        image-pull image-prune vm-create vm-start vm-configure vm-up vm-stop vm-status vm-logs \
         vm-versions vm-list vm-delete secret-set \
         gh-runs-list gh-runs-watch gh-runs-status bump publish
 
@@ -37,15 +37,29 @@ MACOS_DIR := images/macos
 BUILD_DIR := build
 LOG_DIR := $(BUILD_DIR)/logs
 IMAGE_NAME := agent-macos
+# Packer builds here, then build swaps it into IMAGE_NAME, so runner VMs (which
+# clone IMAGE_NAME) never clone a half-built image.
+PKR_VAR_vm_name := $(IMAGE_NAME)-next
 IMAGE_REF ?= $(IMAGE_NAME)
 VM ?=
 VM_CPU ?= 4
 VM_MEMORY_GB ?= 12
 LOG_LINES ?= 100
+TART_CACHE_GB ?= 200
 AGENT_USER := agent
 VERSION := $(shell cat version.txt)
 REGISTRY ?=
 SECRET_NAMES := claude-environment-secret
+
+# Base image: the newest Xcode image for the build host's macOS, pulled fresh on
+# every build. A guest can't run a newer macOS than its host, so the host decides.
+# Cirrus names images by macOS codename; a new major version needs one line here.
+HOST_MACOS_MAJOR := $(shell sw_vers -productVersion 2>/dev/null | cut -d. -f1)
+MACOS_CODENAME_15 := sequoia
+MACOS_CODENAME_26 := tahoe
+MACOS_CODENAME_27 := golden-gate
+MACOS_CODENAME ?= $(MACOS_CODENAME_$(HOST_MACOS_MAJOR))
+PKR_VAR_base_image ?= ghcr.io/cirruslabs/macos-$(MACOS_CODENAME)-xcode:latest
 
 RUN_TOOLS := tart security claude
 BUILD_TOOLS := tart security packer python3 shellcheck shfmt plutil
@@ -85,10 +99,19 @@ doctor: ## Check host tools (read-only). MODE=run|build
 	[ -f .env ] && printf '  ok       .env\n' || { printf '  missing  .env (run make init)\n'; missing=1; }; \
 	exit $$missing
 
-build: ## Build the agent image (build host)
+build: ## Build the agent image on the newest Xcode image for this host's macOS
 	@[ -n "$$PKR_VAR_user_password" ] || { printf 'PKR_VAR_user_password is not set (see .env.example)\n' >&2; exit 1; }
+	@[ -n "$(MACOS_CODENAME)" ] || { printf 'No Cirrus image codename for macOS %s; add MACOS_CODENAME_%s to the Makefile\n' \
+	  "$(HOST_MACOS_MAJOR)" "$(HOST_MACOS_MAJOR)" >&2; exit 1; }
+	@# Clone would reuse a cached :latest; pull checks for a newer one first.
+	tart pull $(PKR_VAR_base_image)
 	mkdir -p $(BUILD_DIR)
 	packer build -force $(MACOS_DIR)
+	@# Only a finished build reaches IMAGE_NAME. A runner VM cloning in the moment
+	@# between delete and rename fails its spawn, and the session is re-offered.
+	@if tart get $(IMAGE_NAME) >/dev/null 2>&1; then tart delete $(IMAGE_NAME); fi
+	tart rename $(PKR_VAR_vm_name) $(IMAGE_NAME)
+	@printf 'Built %s on %s\n' "$(IMAGE_NAME)" "$(PKR_VAR_base_image)"
 
 lint: ## Check formatting and static analysis (no writes)
 	packer fmt -check -recursive $(MACOS_DIR)
@@ -133,6 +156,9 @@ runner-status: ## Orchestrator state and health, then each runner VM
 
 image-pull: ## Pull IMAGE_REF from the registry (run hosts)
 	tart pull $(IMAGE_REF)
+
+image-prune: ## Shrink Tart's image cache (old base images) to TART_CACHE_GB (default 200)
+	tart prune --entries caches --space-budget $(TART_CACHE_GB)
 
 vm-create: ## Clone IMAGE_REF into a VM and size it: VM=debug-1 [VM_CPU=4 VM_MEMORY_GB=12]
 	$(require_manual_vm)

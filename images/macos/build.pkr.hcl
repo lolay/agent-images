@@ -4,7 +4,7 @@ locals {
 
 source "tart-cli" "agent" {
   vm_base_name = var.base_image
-  vm_name      = "agent-macos"
+  vm_name      = var.vm_name
   cpu_count    = var.cpu_count
   memory_gb    = var.memory_gb
   disk_size_gb = var.disk_size_gb
