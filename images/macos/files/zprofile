@@ -1,0 +1,4 @@
+# Installed as ~agent/.zprofile. Login shells read it, and launchd starts the
+# runner through `zsh -l`, so the runner and any shell share one PATH.
+eval "$(/opt/homebrew/bin/brew shellenv)"
+export PATH="$HOME/bin:$PATH"

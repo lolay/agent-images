@@ -1,0 +1,14 @@
+.env
+vms/*.env
+!vms/example-*.env
+*.log
+.DS_Store
+__pycache__/
+.venv/
+build/
+.idea/
+.vscode/
+*.key
+*.pem
+.scratch/
+version.txt.tmp

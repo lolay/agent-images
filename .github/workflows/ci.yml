@@ -1,0 +1,23 @@
+# Lint and validate only. Hosted macOS runners can't run Tart VMs (no nested
+# virtualization), so image builds happen on a local or self-hosted Mac.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install tools
+        run: brew install hashicorp/tap/packer shellcheck shfmt
+      - name: Init
+        run: make init
+      - name: Gate
+        run: make ci

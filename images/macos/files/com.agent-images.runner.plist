@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Installed to ~/Library/LaunchAgents by create-user.sh, which replaces __AGENT_HOME__.
+     zsh -l gives the runner the same PATH as a login shell (~/.zprofile). -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.agent-images.runner</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-l</string>
+    <string>-c</string>
+    <string>exec "$HOME/bin/agent-runner"</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string>__AGENT_HOME__</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <!-- Keep the runner running (restart after every exit) while the VM is configured. -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>PathState</key>
+    <dict>
+      <key>__AGENT_HOME__/.config/agent-runner/runner.env</key><true/>
+    </dict>
+  </dict>
+  <!-- Back off so a bad secret doesn't turn into a tight restart loop. -->
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>ProcessType</key><string>Interactive</string>
+  <key>StandardOutPath</key><string>__AGENT_HOME__/Library/Logs/agent-runner.log</string>
+  <key>StandardErrorPath</key><string>__AGENT_HOME__/Library/Logs/agent-runner.log</string>
+</dict>
+</plist>
