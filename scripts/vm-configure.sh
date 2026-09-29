@@ -1,16 +1,17 @@
 #!/bin/bash
-# Configures a running VM's runner from vms/<vm>.env and the host Keychain,
-# then (re)starts it. Idempotent: re-run after changing either.
+# Configures a running VM's runner from a settings file and a registration
+# secret, then (re)starts it. Idempotent: re-run after changing either.
 #
-# Usage: [EPHEMERAL=true] scripts/vm-configure.sh <vm>
+# Usage: [EPHEMERAL=true] [ENVIRONMENT_SECRET_FILE=<file>] \
+#          scripts/vm-configure.sh [--config <file>] <vm>
 #
-# EPHEMERAL=true (set by runner-run.sh) makes the guest power off after one
-# session instead of restarting its runner.
+# --config defaults to vms/<vm>.env and holds non-secret settings only (see
+# vms/example-claude.env). EPHEMERAL=true (set by runner-once.sh) makes the guest
+# power off after one session instead of restarting its runner.
 #
-# vms/<vm>.env holds non-secret settings only (see vms/example-*.env).
-# Secrets come from Keychain items named agent-images.<secret>, with account
-# <vm> for a VM-specific value or "default" for a shared one. Set them with
-# `make secret-set NAME=<secret> [VM=<vm>]`.
+# The registration secret is ENVIRONMENT_SECRET_FILE when set (the orchestrator's
+# single-use work order), else the Keychain item agent-images.claude-environment-secret
+# with account <vm> or "default" (make secret-set NAME=claude-environment-secret).
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,27 +19,48 @@ readonly script_dir
 # shellcheck source=scripts/lib.sh
 source "$script_dir/lib.sh"
 
-readonly vm="${1:?usage: vm-configure.sh <vm>}"
-readonly config="$script_dir/../vms/$vm.env"
+usage="usage: vm-configure.sh [--config <file>] <vm>"
+config=""
+vm=""
+while (($# > 0)); do
+	case "$1" in
+	--config)
+		config="${2:?$usage}"
+		shift 2
+		;;
+	-*) die "$usage" ;;
+	*)
+		vm="$1"
+		shift
+		;;
+	esac
+done
+[[ -n "$vm" ]] || die "$usage"
+config="${config:-$AGENT_IMAGES_DIR/vms/$vm.env}"
+readonly vm config
 readonly label="com.agent-images.runner"
 
-[[ -f "$config" ]] || die "no $config; copy one of vms/example-*.env"
+[[ -f "$config" ]] || die "no $config; copy vms/example-claude.env"
 agent="$(env_value "$config" AGENT)"
 case "$agent" in
 claude) ;;
 *) die "$config: AGENT must be claude (got '${agent}'); see specs/cursor.md" ;;
 esac
 
-require_secret() {
-	local name="$1" guest_path="$2"
-	local value
-	value="$(keychain_secret "$name" "$vm")" ||
-		die "no Keychain item agent-images.$name for $vm or default; run make secret-set NAME=$name"
+push_registration_secret() {
+	local guest_path=".claude-runner/environment-secret" value
+	if [[ -n "${ENVIRONMENT_SECRET_FILE:-}" ]]; then
+		[[ -s "$ENVIRONMENT_SECRET_FILE" ]] || die "$ENVIRONMENT_SECRET_FILE is missing or empty"
+		guest_write "$vm" "$guest_path" <"$ENVIRONMENT_SECRET_FILE"
+		return
+	fi
+	value="$(keychain_secret claude-environment-secret "$vm")" ||
+		die "no Keychain item agent-images.claude-environment-secret for $vm or default; run make secret-set NAME=claude-environment-secret"
 	printf '%s' "$value" | guest_write "$vm" "$guest_path"
 }
 
 log "$vm: waiting for guest agent"
-wait_for_guest "$vm"
+wait_for_guest "$vm" "$(setting VM_BOOT_TIMEOUT 300)"
 
 # A stable, per-VM hostname keeps runner names distinct across clones.
 log "$vm: setting hostname"
@@ -46,12 +68,8 @@ for key in ComputerName HostName LocalHostName; do
 	tart exec "$vm" sudo scutil --set "$key" "$vm"
 done
 
-log "$vm: writing $agent secrets"
-case "$agent" in
-claude)
-	require_secret claude-environment-secret .claude-runner/environment-secret
-	;;
-esac
+log "$vm: writing $agent registration secret"
+push_registration_secret
 
 # Written last: its presence is what tells launchd to keep the runner running.
 log "$vm: writing runner.env"

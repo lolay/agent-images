@@ -33,22 +33,34 @@ a logged-in GUI session; the vendor's runner supplies the work.
 | The agent user owns Homebrew; runner CLIs are casks | Homebrew's standard single-owner setup; sessions can `brew install` what a project needs |
 | The runner upgrades its own cask at start | Rebuilds would otherwise be weekly; each `AGENT` upgrades only its own CLI |
 | File ownership isn't an isolation boundary | Sessions run as `agent`, which owns its home and Homebrew; the fresh clone per session is the reset |
-| The host loop is a shell script plus a LaunchAgent | Tart only on the host; Orchard or a vendor orchestrator can replace it later |
+| Claude's orchestrator starts VMs, not our own loop | The environment secret stays on the host; VMs boot per session plus `RUNNER_MIN_IDLE` standby; the hook is ~100 lines of shell |
 | Runners start at host login | Hosts are Macs with a display; set the host user to log in automatically for unattended restarts |
 
 ## 4. How a runner runs
 
-On the host, `scripts/runner-run.sh <vm>` (a LaunchAgent via `make runner-install`)
-loops:
+On the host, `scripts/orchestrator-run.sh` (a LaunchAgent via `make runner-install`)
+puts the Keychain's environment secret in `SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET` and
+execs `claude self-hosted-runner orchestrator --hooks-dir hooks --min-idle
+$RUNNER_MIN_IDLE --hook-concurrency 1 --expected-spawn-seconds 300`. For each queued
+session, and each missing standby runner, the orchestrator runs `hooks/spawn-runner`:
 
-1. `tart clone` the image to `<vm>` (APFS copy-on-write) and size it.
-2. `tart run --no-graphics` in the background.
-3. `EPHEMERAL=true vm-configure <vm>`: hostname, secrets, `runner.env`.
-4. Wait for `tart run` to exit (the guest powers itself off), then `tart delete`.
-5. Back off 60 s if the VM lived under 60 s, so a bad secret doesn't spin; repeat.
+1. Exit 0 if this `CLAUDE_RUNNER_ORDER_ID` already has a VM (redelivery).
+2. Claim the first free `runner-1..runner-$RUNNER_MAX` with `mkdir build/runners/<vm>`;
+   none free exits 1, so the session waits in Anthropic's queue and is re-offered.
+3. Copy the work order (mode 600), submit `scripts/runner-once.sh <vm>` as launchd job
+   `com.agent-images.<vm>`, and return. Any unexpected failure releases the claim and
+   exits 1; exit 2 (don't retry) is only for a missing `vms/runner.env`.
 
-The VM name is the runner's identity, reused every cycle. The loop refuses to start
-if a VM by that name already exists, and stopping it deletes its VM.
+`runner-once.sh` clones the image, starts it, runs `EPHEMERAL=true
+ENVIRONMENT_SECRET_FILE=<work order> vm-configure --config vms/runner.env <vm>`, deletes
+the work order, streams the guest's runner and watchdog logs to
+`build/logs/<vm>.guest.log` (they'd otherwise die with the VM), waits for the guest to
+power off, then deletes the VM and the claim.
+SIGTERM (`runner-stop`, `runner-uninstall`) does the same early. At startup the
+orchestrator script reclaims claims whose job died (a host crash).
+
+The environment secret never enters a VM. Each VM registers with a single-use work
+order that's spent at registration, so a session that reads it gets nothing usable.
 
 In the guest:
 
@@ -71,8 +83,8 @@ is gone. It logs to `~/Library/Logs/agent-runner-watchdog.log`, and with
 
 | File in the guest | Written by | Mode |
 | --- | --- | --- |
-| `~/.config/agent-runner/runner.env` | `vm-configure` from `vms/<vm>.env` | 600 |
-| `~/.claude-runner/environment-secret` | `vm-configure` from Keychain | 600 |
+| `~/.config/agent-runner/runner.env` | `vm-configure` from `vms/runner.env` (`vms/<vm>.env` for a debug VM) | 600 |
+| `~/.claude-runner/environment-secret` | `vm-configure`: the work order (runner VMs) or the Keychain secret (debug VMs) | 600 |
 
 `runner.env` is written last, so launchd never starts a runner with missing secrets.
 
@@ -80,8 +92,10 @@ is gone. It logs to `~/Library/Logs/agent-runner-watchdog.log`, and with
 
 **Claude**: `claude self-hosted-runner --environment-secret-file … --client-label <vm>
 --base-dir ~/workspace --capacity 1 --remove-session-state`, plus
-`--lock-to-account` if set and `--use-anthropic-git-proxy` by default (Anthropic-managed
-git auth; it replaces the agent user's `~/.gitconfig`). `/healthz` on port 8080.
+`--lock-to-account` if set, and by default `--use-anthropic-git-proxy` (Anthropic-managed
+git auth; it replaces the agent user's `~/.gitconfig`) and `--push-outcome-on-release`.
+`--environment-secret-file` holds the orchestrator's work order on runner VMs, the
+environment secret on debug VMs. `/healthz` on port 8080 in the guest.
 
 **Cursor**: not implemented; see [cursor.md](cursor.md).
 
@@ -109,6 +123,10 @@ built yet.
 | `/etc/kcpassword` + `autoLoginUser` override the base image's admin auto-login | Golden Gate sets auto-login through Tart's provisioning options |
 | `tart exec` runs as a user with passwordless sudo | Every `vm-*` script relies on it |
 | Pin `base_image` to a specific Xcode tag | `latest` moves |
+| The orchestrator LaunchAgent (`make runner-install`) starts at login and keeps running | Designed for it; not yet exercised (Anthropic's examples are Kubernetes and EC2) |
+| A standby VM registered with a work order claims the next queued session | A runner registered with the environment secret does (tested by hand); the docs say standby work orders behave the same |
+| 300 s covers clone, boot, auto-login, configure, and `brew upgrade` | `--expected-spawn-seconds` is the server lease; too short re-offers the session |
+| Hooks can `launchctl bootstrap` into the GUI domain from the orchestrator LaunchAgent | Runner VMs are launchd jobs so they outlive the hook and orchestrator restarts |
 | The watchdog's inputs exist: `_sessions/<id>.gitconfig` with `http.https://github.com/.proxy` | Runner internals from #96856; if they move, the watchdog silently finds nothing |
 | The runner process's command line starts `claude self-hosted-runner` | The watchdog's `pkill -f` pattern |
 | The Stop hook reaches sessions from `~agent/.claude` | The runner seeds that directory at startup; check a session's `$CLAUDE_CONFIG_DIR/hooks/` |

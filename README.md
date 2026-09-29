@@ -19,7 +19,7 @@ Up to two macOS VMs run at once per host (Apple's license, enforced by macOS).
 
 | Host role | Needs |
 | --- | --- |
-| Run host (laptop, Mac mini, EC2 Mac) | `tart`, `make`, the macOS Keychain |
+| Run host (a Mac with a display, logged in) | `tart`, `make`, the macOS Keychain, Claude Code (`claude-code@latest` cask) for the orchestrator |
 | Build host | the above plus `packer`, `python3`, `shellcheck`, `shfmt` |
 
 Version baseline, looked up 2026-09-28:
@@ -51,23 +51,30 @@ make publish CONFIRM_PUBLISH=1   # optional: push to a private registry
 
 ```bash
 brew install openai/tools/tart
-make init && $EDITOR .env            # IMAGE_REF: local name or registry ref
+brew install --cask claude-code@latest
+make init && $EDITOR .env            # IMAGE_REF, RUNNER_MAX, RUNNER_MIN_IDLE
 
-# Secrets live in the host Keychain, never in the repo or the image.
-make secret-set NAME=claude-environment-secret        # shared by all Claude VMs
+# The environment key from claude.ai's Cloud environments page. It stays in the
+# host Keychain; VMs only ever get a single-use work order.
+make secret-set NAME=claude-environment-secret
 
-cp vms/example-claude.env vms/runner-1.env            # non-secret settings
-make runner-run VM=runner-1                           # try it in the foreground; Ctrl-C stops it
-make runner-install VM=runner-1                       # keep it running as a host LaunchAgent
-make runner-status VM=runner-1
+cp vms/example-claude.env vms/runner.env              # non-secret settings for every runner VM
+make runner-run                                       # try it in the foreground
+make runner-install                                   # keep it running as a host LaunchAgent
+make runner-status
 ```
 
-A runner gives every session a fresh VM, like a GitHub Actions runner: it clones the
-image, boots it, pushes settings and secrets in, and waits. When the session ends the VM
-powers off, and the runner deletes it and clones the next one. A session can
-`brew install` whatever its repo needs without affecting the next one. Up to two runners
-per host (`runner-1`, `runner-2`); each needs `VM_MEMORY_GB` (default 12) free.
+Every session gets a fresh VM, like a GitHub Actions runner. Claude's orchestrator
+(`claude self-hosted-runner orchestrator`) runs on the host and calls
+[`hooks/spawn-runner`](hooks/spawn-runner) whenever a session is queued, and to keep
+`RUNNER_MIN_IDLE` (default 1) standby VMs booted and registered so a new session starts
+at once. Each VM clones the image, registers with a single-use work order, serves one
+session, powers off, and is deleted. A session can `brew install` whatever its repo
+needs without affecting the next one. Up to `RUNNER_MAX` (default 2, Apple's limit)
+VMs, named `runner-1`, `runner-2`; each needs `VM_MEMORY_GB` (default 12) free.
 
-`runner-install` starts the runner whenever the host user logs in. For a host that
-should come back on its own after a restart, turn on automatic login for that user. `make vm-create` / `vm-up` still give you a persistent VM for
-debugging; don't give it a name a runner uses.
+`runner-install` starts the orchestrator whenever the host user logs in; turn on
+automatic login for that user so runners come back after a restart. Runner VMs outlive
+an orchestrator restart; `make runner-stop` deletes them (their sessions requeue), and
+`make runner-uninstall` stops everything. `make vm-create` / `vm-up` still give you a
+persistent VM for debugging, under any name except `runner-N`.

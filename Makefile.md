@@ -13,23 +13,29 @@ graph LR
     image-pull --> runner-run
     secret-set --> runner-run
     runner-run --> runner-install --> runner-status
+    runner-install --> runner-stop
+    runner-install --> runner-uninstall
     image-pull --> vm-create --> vm-up
     vm-up --> vm-status
     ci -.-> lint
     ci -.-> test
 ```
 
-`runner-run` and `runner-install` are the normal way to run VMs: a fresh VM per
-session. `vm-up` (`vm-start` followed by `vm-configure`) gives a persistent VM for
+`runner-run` and `runner-install` are the normal way to run VMs: Claude's
+orchestrator boots a fresh VM per session. `vm-up` (`vm-start` followed by `vm-configure`) gives a persistent VM for
 debugging. Dotted arrows are independent gates.
 
 ## Variables
 
 | Variable | Default | Used by |
 | --- | --- | --- |
-| `VM` | none (required) | all `runner-*` and `vm-*`, optional for `secret-set` |
-| `IMAGE_REF` | `agent-macos` (from `.env`) | `image-pull`, `vm-create` |
-| `VM_CPU` / `VM_MEMORY_GB` | `4` / `12` | `runner-run`, `vm-create` |
+| `VM` | none (required) | all `vm-*` (`vm-create` refuses `runner-N`), optional for `secret-set` |
+| `IMAGE_REF` | `agent-macos` (from `.env`) | `image-pull`, `vm-create`, runner VMs |
+| `RUNNER_MAX` / `RUNNER_MIN_IDLE` | `2` / `1` (from `.env`) | Runner VMs at most / kept booted as standby |
+| `RUNNER_SPAWN_SECONDS` | `300` | The orchestrator's `--expected-spawn-seconds` lease |
+| `ORCHESTRATOR_HEALTH_PORT` | `8080` | The orchestrator's `/healthz` on the host |
+| `VM_BOOT_TIMEOUT` | `300` | Seconds `vm-configure` waits for the guest agent |
+| `VM_CPU` / `VM_MEMORY_GB` | `4` / `12` | runner VMs, `vm-create` |
 | `MODE` | `run` | `doctor`: `run` or `build` |
 | `NAME` | none | `secret-set`: `claude-environment-secret` |
 | `LOG_LINES` | `100` | `vm-logs` |
@@ -49,16 +55,28 @@ debugging. Dotted arrows are independent gates.
 | `format` | `packer fmt`, `shfmt -w` |
 | `test` | `packer validate` and the kcpassword helper's unit tests |
 | `ci` / `pre-commit` | `lint` + `test`, what CI runs |
-| `clean` | Removes `build/` |
+| `clean` | Removes `build/logs/`. Leaves `build/runners/`, where live runner VMs hold their names |
 
 ### Runners
 
 | Target | Description |
 | --- | --- |
-| `runner-run` | `scripts/runner-run.sh`: clone, boot, configure with `EPHEMERAL=true`, wait for the guest to power off, delete, repeat. Foreground; Ctrl-C deletes its VM |
-| `runner-install` | `scripts/runner-service.sh install`: host LaunchAgent `com.agent-images.<VM>` running `runner-run.sh`; log in `build/logs/<VM>.runner.log` |
-| `runner-uninstall` | Boots out the LaunchAgent (the loop deletes its VM) and removes the plist |
-| `runner-status` | LaunchAgent state and loop log, then `vm-status` |
+| `runner-run` | `scripts/orchestrator-run.sh` in the foreground: Keychain secret into the environment, then `claude self-hosted-runner orchestrator --hooks-dir hooks`. Runner VMs outlive Ctrl-C |
+| `runner-install` | `scripts/orchestrator-service.sh install`: host LaunchAgent `com.agent-images.orchestrator`; log in `build/logs/orchestrator.log` |
+| `runner-uninstall` | Boots out the orchestrator, then stops and deletes every runner VM |
+| `runner-stop` | Stops and deletes every runner VM (sessions requeue); a running orchestrator boots replacements |
+| `runner-status` | Orchestrator state, its `/healthz` body and log tail, then `vm-status` for each runner VM |
+
+Each runner VM is its own launchd job, `com.agent-images.runner-N`, running
+`scripts/runner-once.sh`. Claims live in `build/runners/runner-N/`. Logs, all on the
+host so they outlive the VM:
+
+| Log | What |
+| --- | --- |
+| `build/logs/orchestrator.log` | The orchestrator and every `spawn-runner` run |
+| `build/logs/runner-N.runner.log` | `runner-once`: clone, configure, wait, delete |
+| `build/logs/runner-N.guest.log` | The VM's `agent-runner.log` (the self-hosted runner's stdout and stderr, and `brew upgrade`) and watchdog log, streamed while it runs; a `=== time runner-N order … ===` header per VM |
+| `build/logs/runner-N.log` | `tart run` output |
 
 ### VMs (manual, persistent; for debugging)
 

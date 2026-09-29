@@ -31,8 +31,9 @@ if [[ ! -s "$secret_file" ]]; then
 fi
 
 # Take the latest Claude Code on every start. A failed upgrade shouldn't block work.
-brew upgrade --cask claude-code@latest >/dev/null 2>&1 ||
-	log "claude upgrade failed; continuing with $(claude --version)"
+# brew's output goes to this LaunchAgent's log like everything else.
+brew upgrade --cask claude-code@latest 2>&1 || log "claude upgrade failed; continuing"
+log "claude $(claude --version)"
 
 mkdir -p "$base_dir"
 

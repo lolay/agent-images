@@ -24,7 +24,7 @@ SHELL := bash
 export
 
 .PHONY: help init build lint format test ci pre-commit doctor clean \
-        runner-run runner-install runner-uninstall runner-status \
+        runner-run runner-install runner-uninstall runner-stop runner-status \
         image-pull vm-create vm-start vm-configure vm-up vm-stop vm-status vm-logs \
         vm-versions vm-list vm-delete secret-set \
         gh-runs-list gh-runs-watch gh-runs-status bump publish
@@ -47,18 +47,22 @@ VERSION := $(shell cat version.txt)
 REGISTRY ?=
 SECRET_NAMES := claude-environment-secret
 
-RUN_TOOLS := tart security
-BUILD_TOOLS := $(RUN_TOOLS) packer python3 shellcheck shfmt plutil
+RUN_TOOLS := tart security claude
+BUILD_TOOLS := tart security packer python3 shellcheck shfmt plutil
 SHELL_SCRIPTS := $(wildcard $(MACOS_DIR)/scripts/*.sh $(MACOS_DIR)/files/*.sh \
                    $(MACOS_DIR)/files/runners/*.sh $(MACOS_DIR)/files/claude/hooks/*.sh \
-                   scripts/*.sh)
+                   scripts/*.sh hooks/spawn-runner)
 
 confirm = @if [ -z "$($(1))" ]; then \
   printf 'Refusing to run "make %s": %s\nRe-run with %s=1.\n' "$@" "$(2)" "$(1)"; \
   exit 1; \
 fi
 
-require_vm = @[ -n "$(VM)" ] || { printf 'Set VM=<name>, e.g. make $@ VM=runner-1\n' >&2; exit 1; }
+require_vm = @[ -n "$(VM)" ] || { printf 'Set VM=<name>, e.g. make $@ VM=debug-1\n' >&2; exit 1; }
+
+# runner-N names belong to the orchestrator; a manual VM by that name would block a slot.
+require_manual_vm = @[ -n "$(VM)" ] || { printf 'Set VM=<name>, e.g. make $@ VM=debug-1\n' >&2; exit 1; }; \
+  if [[ "$(VM)" =~ ^runner-[0-9]+$$ ]]; then printf '%s is reserved for runner VMs; pick another name\n' "$(VM)" >&2; exit 1; fi
 
 ##@ Develop
 
@@ -105,51 +109,49 @@ ci: lint test ## Run the full pre-push gate (what CI runs)
 
 pre-commit: ci ## Run the local gate before committing or pushing (alias of ci)
 
-clean: ## Remove local build artifacts (not VMs or images)
-	rm -rf $(BUILD_DIR)
+clean: ## Remove host logs (not VMs, images, or runner claims in build/runners)
+	rm -rf $(LOG_DIR)
 
 ##@ Runners
 
-runner-run: ## Run an ephemeral runner in the foreground (fresh VM per session): VM=runner-1
-	$(require_vm)
-	scripts/runner-run.sh $(VM)
+runner-run: ## Run the orchestrator in the foreground; runner VMs outlive Ctrl-C (see runner-stop)
+	scripts/orchestrator-run.sh
 
-runner-install: ## Keep an ephemeral runner going as a host LaunchAgent: VM=runner-1
-	$(require_vm)
-	scripts/runner-service.sh install $(VM)
+runner-install: ## Keep the orchestrator running as a host LaunchAgent (starts at login)
+	scripts/orchestrator-service.sh install
 
-runner-uninstall: ## Stop an ephemeral runner and delete its VM: VM=runner-1
-	$(require_vm)
-	scripts/runner-service.sh uninstall $(VM)
+runner-uninstall: ## Stop the orchestrator and every runner VM (their sessions requeue)
+	scripts/orchestrator-service.sh uninstall
 
-runner-status: ## Host loop state plus runner health: VM=runner-1
-	$(require_vm)
-	@scripts/runner-service.sh status $(VM)
-	@scripts/vm-status.sh $(VM)
+runner-stop: ## Stop and delete every runner VM; a running orchestrator boots new ones
+	scripts/orchestrator-service.sh stop-runners
+
+runner-status: ## Orchestrator state and health, then each runner VM
+	@scripts/orchestrator-service.sh status
 
 ##@ VMs (manual, persistent; for debugging)
 
 image-pull: ## Pull IMAGE_REF from the registry (run hosts)
 	tart pull $(IMAGE_REF)
 
-vm-create: ## Clone IMAGE_REF into a VM and size it: VM=runner-1 [VM_CPU=4 VM_MEMORY_GB=12]
-	$(require_vm)
+vm-create: ## Clone IMAGE_REF into a VM and size it: VM=debug-1 [VM_CPU=4 VM_MEMORY_GB=12]
+	$(require_manual_vm)
 	tart clone $(IMAGE_REF) $(VM)
 	tart set $(VM) --cpu $(VM_CPU) --memory $$(( $(VM_MEMORY_GB) * 1024 ))
 
-vm-start: ## Start a VM headless: VM=runner-1. Max two macOS VMs run at once
+vm-start: ## Start a VM headless: VM=debug-1. Max two macOS VMs run at once
 	$(require_vm)
 	@mkdir -p $(LOG_DIR)
 	@nohup tart run --no-graphics $(VM) >"$(LOG_DIR)/$(VM).log" 2>&1 & \
 	  printf 'started %s (log: %s/%s.log)\n' "$(VM)" "$(LOG_DIR)" "$(VM)"
 
-vm-configure: ## Write runner config and secrets into a running VM and restart its runner: VM=runner-1
+vm-configure: ## Write runner config and secrets into a running VM and restart its runner: VM=debug-1
 	$(require_vm)
 	scripts/vm-configure.sh $(VM)
 
-vm-up: vm-start vm-configure ## Start a VM and configure its runner: VM=runner-1
+vm-up: vm-start vm-configure ## Start a VM and configure its runner: VM=debug-1
 
-vm-stop: ## Stop a VM: VM=runner-1
+vm-stop: ## Stop a VM: VM=debug-1
 	$(require_vm)
 	tart stop $(VM)
 
@@ -170,12 +172,12 @@ vm-versions: ## Report macOS, Xcode, and runner CLI versions in a VM: VM=runner-
 vm-list: ## List local VMs and images
 	tart list
 
-vm-delete: ## Stop and delete a VM (the image is kept): VM=runner-1
+vm-delete: ## Stop and delete a VM (the image is kept): VM=debug-1
 	$(require_vm)
 	-tart stop $(VM)
 	tart delete $(VM)
 
-secret-set: ## Store a runner secret in the host Keychain (prompts): NAME=claude-environment-secret [VM=runner-1]
+secret-set: ## Store a runner secret in the host Keychain (prompts): NAME=claude-environment-secret [VM=debug-1]
 	@if [[ " $(SECRET_NAMES) " != *" $(NAME) "* ]]; then \
 	  printf 'NAME must be one of: %s\n' "$(SECRET_NAMES)" >&2; exit 1; fi
 	security add-generic-password -U -s "agent-images.$(NAME)" -a "$(or $(VM),default)" -w
