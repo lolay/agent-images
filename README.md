@@ -50,7 +50,7 @@ tracks the latest and pins only on breakage
 brew tap openai/tools && brew tap lolay/tap && brew trust openai/tools lolay/tap
 brew install openai/tools/tart hashicorp/tap/packer lolay/tap/triage shellcheck shfmt
 make init                  # plugin install, creates .env
-$EDITOR .env               # PKR_VAR_user_password, REGISTRY
+$EDITOR .env               # optional: REGISTRY for make publish
 make doctor MODE=build
 make build
 make publish CONFIRM_PUBLISH=1   # optional: push to a private registry
@@ -95,7 +95,7 @@ host restarts, pick one:
 macOS won't turn on automatic login while FileVault is on. Either way, the orchestrator
 runs as whoever logs in, so a dedicated runner account must be the one that logs in.
 This is only about the host: VM disks are separate and always boot straight to the
-`agent` user.
+base image's `admin` user.
 
 Runner VMs outlive an orchestrator restart; `make runner-stop` deletes them (their sessions requeue), and
 `make runner-uninstall` stops everything. `make vm-create` / `vm-up` still give you a

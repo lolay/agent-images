@@ -75,11 +75,7 @@ build:
           contains: tart
           hint: make init   # runs packer init, which installs the Tart plugin
         - tool: python3
-          hint: xcode-select --install   # Command Line Tools include python3
-        - command: grep -q '^PKR_VAR_user_password=change-me$' .env
-          label: agent password changed from the placeholder
-          exit: 1
-          hint: "$EDITOR .env   # set PKR_VAR_user_password; it's the agent user's password"
+          hint: xcode-select --install   # Command Line Tools include python3 (make lint checks JSON)
     - group: Lint
       items:
         - tool: shellcheck

@@ -1,4 +1,7 @@
-# Installed as ~agent/.zprofile. Login shells read it, and launchd starts the
-# runner through `zsh -l`, so the runner and any shell share one PATH.
+# >>> agent-images >>>
+# Appended to the guest user's ~/.zprofile by setup-user.sh. Login shells read
+# it, and launchd starts the runner through `zsh -l`, so the runner and any
+# shell share one PATH: Homebrew first, then ~/bin ahead of it.
 eval "$(/opt/homebrew/bin/brew shellenv)"
 export PATH="$HOME/bin:$PATH"
+# <<< agent-images <<<

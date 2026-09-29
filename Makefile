@@ -19,7 +19,7 @@ SHELL := bash
 
 .DEFAULT_GOAL := help
 
-# Local secrets and overrides (PKR_VAR_user_password, REGISTRY, IMAGE_REF). Never committed.
+# Local settings and overrides (IMAGE_REF, REGISTRY, RUNNER_*). Never committed.
 -include .env
 export
 
@@ -46,7 +46,7 @@ VM_CPU ?= 4
 VM_MEMORY_GB ?= 12
 LOG_LINES ?= 100
 TART_CACHE_GB ?= 200
-AGENT_USER := agent
+GUEST_USER := admin
 VERSION := $(shell cat version.txt)
 REGISTRY ?=
 SECRET_NAMES := claude-environment-secret
@@ -93,7 +93,6 @@ doctor: ## Check this host with triage (read-only). MODE=run|build
 	triage --profile "$$profile" --var image_ref=$(IMAGE_REF)
 
 build: ## Build the agent image on the newest Xcode image for this host's macOS
-	@[ -n "$$PKR_VAR_user_password" ] || { printf 'PKR_VAR_user_password is not set (see .env.example)\n' >&2; exit 1; }
 	@[ -n "$(MACOS_CODENAME)" ] || { printf 'No Cirrus image codename for macOS %s; add MACOS_CODENAME_%s to the Makefile\n' \
 	  "$(HOST_MACOS_MAJOR)" "$(HOST_MACOS_MAJOR)" >&2; exit 1; }
 	@# Clone would reuse a cached :latest; pull checks for a newer one first.
@@ -118,8 +117,7 @@ format: ## Auto-fix Packer and shell formatting
 	shfmt -w $(SHELL_SCRIPTS)
 
 test: ## Validate the Packer build and run helper unit tests
-	PKR_VAR_user_password=validate-only packer validate $(MACOS_DIR)
-	python3 -m unittest discover -s $(MACOS_DIR)/scripts -p 'test_*.py'
+	packer validate $(MACOS_DIR)
 
 ci: lint test ## Run the full pre-push gate (what CI runs)
 
@@ -180,8 +178,8 @@ vm-status: ## Runner health for VMs: VM=runner-1 or VM="runner-1 runner-2"
 
 vm-logs: ## Tail a running VM's runner stdout and stderr: VM=runner-1 [LOG_LINES=100]
 	$(require_vm)
-	tart exec $(VM) tail -n $(LOG_LINES) /Users/$(AGENT_USER)/Library/Logs/agent-runner.out \
-	  /Users/$(AGENT_USER)/Library/Logs/agent-runner.err
+	tart exec $(VM) tail -n $(LOG_LINES) /Users/$(GUEST_USER)/Library/Logs/agent-runner.out \
+	  /Users/$(GUEST_USER)/Library/Logs/agent-runner.err
 
 vm-versions: ## Report macOS, Xcode, iOS runtimes, simulators, and Claude Code in a VM: VM=runner-1
 	$(require_vm)
@@ -262,5 +260,5 @@ bump: ## Bump version.txt (LEVEL=patch|minor|major); prints the new version
 
 publish: ## [danger] Push the image to REGISTRY tagged from version.txt
 	@[ -n "$(REGISTRY)" ] || { printf 'REGISTRY is not set (see .env.example)\n' >&2; exit 1; }
-	$(call confirm,CONFIRM_PUBLISH,this pushes $(IMAGE_NAME) to $(REGISTRY). The image holds /etc/kcpassword so use a private registry)
+	$(call confirm,CONFIRM_PUBLISH,this pushes $(IMAGE_NAME) to $(REGISTRY))
 	tart push $(IMAGE_NAME) $(REGISTRY)/$(IMAGE_NAME):v$(VERSION)

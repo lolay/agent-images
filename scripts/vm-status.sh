@@ -15,7 +15,7 @@ readonly claude_health_url="http://127.0.0.1:8080/healthz"
 
 [[ $# -gt 0 ]] || die "usage: vm-status.sh <vm>..."
 
-guest_home="/Users/$AGENT_USER"
+guest_home="/Users/$GUEST_USER"
 
 for vm in "$@"; do
 	printf '\n%s\n' "$vm"
@@ -28,7 +28,7 @@ for vm in "$@"; do
 		"$guest_home/.config/agent-runner/runner.env" 2>/dev/null || true)"
 	printf '  agent    %s\n' "${agent:-not configured}"
 
-	if tart exec "$vm" pgrep -u "$AGENT_USER" -f 'self-hosted-runner' >/dev/null 2>&1; then
+	if tart exec "$vm" pgrep -u "$GUEST_USER" -f 'self-hosted-runner' >/dev/null 2>&1; then
 		printf '  process  up\n'
 	else
 		printf '  process  down\n'

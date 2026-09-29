@@ -26,14 +26,8 @@ variable "disk_size_gb" {
   default     = 150
 }
 
-variable "agent_user" {
+variable "guest_user" {
   type        = string
-  description = "The single GUI user that auto-logs in and runs the runner. Not 'runner': Cirrus images reserve /Users/runner."
-  default     = "agent"
-}
-
-variable "user_password" {
-  type        = string
-  description = "Password for the agent user. Set via PKR_VAR_user_password in .env."
-  sensitive   = true
+  description = "The base image's user that logs in automatically, owns Homebrew, has passwordless sudo, and runs the runner."
+  default     = "admin"
 }

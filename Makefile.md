@@ -52,10 +52,10 @@ debugging. Dotted arrows are independent gates.
 | `help` | List targets (default goal) |
 | `init` | Creates `.env` from `.env.example`; runs `packer init` when Packer is installed |
 | `doctor` | `triage` against `triage.yaml` for `MODE` (`run` or `build`). Read-only |
-| `build` | `tart pull` the base image, `packer build` into `agent-macos-next`, then swap it into `agent-macos` so runner VMs never clone a half-built image; needs `PKR_VAR_user_password` |
+| `build` | `tart pull` the base image, `packer build` into `agent-macos-next`, then swap it into `agent-macos` so runner VMs never clone a half-built image |
 | `lint` | `packer fmt -check`, `shellcheck`, `shfmt -d`, `plutil -lint` |
 | `format` | `packer fmt`, `shfmt -w` |
-| `test` | `packer validate` and the kcpassword helper's unit tests |
+| `test` | `packer validate` |
 | `ci` / `pre-commit` | `lint` + `test`, what CI runs |
 | `clean` | Removes `build/logs/`. Leaves `build/runners/`, where live runner VMs hold their names |
 
@@ -95,7 +95,7 @@ Every LaunchAgent and job writes stdout to `.out` and stderr to `.err`.
 | `vm-stop` / `vm-delete` | `tart stop`; `tart delete` after stopping |
 | `vm-status` | `scripts/vm-status.sh`: runner, process, Claude `/healthz`, last log lines |
 | `vm-logs` | Tails a running guest's `~/Library/Logs/agent-runner.out` and `.err` |
-| `vm-versions` | macOS, Xcode and its developer dir, iOS simulator runtimes, the agent's iPhone simulators, and Claude Code in the guest |
+| `vm-versions` | macOS, Xcode and its developer dir, iOS simulator runtimes, the guest user's iPhone simulators, and Claude Code in the guest |
 | `vm-list` | `tart list` |
 | `secret-set` | `security add-generic-password` into service `agent-images.<NAME>`, account `<VM>` or `default`; prompts for the value |
 

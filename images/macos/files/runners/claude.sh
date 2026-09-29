@@ -54,7 +54,7 @@ fi
 brew upgrade --cask claude-code@latest 2>&1 || warn "claude upgrade failed; continuing"
 log "claude $(claude --version)"
 
-# Simulator devices are per user; this is the first point the agent's GUI
+# Simulator devices are per user; this is the first point the guest user's GUI
 # session exists. A missing simulator shouldn't keep the runner from serving
 # sessions that don't need one.
 agent-ensure-simulator || warn "no iPhone simulator; iOS simulator builds and UI tests will fail"

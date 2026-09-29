@@ -64,7 +64,7 @@ push_registration_secret() {
 	printf '%s' "$value" | guest_write "$vm" "$guest_path"
 }
 
-log "$vm: waiting for the $AGENT_USER session"
+log "$vm: waiting for the $GUEST_USER session"
 wait_for_guest "$vm" "$(setting VM_BOOT_TIMEOUT 300)"
 
 log "$vm: setting hostname to $runner_label"

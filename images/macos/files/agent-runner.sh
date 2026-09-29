@@ -1,5 +1,5 @@
 #!/bin/bash
-# Starts this VM's runner. launchd runs it in the agent user's GUI session
+# Starts this VM's runner. launchd runs it in the guest user's GUI session
 # (Simulator needs one) through `zsh -l`, so PATH comes from ~/.zprofile, and
 # restarts it whenever it exits, for as long as ~/.config/agent-runner/runner.env
 # exists (KeepAlive PathState).
