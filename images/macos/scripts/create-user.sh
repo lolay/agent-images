@@ -32,14 +32,16 @@ for hook in "$STAGING_DIR"/claude/hooks/*.sh; do
 	sudo install -m 755 "$hook" "$home/.claude/hooks/$(basename "$hook")"
 done
 
+# Exact paths, not a glob under $home: after the chown below, ~agent/Library is
+# owner-only, and this script (admin) can't list it to expand one.
 for template in "$STAGING_DIR"/com.agent-images.*.plist; do
 	plist="$home/Library/LaunchAgents/$(basename "$template")"
 	sed "s#__AGENT_HOME__#$home#g" "$template" | sudo tee "$plist" >/dev/null
 	sudo plutil -lint "$plist" >/dev/null
+	sudo chmod 644 "$plist"
 done
 
 sudo chown -R "$AGENT_USER:staff" "$home"
-sudo chmod 644 "$home"/Library/LaunchAgents/com.agent-images.*.plist
 
 # Ephemeral runners power the VM off after one session. This is the only root
 # command the agent user gets. Validated before install: a broken sudoers.d file
