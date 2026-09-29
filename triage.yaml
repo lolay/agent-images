@@ -33,6 +33,13 @@ host:
       - tool: tart
         version: ">=2.38"
         hint: brew tap openai/tools && brew trust openai/tools && brew install openai/tools/tart
+      # 2.39 fixes `tart list`/`tart get` failing while a VM with an ASIF disk runs
+      # (openai/tart#1344); make vm-list hits it, the runner scripts don't.
+      - command: tart --version
+        label: tart 2.39 or later (make vm-list works while runners run)
+        matches: '^(2\.(39|[4-9][0-9])|[3-9]\.)'
+        severity: warn
+        hint: "brew upgrade openai/tools/tart   # the tap can lag Tart's GitHub releases"
       - tool: security
         hint: "# built into macOS (/usr/bin/security)"
       - path: .env

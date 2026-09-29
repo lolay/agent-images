@@ -32,6 +32,7 @@ reclaim_stale_runners 0
 # in `ps`. hooks/spawn-runner unsets it.
 SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET="$(keychain_secret claude-environment-secret orchestrator)" ||
 	die "no Keychain item agent-images.claude-environment-secret; run make secret-set NAME=claude-environment-secret"
+require_environment_key_shape "$SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET"
 export SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET
 
 log "orchestrator: up to $max runner VMs, $min_idle standby"

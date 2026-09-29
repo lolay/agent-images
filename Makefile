@@ -198,10 +198,10 @@ vm-delete: ## Stop and delete a VM (the image is kept): VM=debug-1
 	-tart stop $(VM)
 	tart delete $(VM)
 
-secret-set: ## Store a runner secret in the host Keychain (prompts): NAME=claude-environment-secret [VM=debug-1]
+secret-set: ## Store a runner secret in the host Keychain (prompts, or pipe it in): NAME=claude-environment-secret [VM=debug-1]
 	@if [[ " $(SECRET_NAMES) " != *" $(NAME) "* ]]; then \
 	  printf 'NAME must be one of: %s\n' "$(SECRET_NAMES)" >&2; exit 1; fi
-	security add-generic-password -U -s "agent-images.$(NAME)" -a "$(or $(VM),default)" -w
+	@scripts/secret-set.sh "$(NAME)" "$(or $(VM),default)"
 
 ##@ GitHub
 
