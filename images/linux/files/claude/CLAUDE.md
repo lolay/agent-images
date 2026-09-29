@@ -16,6 +16,8 @@ rather than installing them here.
   `connectedAndroidTest` or anything else that needs a device.
 - `agent-emulator status|stop|start` manage it. It starts clean every time and
   saves nothing. For other flags or another AVD, `agent-emulator stop` and run
-  `emulator` yourself; there's no display, so keep `-no-window`.
+  `emulator` yourself; keep `-no-window` (no display) and
+  `-crash-report-mode disabled` (its hang detector kills slow boots in a VM), or
+  pass extra flags with `AGENT_EMULATOR_ARGS="…" agent-emulator start`.
 - Gradle Managed Devices work too, since KVM is available. They start their own
   emulators, so stop this one first if memory is tight.

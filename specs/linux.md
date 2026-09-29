@@ -1,9 +1,16 @@
 # Linux runner (Android)
 
 Status: **implemented, not yet run on hardware.** The image's contents are proven
-without a Linux host (a container build, and the manual `linux-image-smoke` workflow,
-which boots the emulator on a hosted runner's KVM). The LXD side waits for a box; see
-[Open items](#open-items).
+without a Linux host. The provisioning scripts run clean in an `ubuntu:24.04`
+container, and the manual `linux-image-smoke` workflow runs them on a hosted
+`ubuntu-24.04` runner. On that runner the emulator is two virtualization levels
+deep, the same as inside an LXD runner VM. There, on 2026-09-29:
+- the build's cold boot of API 37.0 (Android 17, x86_64) reached `boot_completed` in
+  94 s and saved the snapshot;
+- a session's boot loaded the snapshot in 3.5 s and was ready in 55 s;
+- KVM reported usable.
+
+The LXD side waits for a box; see [Open items](#open-items).
 
 Researched 2026-09-29.
 
@@ -71,6 +78,11 @@ writing the exec channel, image publishing, and ephemeral VMs ourselves.
 - **Emulator:** `agent-emulator start|wait|stop|status`. The runner starts it at every
   start, before it registers, so a standby VM has it booted when a session lands. Every
   boot is from the snapshot and saves nothing (`-no-snapshot-save`).
+  `-crash-report-mode disabled` is required: nested, a cold boot stalls a vCPU thread
+  for over 15 s, and the crash reporter's hang detector then kills the emulator (on
+  hosted runners every variant without it died at about 40 s, and every one with it
+  booted). `-no-metrics` heads off the metrics notice Google says will become a
+  blocking prompt. `AGENT_EMULATOR_ARGS` adds flags.
 - **Runner files** are shared with the macOS image (`images/shared`): `agent-runner`,
   the Claude runner script, the git proxy watchdog, and the Stop hook and settings.
   systemd stands in for launchd: `agent-runner.path` starts the runner when
@@ -149,7 +161,7 @@ assumptions):
 
 | Item | Why |
 | --- | --- |
-| `lxc launch ubuntu:24.04 t --vm --ephemeral`, then `lxc exec t -- ls /dev/kvm` and `emulator -accel-check` inside | Nested KVM in an LXD VM; no published report of the Android emulator there |
+| `lxc launch ubuntu:24.04 t --vm --ephemeral`, then `lxc exec t -- ls /dev/kvm` and `emulator -accel-check` inside | Nested KVM in an LXD VM. The same depth works on hosted runners (Hyper-V underneath); KVM under LXD on bare metal is untested |
 | `lxc stop t` deletes it | Ephemeral VMs; documented, not tried |
 | `make build` end to end, including the snapshot boot inside the build VM | The snapshot step runs two levels deep |
 | A session running `./gradlew connectedDebugAndroidTest` (nowinandroid) | End to end |
