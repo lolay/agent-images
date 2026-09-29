@@ -7,6 +7,8 @@
 #   host    — shared by both roles
 #   default — run host: runs the orchestrator and runner VMs (make runner-*)
 #   build   — build host: builds the image (make build) and runs make ci
+#   linux   — Linux host: builds and runs the Linux runner image (make doctor
+#             on Linux)
 #
 # The Makefile passes --var image_ref=$(IMAGE_REF).
 #
@@ -88,3 +90,51 @@ build:
           hint: brew install shfmt
         - tool: plutil
           hint: "# built into macOS (/usr/bin/plutil)"
+
+# The Linux host builds and runs the Linux runner image (specs/linux.md). make
+# doctor on Linux runs this profile; make host-setup fixes most of it.
+linux:
+  - group: Host
+    items:
+      - command: uname -m
+        label: x86_64
+        contains: x86_64
+        platform: linux
+        hint: "# the emulator's KVM images need an Intel or AMD host"
+      - command: grep -Ec '(vmx|svm)' /proc/cpuinfo
+        label: VT-x or AMD-V
+        platform: linux
+        hint: "# turn on virtualization (VT-x or SVM mode) in the firmware settings"
+      - command: sh -c 'cat /sys/module/kvm_intel/parameters/nested /sys/module/kvm_amd/parameters/nested 2>/dev/null'
+        label: nested virtualization (the emulator runs inside each VM)
+        contains: "Y"
+        platform: linux
+        hint: make host-setup
+      - tool: make
+        hint: sudo apt-get install -y make
+      - path: .env
+        hint: make init   # creates .env from .env.linux.example
+  - group: LXD
+    items:
+      - tool: lxc
+        hint: make host-setup
+      - command: lxc storage list --format csv
+        label: LXD storage pool on ZFS (copy-on-write clones)
+        contains: zfs
+        hint: make host-setup
+      - command: lxc image info {{ image_ref }}
+        label: "image {{ image_ref }} available"
+        hint: make build
+  - group: Runners
+    items:
+      - tool: claude
+        hint: make host-setup
+      - path: vms/runner.env
+        hint: cp vms/example-linux.env vms/runner.env
+      - command: sh -c 'test -s "$HOME/.config/agent-images/claude-environment-secret"'
+        label: Claude environment secret in ~/.config/agent-images
+        hint: make secret-set NAME=claude-environment-secret
+      - command: sh -c 'loginctl show-user "$(id -un)" --property=Linger --value'
+        label: lingering (the orchestrator starts at boot)
+        contains: "yes"
+        hint: make host-setup

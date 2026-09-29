@@ -1,0 +1,42 @@
+# Packages installed into every Linux image, from Ubuntu's archive. No versions on
+# purpose: each build installs the current release, and a version gets pinned
+# only when a release breaks something (see "Track the latest" in
+# specs/design.md). install-packages.sh reads this file; # starts a comment.
+
+# Session tools, as in the macOS Brewfile.
+age
+ca-certificates
+curl
+gh
+git
+jq
+python3
+ripgrep
+tmux
+unzip
+zip
+
+# KVM checks (kvm-ok) for make doctor and agent-emulator status.
+cpu-checker
+
+# Android builds. JDK 21 is the version Android Studio bundles.
+openjdk-21-jdk-headless
+
+# Android emulator runtime libraries (a headless emulator still links them).
+libasound2t64
+libdrm2
+libegl1
+libfontconfig1
+libgbm1
+libgl1
+libnss3
+libpulse0
+libx11-xcb1
+libxcomposite1
+libxcursor1
+libxdamage1
+libxi6
+libxkbcommon0
+libxkbfile1
+libxrandr2
+libxtst6

@@ -1,0 +1,25 @@
+# Installed to /etc/systemd/system by create-user.sh, which replaces __AGENT_USER__
+# and __AGENT_HOME__. Started by agent-runner.path. bash -l gives the runner the
+# same environment as a login shell (/etc/profile.d/agent-images.sh).
+[Unit]
+Description=agent-images runner (see ~/bin/agent-runner)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=__AGENT_USER__
+WorkingDirectory=__AGENT_HOME__
+ExecStart=/bin/bash -lc 'exec __AGENT_HOME__/bin/agent-runner'
+# Restart after every exit, as launchd does on macOS; an ephemeral VM powers off
+# first. Back off so a bad secret doesn't turn into a tight restart loop.
+Restart=always
+RestartSec=30
+# On stop, signal only agent-runner (it passes SIGTERM to the runner, which
+# drains, pushes session work (30 s), and runs its post-session hook (60 s)),
+# then kill what's left, such as the emulator.
+KillMode=mixed
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

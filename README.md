@@ -9,6 +9,12 @@ One image, one runner per VM, one session per VM. The agent is chosen per VM wit
 repo a session asks for). Cursor is researched but not implemented
 ([specs/cursor.md](specs/cursor.md)).
 
+A second image does the same for Android on a small x86_64 Linux box: one LXD VM per
+session with the Android SDK and an emulator that runs inside the VM on nested KVM.
+Apple Silicon can't run the emulator inside a VM, so Android needs this host; see
+[specs/linux.md](specs/linux.md) for why, the design, and hardware to buy. Setup is
+[below](#linux-host-android).
+
 Design, constraints, and open items are in [specs/design.md](specs/design.md). Make
 targets are documented in [Makefile.md](Makefile.md).
 
@@ -39,7 +45,9 @@ tracks the latest and pins only on breakage
 | Claude Code | `claude-code@latest` cask (2.1.284) | `images/macos/Brewfile`; the Claude runner upgrades it at each start |
 | Image packages | xcodegen 2.46.0, xcbeautify 3.2.1, swiftlint 0.65.1, swiftformat 0.63.0, sops 3.13.3, age 1.3.2, triage 0.4.0 (`lolay/tap`), asccli 0.18.4 | `images/macos/Brewfile`; current release at build time |
 | shellcheck / shfmt | 0.11.0 / 3.14.1 | Build host tools for `make lint` |
-| actions/checkout | v7.0.1 | `.github/workflows/ci.yml` |
+| actions/checkout | v7.0.1 | `.github/workflows/ci.yml`, `.github/workflows/linux-image-smoke.yml` |
+| Linux host | Ubuntu 24.04 Server, LXD snap `latest/stable` (refreshes held; `make build` refreshes) | `scripts/linux/host-setup.sh` |
+| Linux image | `ubuntu:24.04`; OpenJDK 21; Android command-line tools 23.0, emulator 37.1.11, platform and x86_64 Google APIs image `android-37.0`, build-tools 37.0.0 | `images/linux/packages.txt`, `images/linux/scripts/ensure-android-sdk.sh`: newest stable at build time |
 | hashicorp/setup-packer | v3.4.0 (installs Packer 1.16.1) | `.github/workflows/ci.yml` |
 
 ## Build (build host)
@@ -100,3 +108,31 @@ This is only about the host: VM disks are separate and always boot straight to t
 Runner VMs outlive an orchestrator restart; `make runner-stop` deletes them (their sessions requeue), and
 `make runner-uninstall` stops everything. `make vm-create` / `vm-up` still give you a
 persistent VM for debugging, under any name except `runner-N`.
+
+## Linux host (Android)
+
+Hardware, the reasons for it, and open items are in [specs/linux.md](specs/linux.md).
+Any x86_64 box with VT-x or AMD-V and 64 GB (two sessions) works; the pick there is an
+ASUS NUC 15 Pro.
+
+```bash
+# Ubuntu 24.04 Server, virtualization on in the firmware, this repo cloned.
+make host-setup            # KVM nesting, LXD with a ZFS pool, Claude Code, lingering
+sudo reboot                # picks up the lxd group and lingering
+make init                  # .env from .env.linux.example
+make doctor
+make build                 # the agent-linux LXD image (SDK, emulator snapshot)
+
+# A separate self-hosted environment in claude.ai for this box, so sessions choose
+# it for Android work. Its secret stays in ~/.config/agent-images (mode 600).
+make secret-set NAME=claude-environment-secret
+cp vms/example-linux.env vms/runner.env
+make runner-run            # try it in the foreground
+make runner-install        # systemd user unit; starts at boot, no login needed
+make runner-status
+```
+
+Every session gets a fresh VM from `agent-linux`, with the emulator booted as
+`emulator-5554` from a clean snapshot. The VM powers off after its session and LXD
+deletes it. Up to `RUNNER_MAX` (default 2) VMs, each `VM_CPU` (6) and `VM_MEMORY_GB`
+(24).

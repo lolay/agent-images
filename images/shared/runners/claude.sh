@@ -25,7 +25,8 @@
 # Secret: ~/.claude-runner/environment-secret (mode 600).
 #
 # With the default --drain-grace-sec 0 and --capacity 1, the runner exits after
-# one session; launchd restarts it, so each session gets a fresh registration.
+# one session; launchd (systemd on Linux) restarts it, so each session gets a
+# fresh registration.
 set -euo pipefail
 
 readonly secret_file="$HOME/.claude-runner/environment-secret"
@@ -48,16 +49,28 @@ if [[ ! -s "$secret_file" ]]; then
 fi
 
 # Take the latest Claude Code on every start. A failed upgrade shouldn't block work.
-# brew's output goes to this LaunchAgent's log like everything else.
-# brew's chatter (including "already installed") goes to stdout; a failure is flagged
-# on stderr.
-brew upgrade --cask claude-code@latest 2>&1 || warn "claude upgrade failed; continuing"
+# The upgrade's chatter (including "already installed") goes to stdout, into the
+# runner's log like everything else; a failure is flagged on stderr. macOS
+# installs Claude as a Homebrew cask, Linux with the native installer.
+if command -v brew >/dev/null 2>&1; then
+	brew upgrade --cask claude-code@latest 2>&1 || warn "claude upgrade failed; continuing"
+else
+	claude update 2>&1 || warn "claude update failed; continuing"
+fi
 log "claude $(claude --version)"
 
-# Simulator devices are per user; this is the first point the agent's GUI
-# session exists. A missing simulator shouldn't keep the runner from serving
-# sessions that don't need one.
-agent-ensure-simulator || warn "no iPhone simulator; iOS simulator builds and UI tests will fail"
+# Devices the image provides. A missing device shouldn't keep the runner from
+# serving sessions that don't need one.
+# macOS: simulator devices are per user, and this is the first point the agent's
+# GUI session exists.
+if command -v agent-ensure-simulator >/dev/null 2>&1; then
+	agent-ensure-simulator || warn "no iPhone simulator; iOS simulator builds and UI tests will fail"
+fi
+# Linux: boot the Android emulator in the background, so it's up by the time a
+# session needs it (sessions run `agent-emulator wait` first).
+if command -v agent-emulator >/dev/null 2>&1; then
+	agent-emulator start || warn "Android emulator didn't start; instrumented tests will fail"
+fi
 
 mkdir -p "$base_dir"
 

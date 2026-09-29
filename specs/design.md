@@ -6,6 +6,11 @@ Mac build capacity for coding agents that the vendor's service dispatches work t
 Nobody works inside these VMs, even over SSH. The image supplies Xcode, Simulator, and
 a logged-in GUI session; the vendor's runner supplies the work.
 
+A Linux host does the same for Android: an x86_64 box whose VMs carry the Android SDK
+and an emulator that runs inside the session's own VM on nested KVM. Everything below
+is the Mac design; [linux.md](linux.md) covers where the Linux side differs, and the
+two share the guest runner files in `images/shared`.
+
 ### Track the latest; pin only on breakage
 
 This is an informal development environment. Everything in it follows the newest
@@ -44,6 +49,7 @@ failing `make ci` points at a change in this repo rather than a tool update.
 | Cirrus base images symlink `/Users/runner` to `/Users/admin` | The user is `agent` |
 | Hosted GitHub macOS runners can't nest VMs | CI lints and validates; images build on a Mac |
 | `/workspace` can't be created on macOS's read-only system volume | Claude's `--base-dir` is `~/workspace` |
+| macOS guests can't nest a hypervisor (on any chip), and Google ships no Linux arm64 emulator | Android emulator work runs on an x86_64 Linux host with nested KVM ([linux.md](linux.md)) |
 
 ## 3. Decisions
 
@@ -64,6 +70,9 @@ failing `make ci` points at a change in this repo rather than a tool update.
 | File ownership isn't an isolation boundary | Sessions run as `agent`, which owns its home and Homebrew; the fresh clone per session is the reset |
 | Claude's orchestrator starts VMs, not our own loop | The environment secret stays on the host; VMs boot per session plus `RUNNER_MIN_IDLE` standby; the hook is ~100 lines of shell |
 | Runners start at host login | Hosts are Macs with a display. After a restart, either log in each time (FileVault on) or use automatic login (FileVault off); macOS allows automatic login only without FileVault |
+| Android on a Linux host, one LXD VM per session | The emulator stays inside the session's VM with nested KVM; LXD is Tart's counterpart (ephemeral copy-on-write clones, `lxc exec`, image publish) and Ubuntu's first-party VM manager ([linux.md](linux.md)) |
+| Linux host scripts mirror the macOS ones | Same contracts and file layout; merged into one platform layer only after both hosts have run on hardware |
+| The guest runner files are shared | `images/shared` (runner, Claude runner script, watchdog, Stop hook) goes into both images, so session behavior matches |
 
 ## 4. How a runner runs
 
@@ -171,4 +180,5 @@ built yet.
 | The watchdog's inputs exist: `_sessions/<id>.gitconfig` with `http.https://github.com/.proxy` | Runner internals from #96856; if they move, the watchdog silently finds nothing |
 | The runner process's command line starts `claude self-hosted-runner` | The watchdog's `pkill -f` pattern |
 | The Stop hook reaches sessions from `~agent/.claude` | The runner seeds that directory at startup; check a session's `$CLAUDE_CONFIG_DIR/hooks/` |
+| The Linux host's open items | Nested KVM in an LXD VM, ephemeral VM deletion, and the rest in [linux.md](linux.md#open-items) |
 

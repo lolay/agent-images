@@ -1,0 +1,58 @@
+# Manual smoke test of the Linux image's contents on a hosted runner, which has
+# KVM: runs images/linux/scripts directly on the runner (no LXD VM around them),
+# including the emulator boot that saves the quickboot snapshot, then boots it
+# again the way a session does. It proves everything in the image except LXD
+# itself, without a Linux host. Run it from the Actions tab after changing
+# images/linux or images/shared; it never runs on pull requests.
+name: linux-image-smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      STAGING_DIR: /tmp/agent-images
+      AGENT_USER: agent
+    steps:
+      - uses: actions/checkout@v7.0.1
+      # Hosted runners have /dev/kvm; this makes it usable by any user.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+            sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+      # The same layout scripts/linux/build-image.sh stages in the build VM.
+      - name: Stage
+        run: |
+          mkdir -p "$STAGING_DIR/scripts"
+          cp -R images/shared/. images/linux/files/. "$STAGING_DIR/"
+          cp images/linux/packages.txt "$STAGING_DIR/"
+          cp images/linux/scripts/*.sh "$STAGING_DIR/scripts/"
+      - name: create-user
+        run: sudo --preserve-env=STAGING_DIR,AGENT_USER bash "$STAGING_DIR/scripts/create-user.sh"
+      - name: install-packages
+        run: sudo --preserve-env=STAGING_DIR,AGENT_USER bash "$STAGING_DIR/scripts/install-packages.sh"
+      - name: ensure-android-sdk (boots the emulator once, saves the snapshot)
+        run: sudo --preserve-env=STAGING_DIR,AGENT_USER bash "$STAGING_DIR/scripts/ensure-android-sdk.sh"
+      - name: Boot the emulator as a session would
+        run: |
+          sudo -u "$AGENT_USER" -H bash -lc '
+            set -euo pipefail
+            time (agent-emulator start && agent-emulator wait)
+            adb -s emulator-5554 shell getprop ro.build.version.sdk
+            adb -s emulator-5554 shell getprop ro.product.cpu.abi
+            agent-emulator status
+            agent-emulator stop
+            claude --version
+            ls ~/.claude ~/.claude/skills'
+      - name: Emulator log
+        if: always()
+        run: sudo cat "/home/$AGENT_USER/.local/state/agent-emulator.log" || true
