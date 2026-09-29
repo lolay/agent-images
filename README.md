@@ -34,6 +34,7 @@ Version baseline, looked up 2026-09-28:
 | Image packages | xcodegen 2.46.0, xcbeautify 3.2.1, swiftlint 0.65.1, swiftformat 0.63.0, sops 3.13.3, age 1.3.2, triage 0.4.0 (`lolay/tap`), asccli 0.18.4 | `images/macos/Brewfile`; current release at build time |
 | shellcheck / shfmt | 0.11.0 / 3.14.1 | Build host tools for `make lint` |
 | actions/checkout | v7.0.1 | `.github/workflows/ci.yml` |
+| hashicorp/setup-packer | v3.4.0 (installs Packer 1.16.1) | `.github/workflows/ci.yml` |
 
 ## Build (build host)
 
