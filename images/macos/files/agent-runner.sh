@@ -53,6 +53,6 @@ if [[ "${EPHEMERAL:-false}" == "true" ]]; then
 		kill -0 "$runner_pid" 2>/dev/null || break
 	done
 	log "$AGENT runner exited ($status); shutting down"
-	exec sudo /sbin/shutdown -h now
+	exec sudo -n /sbin/shutdown -h now
 fi
 exec "$runner_command"

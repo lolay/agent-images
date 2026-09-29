@@ -24,4 +24,10 @@ sed -n 's/^tap "\([^"]*\)".*/\1/p' "$brewfile" | while read -r tap; do
 	brew_as_agent trust --tap "$tap"
 done
 
+# The base image ships the stable claude-code cask, which conflicts with the
+# claude-code@latest the Brewfile installs; the Brewfile's channel wins.
+if brew_as_agent list --cask claude-code >/dev/null 2>&1; then
+	brew_as_agent uninstall --cask claude-code
+fi
+
 brew_as_agent bundle --file="$brewfile"

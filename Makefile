@@ -180,17 +180,17 @@ vm-status: ## Runner health for VMs: VM=runner-1 or VM="runner-1 runner-2"
 
 vm-logs: ## Tail a running VM's runner stdout and stderr: VM=runner-1 [LOG_LINES=100]
 	$(require_vm)
-	tart exec $(VM) sudo tail -n $(LOG_LINES) /Users/$(AGENT_USER)/Library/Logs/agent-runner.out \
+	tart exec $(VM) tail -n $(LOG_LINES) /Users/$(AGENT_USER)/Library/Logs/agent-runner.out \
 	  /Users/$(AGENT_USER)/Library/Logs/agent-runner.err
 
 vm-versions: ## Report macOS, Xcode, iOS runtimes, simulators, and Claude Code in a VM: VM=runner-1
 	$(require_vm)
 	@tart exec $(VM) sw_vers -productVersion | sed 's/^/  macOS   /'
 	@tart exec $(VM) xcodebuild -version | head -n 1 | sed 's/^/  /'
-	@tart exec $(VM) sudo -u $(AGENT_USER) -H /bin/zsh -lc 'claude --version' | sed 's/^/  claude  /'
+	@tart exec $(VM) /bin/zsh -lc 'claude --version' | sed 's/^/  claude  /'
 	@tart exec $(VM) xcode-select -p | sed 's/^/  developer dir  /'
-	@tart exec $(VM) sudo -u $(AGENT_USER) -H /bin/zsh -lc 'xcrun simctl list runtimes available' | sed -n 's/^\(iOS [^ ]*\).*/  runtime  \1/p'
-	@tart exec $(VM) sudo -u $(AGENT_USER) -H /bin/zsh -lc 'xcrun simctl list devices available | grep -c iPhone || true' | sed 's/^/  iPhone simulators  /'
+	@tart exec $(VM) /bin/zsh -lc 'xcrun simctl list runtimes available' | sed -n 's/^\(iOS [^ ]*\).*/  runtime  \1/p'
+	@tart exec $(VM) /bin/zsh -lc 'xcrun simctl list devices available | grep -c iPhone || true' | sed 's/^/  iPhone simulators  /'
 
 vm-list: ## List local VMs and images
 	tart list

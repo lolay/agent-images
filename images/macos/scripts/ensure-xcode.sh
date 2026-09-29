@@ -44,7 +44,9 @@ log "enabling developer tools for $AGENT_USER"
 sudo DevToolsSecurity -enable
 sudo dseditgroup -o edit -a "$AGENT_USER" -t user _developer
 # macOS UI tests (XCUITest on a Mac app) otherwise stop at an authentication prompt.
-sudo automationmodetool enable-automationmode-without-authentication
+# It prints "Enter the password for user 'root':" even as root, then succeeds;
+# stdin from /dev/null so it can never wait on that prompt.
+sudo automationmodetool enable-automationmode-without-authentication </dev/null
 
 log "verifying as $AGENT_USER"
 as_agent 'xcodebuild -version'

@@ -43,12 +43,15 @@ done
 
 sudo chown -R "$AGENT_USER:staff" "$home"
 
-# Ephemeral runners power the VM off after one session. This is the only root
-# command the agent user gets. Validated before install: a broken sudoers.d file
-# would break sudo for the rest of the build.
-readonly sudoers="/etc/sudoers.d/agent-shutdown"
+# The agent user is root in its own VM: passwordless sudo, so sessions can run
+# installers that need it, the host can set the hostname over tart exec (which
+# runs as this user), and the runner can power the VM off after its session.
+# Deliberate: the VM is thrown away after one session (specs/design.md §3).
+# Validated before install: a broken sudoers.d file would break sudo for the
+# rest of the build.
+readonly sudoers="/etc/sudoers.d/agent"
 sudoers_draft="$(mktemp)"
-printf '%s ALL=(root) NOPASSWD: /sbin/shutdown -h now\n' "$AGENT_USER" >"$sudoers_draft"
+printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$AGENT_USER" >"$sudoers_draft"
 sudo visudo -cf "$sudoers_draft" >/dev/null
 sudo install -m 440 -o root -g wheel "$sudoers_draft" "$sudoers"
 rm -f "$sudoers_draft"

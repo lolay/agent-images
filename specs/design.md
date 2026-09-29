@@ -61,6 +61,8 @@ failing `make ci` points at a change in this repo rather than a tool update.
 | No secrets for sessions | Parity with Anthropic-hosted environments; secret-needing work stays in GitHub Actions ([secrets.md](secrets.md)) |
 | The agent user owns Homebrew; runner CLIs are casks | Homebrew's standard single-owner setup; sessions can `brew install` what a project needs |
 | The runner upgrades its own cask at start | Rebuilds would otherwise be weekly; each `AGENT` upgrades only its own CLI |
+| The agent user is root in its VM (passwordless sudo) | Sessions can run installers that need root, and the host sets the hostname over `tart exec`. The base image's `admin`/`admin` and SSH stay too. The blast radius is one session's throwaway VM |
+| Host scripts act in the guest as the agent user | `tart exec` runs in the logged-in GUI session, which automatic login makes the agent's; only the hostname needs `sudo` |
 | File ownership isn't an isolation boundary | Sessions run as `agent`, which owns its home and Homebrew; the fresh clone per session is the reset |
 | Claude's orchestrator starts VMs, not our own loop | The environment secret stays on the host; VMs boot per session plus `RUNNER_MIN_IDLE` standby; the hook is ~100 lines of shell |
 | Runners start at host login | Hosts are Macs with a display. After a restart, either log in each time (FileVault on) or use automatic login (FileVault off); macOS allows automatic login only without FileVault |
@@ -102,8 +104,8 @@ In the guest:
    (`agent-ensure-simulator`; devices are per user, and this is the first moment the
    agent's GUI session exists), and then starts the runner.
 4. The runner exits (Claude exits after every session by default). With
-   `EPHEMERAL=true`, `agent-runner` then runs `sudo /sbin/shutdown -h now`, the agent
-   user's only sudo rule (`/etc/sudoers.d/agent-shutdown`). Without it (a persistent
+   `EPHEMERAL=true`, `agent-runner` then runs `sudo -n /sbin/shutdown -h now` (the
+   agent user has passwordless sudo, `/etc/sudoers.d/agent`). Without it (a persistent
    VM from `make vm-up`), launchd restarts the runner, throttled to one start per 30 s.
 
 Alongside, LaunchAgent `com.agent-images.watchdog` runs `~/bin/agent-runner-watchdog`
@@ -152,22 +154,24 @@ stop; in ephemeral mode `agent-runner` forwards SIGTERM to it.
 A GitHub Actions self-hosted runner mode would cover Codex, Gemini, and OpenCode; not
 built yet.
 
-## 7. Open items to verify on first build
+## 7. Open items
+
+Verified on the first build and boot (2026-09-29, Xcode 27.0 base image):
+`brew bundle` as `agent` including casks; automatic login as `agent`, which also makes
+`tart exec` run as `agent`; `ensure-xcode.sh` end to end (`automationmodetool` prints a
+root password prompt but succeeds); `simctl` for `agent` at build time (5 iPhone
+simulators); the runner starting with every flag, including bare
+`--remove-session-state`, and asking for a stop budget of 110 s (the plist gives 120 s).
+
+Still to check, mostly on the first real session:
 
 | Item | Why |
 | --- | --- |
-| `brew bundle` works as `agent` after the `/opt/homebrew` chown | The base image installs Homebrew as `admin` |
-| Casks install without a Gatekeeper prompt in a headless build | First cask installs in this image |
-| `--remove-session-state` accepts the bare form | Help shows `[bool]` |
-| `/etc/kcpassword` + `autoLoginUser` override the base image's admin auto-login | Golden Gate sets auto-login through Tart's provisioning options |
-| `tart exec` runs as a user with passwordless sudo | Every `vm-*` script relies on it |
 | The orchestrator LaunchAgent (`make runner-install`) starts at login and keeps running | Designed for it; not yet exercised (Anthropic's examples are Kubernetes and EC2) |
 | A standby VM registered with a work order claims the next queued session | A runner registered with the environment secret does (tested by hand); the docs say standby work orders behave the same |
 | 300 s covers clone, boot, auto-login, configure, and `brew upgrade` | `--expected-spawn-seconds` is the server lease; too short re-offers the session |
 | Hooks can `launchctl bootstrap` into the GUI domain from the orchestrator LaunchAgent | Runner VMs are launchd jobs so they outlive the hook and orchestrator restarts |
-| `ensure-xcode.sh` passes on the latest base image: license, first launch, iOS runtime, `_developer`, `DevToolsSecurity`, `automationmodetool` all non-interactive under `sudo` | It fails the build if Xcode isn't usable by `agent` |
-| `simctl` works for `agent` through `sudo -u` at build time, with no agent login session | If not, the build only warns and the runner creates the simulator at start |
-| macOS UI tests run as `agent` without prompts (automation mode, `_developer`) | The alternative is making `agent` an admin with passwordless sudo; test without it first |
+| macOS UI tests run as `agent` without prompts (automation mode, `_developer`) | Checked at build: automation mode needs no authentication, `agent` is in `_developer`, developer mode is on; a real UI test hasn't run yet |
 | The watchdog's inputs exist: `_sessions/<id>.gitconfig` with `http.https://github.com/.proxy` | Runner internals from #96856; if they move, the watchdog silently finds nothing |
 | The runner process's command line starts `claude self-hosted-runner` | The watchdog's `pkill -f` pattern |
 | The Stop hook reaches sessions from `~agent/.claude` | The runner seeds that directory at startup; check a session's `$CLAUDE_CONFIG_DIR/hooks/` |

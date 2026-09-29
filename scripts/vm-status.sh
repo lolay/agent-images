@@ -24,7 +24,7 @@ for vm in "$@"; do
 		continue
 	fi
 
-	agent="$(tart exec "$vm" sudo sed -n -E 's/^AGENT=(.*)$/\1/p' \
+	agent="$(tart exec "$vm" sed -n -E 's/^AGENT=(.*)$/\1/p' \
 		"$guest_home/.config/agent-runner/runner.env" 2>/dev/null || true)"
 	printf '  agent    %s\n' "${agent:-not configured}"
 
@@ -41,7 +41,7 @@ for vm in "$@"; do
 
 	for stream in out err; do
 		printf '  agent-runner.%s\n' "$stream"
-		tart exec "$vm" sudo tail -n "$log_lines" "$guest_home/Library/Logs/agent-runner.$stream" 2>/dev/null |
+		tart exec "$vm" tail -n "$log_lines" "$guest_home/Library/Logs/agent-runner.$stream" 2>/dev/null |
 			sed 's/^/    /' || printf '    (none yet)\n'
 	done
 done
