@@ -31,7 +31,7 @@ debugging. Dotted arrows are independent gates.
 | `IMAGE_REF` | `agent-macos` (from `.env`) | `image-pull`, `vm-create` |
 | `VM_CPU` / `VM_MEMORY_GB` | `4` / `12` | `runner-run`, `vm-create` |
 | `MODE` | `run` | `doctor`: `run` or `build` |
-| `NAME` | none | `secret-set`: `claude-environment-secret`, `cursor-api-key`, `git-token` |
+| `NAME` | none | `secret-set`: `claude-environment-secret` |
 | `LOG_LINES` | `100` | `vm-logs` |
 | `REGISTRY` | from `.env` | `publish` |
 
@@ -72,7 +72,7 @@ debugging. Dotted arrows are independent gates.
 | `vm-stop` / `vm-delete` | `tart stop`; `tart delete` after stopping |
 | `vm-status` | `scripts/vm-status.sh`: runner, process, Claude `/healthz`, last log lines |
 | `vm-logs` | Tails the guest's `~/Library/Logs/agent-runner.log` |
-| `vm-versions` | macOS, Xcode, Claude, and Cursor CLI versions in the guest |
+| `vm-versions` | macOS, Xcode, and Claude Code versions in the guest |
 | `vm-list` | `tart list` |
 | `secret-set` | `security add-generic-password` into service `agent-images.<NAME>`, account `<VM>` or `default`; prompts for the value |
 

@@ -8,7 +8,7 @@
 # session: when the runner exits, it powers off and the host deletes it.
 #
 # runner.env is written by `make vm-configure` on the host. It selects the
-# agent (AGENT=claude|cursor) and holds non-secret settings; secrets live in
+# agent (AGENT=claude, the only one today) and holds non-secret settings; secrets live in
 # separate owner-only files the runner scripts read directly.
 set -euo pipefail
 

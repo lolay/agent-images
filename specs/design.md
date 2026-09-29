@@ -22,14 +22,13 @@ a logged-in GUI session; the vendor's runner supplies the work.
 | Decision | Why |
 | --- | --- |
 | Runner model only; no Remote Control | Headless, no interactive login, fits dispatch from the vendor's UI |
-| Claude and Cursor only | The only vendors with self-hosted runners today (§6) |
+| Claude only for now | The only runner that gives a clean VM per session without an Enterprise plan; Cursor is documented in [cursor.md](cursor.md) |
 | One runner, one simulator per VM | Keeps sizing predictable: ~12 GB per VM |
 | Ephemeral VMs: one session per clone | A session can `brew install` or decrypt secrets without affecting the next, like a GitHub Actions runner |
 | One image; runner chosen at configure time | The Xcode image is ~150 GB; variants would differ by almost nothing |
 | Secrets in the host Keychain, pushed over `tart exec` stdin | Never in the repo, the image, or a process list |
-| Cursor worker bound to a workspace repo for multi-repo projects | A worker serves one repo; submodules fight cross-repo changes |
 | The agent user owns Homebrew; runner CLIs are casks | Homebrew's standard single-owner setup; sessions can `brew install` what a project needs |
-| Each runner upgrades only its own cask at start | Rebuilds would otherwise be weekly; a Claude VM doesn't pay for Cursor updates |
+| The runner upgrades its own cask at start | Rebuilds would otherwise be weekly; each `AGENT` upgrades only its own CLI |
 | File ownership isn't an isolation boundary | Sessions run as `agent`, which owns its home and Homebrew; the fresh clone per session is the reset |
 | The host loop is a shell script plus a LaunchAgent | Tart only on the host; Orchard or a vendor orchestrator can replace it later |
 | Runners start at host login | Hosts are Macs with a display; set the host user to log in automatically for unattended restarts |
@@ -55,7 +54,7 @@ In the guest:
    `~/.zprofile` (`brew shellenv`, then `~/bin`). It reads `~/.config/agent-runner/runner.env`. If it's
    missing, it exits and launchd waits for the file (`KeepAlive` / `PathState`).
 3. It execs `~/bin/agent-runner-<AGENT>`, which runs `brew upgrade --cask` for its
-   own CLI (`claude-code@latest` or `cursor-cli`) and then starts the runner.
+   own CLI (`claude-code@latest`) and then starts the runner.
 4. The runner exits (Claude exits after every session by default). With
    `EPHEMERAL=true`, `agent-runner` then runs `sudo /sbin/shutdown -h now`, the agent
    user's only sudo rule (`/etc/sudoers.d/agent-shutdown`). Without it (a persistent
@@ -65,8 +64,6 @@ In the guest:
 | --- | --- | --- |
 | `~/.config/agent-runner/runner.env` | `vm-configure` from `vms/<vm>.env` | 600 |
 | `~/.claude-runner/environment-secret` | `vm-configure` from Keychain | 600 |
-| `~/.config/agent-runner/secrets/cursor-api-key` | `vm-configure` from Keychain | 600 |
-| `~/.config/agent-runner/secrets/git-token` | `vm-configure` from Keychain (optional) | 600 |
 
 `runner.env` is written last, so launchd never starts a runner with missing secrets.
 
@@ -77,18 +74,14 @@ In the guest:
 `--lock-to-account` if set and `--use-anthropic-git-proxy` by default (Anthropic-managed
 git auth; it replaces the agent user's `~/.gitconfig`). `/healthz` on port 8080.
 
-**Cursor**: `cursor-agent worker start --worker-dir … --name <vm>` for My Machines, or
-`cursor-agent worker --pool --pool-name … start` for team pools, with `CURSOR_API_KEY`. The
-worker directory is a full clone of `CURSOR_REPOSITORY_URL`, fetched on every start.
-Cursor's worker API reports one in-use session per worker, which is what keeps one
-worker per VM at one simulator.
+**Cursor**: not implemented; see [cursor.md](cursor.md).
 
 ## 6. Vendor landscape (2026-09-28)
 
 | Agent | Cloud hosted | Self-hosted runner | GitHub Action | Mac |
 | --- | --- | --- | --- | --- |
 | Claude | Yes | Strong | Yes | Self-hosted, Actions |
-| Cursor | Yes | Weak (per repo) | No official Action | Self-hosted, unconfirmed |
+| Cursor | Yes | My Machines (long-lived, per repo); Team Pools (Enterprise) | No official Action | Self-hosted ([cursor.md](cursor.md)) |
 | Copilot | Yes | Strong | Yes | None (Linux/Windows runners only) |
 | Codex | Yes | Experimental | Yes | Actions |
 | Gemini | Yes (Jules) | None | Yes | Actions |
@@ -101,15 +94,10 @@ built yet.
 
 | Item | Why |
 | --- | --- |
-| Cursor supports macOS workers | Every official example is a Linux container |
-| `agent worker --name` exists in both modes and is unique enough | Pool mode doesn't pass it; names come from the hostname, set per VM |
-| The `cursor-cli` cask's `cursor-agent` has the `worker` subcommand | Cursor's examples call it `agent` (native installer) |
 | `brew bundle` works as `agent` after the `/opt/homebrew` chown | The base image installs Homebrew as `admin` |
 | Casks install without a Gatekeeper prompt in a headless build | First cask installs in this image |
 | `--remove-session-state` accepts the bare form | Help shows `[bool]` |
 | `/etc/kcpassword` + `autoLoginUser` override the base image's admin auto-login | Golden Gate sets auto-login through Tart's provisioning options |
 | `tart exec` runs as a user with passwordless sudo | Every `vm-*` script relies on it |
 | Pin `base_image` to a specific Xcode tag | `latest` moves |
-| A Cursor worker exits after one session | If not, a Cursor runner is persistent in practice; its management API (`127.0.0.1:8081`) may show when a session ends |
-| Claude's runner exits when idle only after a session, never before one | Otherwise an idle VM would recycle without having served anything |
 

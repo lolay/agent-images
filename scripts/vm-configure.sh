@@ -25,8 +25,8 @@ readonly label="com.agent-images.runner"
 [[ -f "$config" ]] || die "no $config; copy one of vms/example-*.env"
 agent="$(env_value "$config" AGENT)"
 case "$agent" in
-claude | cursor) ;;
-*) die "$config: AGENT must be claude or cursor (got '${agent}')" ;;
+claude) ;;
+*) die "$config: AGENT must be claude (got '${agent}'); see specs/cursor.md" ;;
 esac
 
 require_secret() {
@@ -37,18 +37,10 @@ require_secret() {
 	printf '%s' "$value" | guest_write "$vm" "$guest_path"
 }
 
-optional_secret() {
-	local name="$1" guest_path="$2"
-	local value
-	if value="$(keychain_secret "$name" "$vm")"; then
-		printf '%s' "$value" | guest_write "$vm" "$guest_path"
-	fi
-}
-
 log "$vm: waiting for guest agent"
 wait_for_guest "$vm"
 
-# A stable, per-VM hostname keeps runner and worker names distinct across clones.
+# A stable, per-VM hostname keeps runner names distinct across clones.
 log "$vm: setting hostname"
 for key in ComputerName HostName LocalHostName; do
 	tart exec "$vm" sudo scutil --set "$key" "$vm"
@@ -58,10 +50,6 @@ log "$vm: writing $agent secrets"
 case "$agent" in
 claude)
 	require_secret claude-environment-secret .claude-runner/environment-secret
-	;;
-cursor)
-	require_secret cursor-api-key .config/agent-runner/secrets/cursor-api-key
-	optional_secret git-token .config/agent-runner/secrets/git-token
 	;;
 esac
 

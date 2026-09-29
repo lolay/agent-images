@@ -18,6 +18,5 @@ brew "xcbeautify"
 brew "xcodegen"
 brew "lolay/tap/triage"
 
-# Runner CLIs. Each runner script upgrades its own cask at start.
+# Runner CLI. The runner script upgrades it at each start.
 cask "claude-code@latest"
-cask "cursor-cli"

@@ -15,8 +15,8 @@ if ! id "$AGENT_USER" >/dev/null 2>&1; then
 fi
 
 sudo mkdir -p "$home/bin" "$home/workspace" "$home/Library/LaunchAgents" "$home/Library/Logs" \
-	"$home/.config/agent-runner/secrets" "$home/.claude-runner"
-sudo chmod 700 "$home/.config/agent-runner/secrets" "$home/.claude-runner"
+	"$home/.config/agent-runner" "$home/.claude-runner"
+sudo chmod 700 "$home/.claude-runner"
 
 sudo install -m 644 "$STAGING_DIR/zprofile" "$home/.zprofile"
 sudo install -m 755 "$STAGING_DIR/agent-runner.sh" "$home/bin/agent-runner"

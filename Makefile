@@ -45,7 +45,7 @@ LOG_LINES ?= 100
 AGENT_USER := agent
 VERSION := $(shell cat version.txt)
 REGISTRY ?=
-SECRET_NAMES := claude-environment-secret cursor-api-key git-token
+SECRET_NAMES := claude-environment-secret
 
 RUN_TOOLS := tart security
 BUILD_TOOLS := $(RUN_TOOLS) packer python3 shellcheck shfmt plutil
@@ -164,7 +164,6 @@ vm-versions: ## Report macOS, Xcode, and runner CLI versions in a VM: VM=runner-
 	@tart exec $(VM) sw_vers -productVersion | sed 's/^/  macOS   /'
 	@tart exec $(VM) xcodebuild -version | head -n 1 | sed 's/^/  /'
 	@tart exec $(VM) sudo -u $(AGENT_USER) -H /bin/zsh -lc 'claude --version' | sed 's/^/  claude  /'
-	@tart exec $(VM) sudo -u $(AGENT_USER) -H /bin/zsh -lc 'cursor-agent --version' | sed 's/^/  cursor  /'
 
 vm-list: ## List local VMs and images
 	tart list
