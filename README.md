@@ -19,8 +19,12 @@ Up to two macOS VMs run at once per host (Apple's license, enforced by macOS).
 
 | Host role | Needs |
 | --- | --- |
-| Run host (a Mac with a display, logged in) | `tart`, `make`, the macOS Keychain, Claude Code (`claude-code@latest` cask) for the orchestrator |
-| Build host | the above plus `packer`, `python3`, `shellcheck`, `shfmt` |
+| Run host (a Mac with a display, logged in) | `tart`, `make`, `triage`, the macOS Keychain, Claude Code (`claude-code@latest` cask) for the orchestrator |
+| Build host | `tart`, `make`, `triage`, `packer`, `python3`, `shellcheck`, `shfmt` |
+
+`make doctor` (run host) and `make doctor MODE=build` check all of this with
+[triage](https://github.com/lolay/triage) ([triage.yaml](triage.yaml)) and print the
+command that fixes each missing piece.
 
 Versions current at the last lookup, 2026-09-28. Nothing in the image is pinned: it
 tracks the latest and pins only on breakage
@@ -41,7 +45,10 @@ tracks the latest and pins only on breakage
 ## Build (build host)
 
 ```bash
-brew install openai/tools/tart hashicorp/tap/packer shellcheck shfmt
+# Third-party taps must be trusted: naming a formula trusts only that formula,
+# and Tart's softnet dependency comes from the same tap.
+brew tap openai/tools && brew tap lolay/tap && brew trust openai/tools lolay/tap
+brew install openai/tools/tart hashicorp/tap/packer lolay/tap/triage shellcheck shfmt
 make init                  # plugin install, creates .env
 $EDITOR .env               # PKR_VAR_user_password, REGISTRY
 make doctor MODE=build
@@ -52,9 +59,11 @@ make publish CONFIRM_PUBLISH=1   # optional: push to a private registry
 ## Run (run host)
 
 ```bash
-brew install openai/tools/tart
+brew tap openai/tools && brew tap lolay/tap && brew trust openai/tools lolay/tap
+brew install openai/tools/tart lolay/tap/triage
 brew install --cask claude-code@latest
 make init && $EDITOR .env            # IMAGE_REF, RUNNER_MAX, RUNNER_MIN_IDLE
+make doctor                          # triage: what's missing and how to fix it
 
 # The environment key from claude.ai's Cloud environments page. It stays in the
 # host Keychain; VMs only ever get a single-use work order.

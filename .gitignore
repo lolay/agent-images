@@ -12,3 +12,4 @@ build/
 *.pem
 .scratch/
 version.txt.tmp
+.triage/

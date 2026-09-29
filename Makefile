@@ -4,9 +4,9 @@
 # VMs cloned from it. Humans, agents, and CI run the same verbs; CI calls
 # `make <target>`.
 #
-# Two host roles:
-#   build host  tart, packer, python3, shellcheck, shfmt  (make build, publish)
-#   run host    tart, make                                (make vm-*)
+# Two host roles (make doctor checks each with triage; see triage.yaml):
+#   build host  tart, packer, python3, shellcheck, shfmt, triage  (make build, ci)
+#   run host    tart, claude, triage                              (make runner-*)
 #
 # Conventions:
 #   - `.DEFAULT_GOAL := help`; bare `make` prints grouped targets.
@@ -61,8 +61,6 @@ MACOS_CODENAME_27 := golden-gate
 MACOS_CODENAME ?= $(MACOS_CODENAME_$(HOST_MACOS_MAJOR))
 PKR_VAR_base_image ?= ghcr.io/cirruslabs/macos-$(MACOS_CODENAME)-xcode:latest
 
-RUN_TOOLS := tart security claude
-BUILD_TOOLS := tart security packer python3 shellcheck shfmt plutil
 SHELL_SCRIPTS := $(wildcard $(MACOS_DIR)/scripts/*.sh $(MACOS_DIR)/files/*.sh \
                    $(MACOS_DIR)/files/runners/*.sh $(MACOS_DIR)/files/claude/hooks/*.sh \
                    scripts/*.sh hooks/spawn-runner)
@@ -88,16 +86,11 @@ init: ## Install Packer plugins (build hosts) and create .env if missing
 	@if command -v packer >/dev/null 2>&1; then packer init $(MACOS_DIR); \
 	else printf 'packer not found; skipping plugin install (fine on a run host).\n'; fi
 
-doctor: ## Check host tools (read-only). MODE=run|build
-	@case "$(MODE)" in run) tools="$(RUN_TOOLS)";; build) tools="$(BUILD_TOOLS)";; \
+doctor: ## Check this host with triage (read-only). MODE=run|build
+	@command -v triage >/dev/null 2>&1 || { printf 'triage not found; run:\n  brew tap lolay/tap && brew trust lolay/tap && brew install lolay/tap/triage\n' >&2; exit 1; }
+	@case "$(MODE)" in run) profile=default;; build) profile=build;; \
 	  *) printf 'MODE must be run or build\n' >&2; exit 1;; esac; \
-	missing=0; \
-	for tool in $$tools; do \
-	  if command -v "$$tool" >/dev/null 2>&1; then printf '  ok       %s\n' "$$tool"; \
-	  else printf '  missing  %s\n' "$$tool"; missing=1; fi; \
-	done; \
-	[ -f .env ] && printf '  ok       .env\n' || { printf '  missing  .env (run make init)\n'; missing=1; }; \
-	exit $$missing
+	triage --profile "$$profile" --var image_ref=$(IMAGE_REF)
 
 build: ## Build the agent image on the newest Xcode image for this host's macOS
 	@[ -n "$$PKR_VAR_user_password" ] || { printf 'PKR_VAR_user_password is not set (see .env.example)\n' >&2; exit 1; }

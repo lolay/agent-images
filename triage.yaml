@@ -1,0 +1,90 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/lolay/triage/main/schema/triage.schema.json
+# triage.yaml — host checks for agent-images. `make doctor` runs the default
+# (run host) profile; `make doctor MODE=build` runs the build profile. Both are
+# read-only. See https://github.com/lolay/triage for the format.
+#
+# Profiles:
+#   host    — shared by both roles
+#   default — run host: runs the orchestrator and runner VMs (make runner-*)
+#   build   — build host: builds the image (make build) and runs make ci
+#
+# The Makefile passes --var image_ref=$(IMAGE_REF).
+#
+# Hints are printed under "To fix, run:", so each is a command to paste; an unquoted
+# " # …" is a YAML comment and isn't shown. Naming a
+# formula (brew install openai/tools/tart) trusts that formula only; Tart's
+# softnet dependency comes from the same tap, so the tap itself must be trusted.
+
+version: 1
+
+vars:
+  image_ref: agent-macos
+
+host:
+  - group: Host
+    items:
+      - command: uname -m
+        label: Apple Silicon
+        contains: arm64
+        platform: macos
+        hint: "# Tart runs macOS VMs on Apple Silicon only; use an M-series Mac"
+      - tool: make
+        hint: xcode-select --install   # Command Line Tools
+      - tool: tart
+        version: ">=2.38"
+        hint: brew tap openai/tools && brew trust openai/tools && brew install openai/tools/tart
+      - tool: security
+        hint: "# built into macOS (/usr/bin/security)"
+      - path: .env
+        hint: make init   # creates .env from .env.example
+
+default:
+  extends: [host]
+  add:
+    - group: Runners
+      items:
+        - tool: claude
+          hint: brew install --cask claude-code@latest
+        - path: vms/runner.env
+          hint: cp vms/example-claude.env vms/runner.env
+        # No -w: prints the item's attributes, never the secret.
+        - command: security find-generic-password -s agent-images.claude-environment-secret
+          label: Claude environment secret in the Keychain
+          hint: make secret-set NAME=claude-environment-secret
+        - command: tart get {{ image_ref }}
+          label: "image {{ image_ref }} available"
+          hint: "make build   # or make image-pull when IMAGE_REF is a registry image"
+    - group: Restarts
+      items:
+        - command: fdesetup status
+          label: FileVault off (automatic login possible)
+          contains: FileVault is Off
+          severity: info
+          hint: "# either is fine; README \"Run\" covers the two restart options"
+
+build:
+  extends: [host]
+  add:
+    - group: Image build
+      items:
+        - tool: packer
+          version: ">=1.16.1"
+          hint: brew install hashicorp/tap/packer
+        - command: packer plugins installed
+          label: Packer Tart plugin
+          contains: tart
+          hint: make init   # runs packer init, which installs the Tart plugin
+        - tool: python3
+          hint: xcode-select --install   # Command Line Tools include python3
+        - command: grep -q '^PKR_VAR_user_password=change-me$' .env
+          label: agent password changed from the placeholder
+          exit: 1
+          hint: "$EDITOR .env   # set PKR_VAR_user_password; it's the agent user's password"
+    - group: Lint
+      items:
+        - tool: shellcheck
+          hint: brew install shellcheck
+        - tool: shfmt
+          hint: brew install shfmt
+        - tool: plutil
+          hint: "# built into macOS (/usr/bin/plutil)"

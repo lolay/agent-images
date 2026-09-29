@@ -51,7 +51,7 @@ debugging. Dotted arrows are independent gates.
 | --- | --- |
 | `help` | List targets (default goal) |
 | `init` | Creates `.env` from `.env.example`; runs `packer init` when Packer is installed |
-| `doctor` | Checks host tools for `MODE` and `.env` presence. Read-only |
+| `doctor` | `triage` against `triage.yaml` for `MODE` (`run` or `build`). Read-only |
 | `build` | `tart pull` the base image, `packer build` into `agent-macos-next`, then swap it into `agent-macos` so runner VMs never clone a half-built image; needs `PKR_VAR_user_password` |
 | `lint` | `packer fmt -check`, `shellcheck`, `shfmt -d`, `plutil -lint` |
 | `format` | `packer fmt`, `shfmt -w` |
@@ -108,8 +108,18 @@ Every LaunchAgent and job writes stdout to `.out` and stderr to `.err`.
 
 ## `make doctor`
 
-Checks tools with `command -v` rather than `triage`; swap in a `triage.yaml` when this
-repo joins an estate that uses it.
+Runs [triage](https://github.com/lolay/triage) against [`triage.yaml`](triage.yaml):
+`MODE=run` (the default) uses its `default` profile, `MODE=build` its `build` profile,
+and both extend a shared `host` profile. If `triage` itself is missing, `doctor` prints
+`brew tap lolay/tap && brew trust lolay/tap && brew install lolay/tap/triage`. It's read-only, exits non-zero when a required
+check fails, and prints the command that fixes each one, including Tart's tap-trust
+step. It passes `--var image_ref=$(IMAGE_REF)` so the image check follows `.env`.
+
+| Profile | Checks |
+| --- | --- |
+| `host` | Apple Silicon, `make`, `tart` ≥ 2.38, `security`, `.env` |
+| `default` (run host) | `claude`, `vms/runner.env`, the Keychain environment secret, the `IMAGE_REF` image; FileVault state (info only) |
+| `build` | `packer` ≥ 1.16.1, the Packer Tart plugin, `python3`, the agent password isn't the placeholder, `shellcheck`, `shfmt`, `plutil` |
 
 ## CI alignment
 
