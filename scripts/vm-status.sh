@@ -39,7 +39,9 @@ for vm in "$@"; do
 		printf '  healthz  %s\n' "${health:-no response}"
 	fi
 
-	printf '  log\n'
-	tart exec "$vm" sudo tail -n "$log_lines" "$guest_home/Library/Logs/agent-runner.log" 2>/dev/null |
-		sed 's/^/    /' || printf '    (no log yet)\n'
+	for stream in out err; do
+		printf '  agent-runner.%s\n' "$stream"
+		tart exec "$vm" sudo tail -n "$log_lines" "$guest_home/Library/Logs/agent-runner.$stream" 2>/dev/null |
+			sed 's/^/    /' || printf '    (none yet)\n'
+	done
 done

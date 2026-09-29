@@ -38,7 +38,12 @@ done
 [[ -n "$vm" ]] || die "$usage"
 config="${config:-$AGENT_IMAGES_DIR/vms/$vm.env}"
 readonly vm config
-readonly label="com.agent-images.runner"
+readonly runner_agent="com.agent-images.runner"
+# The runner's label in the Anthropic console, and the guest's hostname:
+# <host>-<vm>, so runner-1 on two hosts stays distinguishable.
+host_name="$(scutil --get LocalHostName 2>/dev/null || hostname -s)"
+runner_label="$(setting RUNNER_LABEL_PREFIX "$host_name")-$vm"
+readonly runner_label
 
 [[ -f "$config" ]] || die "no $config; copy vms/example-claude.env"
 agent="$(env_value "$config" AGENT)"
@@ -62,10 +67,9 @@ push_registration_secret() {
 log "$vm: waiting for guest agent"
 wait_for_guest "$vm" "$(setting VM_BOOT_TIMEOUT 300)"
 
-# A stable, per-VM hostname keeps runner names distinct across clones.
-log "$vm: setting hostname"
+log "$vm: setting hostname to $runner_label"
 for key in ComputerName HostName LocalHostName; do
-	tart exec "$vm" sudo scutil --set "$key" "$vm"
+	tart exec "$vm" sudo scutil --set "$key" "$runner_label"
 done
 
 log "$vm: writing $agent registration secret"
@@ -75,13 +79,19 @@ push_registration_secret
 log "$vm: writing runner.env"
 {
 	cat "$config"
-	printf '\nRUNNER_LABEL=%s\n' "$vm"
+	printf '\nRUNNER_LABEL=%s\n' "$runner_label"
 	if [[ "${EPHEMERAL:-false}" == "true" ]]; then
 		printf 'EPHEMERAL=true\n'
 	fi
 } | guest_write "$vm" .config/agent-runner/runner.env
 
-agent_uid="$(tart exec "$vm" id -u "$AGENT_USER")"
-log "$vm: restarting runner"
-tart exec "$vm" sudo launchctl kickstart -k "gui/$agent_uid/$label"
-log "$vm: configured as $agent"
+if [[ "${EPHEMERAL:-false}" == "true" ]]; then
+	# A fresh VM's runner starts when runner.env appears (KeepAlive PathState).
+	# Restarting it would register a second time, and a work order is single-use.
+	log "$vm: runner starts on runner.env"
+else
+	agent_uid="$(tart exec "$vm" id -u "$AGENT_USER")"
+	log "$vm: restarting runner"
+	tart exec "$vm" sudo launchctl kickstart -k "gui/$agent_uid/$runner_agent"
+fi
+log "$vm: configured as $agent ($runner_label)"

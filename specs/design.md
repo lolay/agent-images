@@ -34,7 +34,7 @@ a logged-in GUI session; the vendor's runner supplies the work.
 | The runner upgrades its own cask at start | Rebuilds would otherwise be weekly; each `AGENT` upgrades only its own CLI |
 | File ownership isn't an isolation boundary | Sessions run as `agent`, which owns its home and Homebrew; the fresh clone per session is the reset |
 | Claude's orchestrator starts VMs, not our own loop | The environment secret stays on the host; VMs boot per session plus `RUNNER_MIN_IDLE` standby; the hook is ~100 lines of shell |
-| Runners start at host login | Hosts are Macs with a display; set the host user to log in automatically for unattended restarts |
+| Runners start at host login | Hosts are Macs with a display. After a restart, either log in each time (FileVault on) or use automatic login (FileVault off); macOS allows automatic login only without FileVault |
 
 ## 4. How a runner runs
 
@@ -54,7 +54,7 @@ session, and each missing standby runner, the orchestrator runs `hooks/spawn-run
 `runner-once.sh` clones the image, starts it, runs `EPHEMERAL=true
 ENVIRONMENT_SECRET_FILE=<work order> vm-configure --config vms/runner.env <vm>`, deletes
 the work order, streams the guest's runner and watchdog logs to
-`build/logs/<vm>.guest.log` (they'd otherwise die with the VM), waits for the guest to
+`build/logs/<vm>.guest.{out,err}` (they'd otherwise die with the VM), waits for the guest to
 power off, then deletes the VM and the claim.
 SIGTERM (`runner-stop`, `runner-uninstall`) does the same early. At startup the
 orchestrator script reclaims claims whose job died (a host crash).
@@ -78,7 +78,7 @@ In the guest:
 Alongside, LaunchAgent `com.agent-images.watchdog` runs `~/bin/agent-runner-watchdog`
 every 30 s. It reads each session's git proxy port from
 `~/workspace/_sessions/<id>.gitconfig`; two refused connections in a row mean the relay
-is gone. It logs to `~/Library/Logs/agent-runner-watchdog.log`, and with
+is gone. It logs to `~/Library/Logs/agent-runner-watchdog.{out,err}`, and with
 `WATCHDOG_ACTION=terminate` sends the runner SIGTERM so the session requeues.
 
 | File in the guest | Written by | Mode |
@@ -90,12 +90,20 @@ is gone. It logs to `~/Library/Logs/agent-runner-watchdog.log`, and with
 
 ## 5. Runners
 
-**Claude**: `claude self-hosted-runner --environment-secret-file … --client-label <vm>
---base-dir ~/workspace --capacity 1 --remove-session-state`, plus
-`--lock-to-account` if set, and by default `--use-anthropic-git-proxy` (Anthropic-managed
-git auth; it replaces the agent user's `~/.gitconfig`) and `--push-outcome-on-release`.
-`--environment-secret-file` holds the orchestrator's work order on runner VMs, the
-environment secret on debug VMs. `/healthz` on port 8080 in the guest.
+**Claude**: `claude self-hosted-runner --environment-secret-file … --client-label
+<host>-<vm> --base-dir ~/workspace --capacity 1 --remove-session-state
+--confine-repo-settings enforce`, plus by default `--use-anthropic-git-proxy`
+(Anthropic-managed git auth; it replaces the agent user's `~/.gitconfig`),
+`--configure-git` (git identity and Anthropic commit signing; the image has none),
+`--push-outcome-on-release`, `--release-idle-session-min 60` (an idle session gives
+its VM back and resumes on a fresh one), and `--kill-session-after-min 480`; and
+`--lock-to-account` if set. Each is a setting in `vms/runner.env`. The label, which is
+also the guest's hostname, is `RUNNER_LABEL_PREFIX` (default the host's
+`LocalHostName`) plus the VM name. `--environment-secret-file` holds the
+orchestrator's work order on runner VMs, the environment secret on debug VMs.
+`/healthz` on port 8080 in the guest. The LaunchAgent writes the runner's stdout to
+`~/Library/Logs/agent-runner.out` and stderr to `.err`, and gives it 120 s to drain on
+stop; in ephemeral mode `agent-runner` forwards SIGTERM to it.
 
 **Cursor**: not implemented; see [cursor.md](cursor.md).
 

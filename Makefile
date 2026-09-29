@@ -159,9 +159,10 @@ vm-status: ## Runner health for VMs: VM=runner-1 or VM="runner-1 runner-2"
 	$(require_vm)
 	@scripts/vm-status.sh $(VM)
 
-vm-logs: ## Tail a VM's runner log: VM=runner-1 [LOG_LINES=100]
+vm-logs: ## Tail a running VM's runner stdout and stderr: VM=runner-1 [LOG_LINES=100]
 	$(require_vm)
-	tart exec $(VM) sudo tail -n $(LOG_LINES) /Users/$(AGENT_USER)/Library/Logs/agent-runner.log
+	tart exec $(VM) sudo tail -n $(LOG_LINES) /Users/$(AGENT_USER)/Library/Logs/agent-runner.out \
+	  /Users/$(AGENT_USER)/Library/Logs/agent-runner.err
 
 vm-versions: ## Report macOS, Xcode, and runner CLI versions in a VM: VM=runner-1
 	$(require_vm)

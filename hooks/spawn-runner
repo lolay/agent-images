@@ -88,7 +88,7 @@ printf '%s\n' "$order_id" >"$runner_dir/order-id"
 label="$(runner_job_label "$vm")"
 readonly label
 readonly job_plist="$runner_dir/job.plist"
-write_host_plist "$job_plist" "$label" "$AGENT_IMAGES_LOG_DIR/$vm.runner.log" false \
+write_host_plist "$job_plist" "$label" "$AGENT_IMAGES_LOG_DIR/$vm.runner" false \
 	/bin/bash "$AGENT_IMAGES_DIR/scripts/runner-once.sh" "$vm"
 # An earlier job with this label has exited but may still be loaded.
 launchctl bootout "$(launchd_domain)/$label" >/dev/null 2>&1 || true

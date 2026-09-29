@@ -44,12 +44,14 @@ keychain_secret() {
 }
 
 # Writes stdin to a path under the agent user's home, owner-only. The content
-# travels over stdin so secrets never appear in a process list.
+# travels over stdin so secrets never appear in a process list. It lands in a
+# temp file and is renamed into place, because launchd starts the runner the
+# moment runner.env appears and must never read half of it.
 guest_write() {
 	local target_vm="$1" relative_path="$2"
 	# shellcheck disable=SC2016 # expanded by the guest shell, not here
 	tart exec -i "$target_vm" sudo -u "$AGENT_USER" -H /bin/bash -c \
-		'umask 077; target="$HOME/$1"; mkdir -p "$(dirname "$target")"; cat >"$target"' \
+		'umask 077; target="$HOME/$1"; mkdir -p "$(dirname "$target")"; cat >"$target.partial" && mv -f "$target.partial" "$target"' \
 		_ "$relative_path"
 }
 
@@ -77,9 +79,10 @@ launchd_domain() { printf 'gui/%s' "$(id -u)"; }
 
 runner_job_label() { printf 'com.agent-images.%s' "$1"; }
 
-# Writes and lints a host LaunchAgent plist. Locals are prefixed so they can't
-# collide with a caller's readonly globals.
-# Usage: write_host_plist <plist> <label> <log-file> <keep-alive: true|false> <command>...
+# Writes and lints a host LaunchAgent plist. stdout and stderr go to
+# <log-base>.out and <log-base>.err. Locals are prefixed so they can't collide
+# with a caller's readonly globals.
+# Usage: write_host_plist <plist> <label> <log-base> <keep-alive: true|false> <command>...
 write_host_plist() {
 	local plist_path="$1" job_label="$2" job_log="$3" keep_alive="$4" job_arg
 	shift 4
@@ -107,8 +110,8 @@ write_host_plist() {
 			"  <key>KeepAlive</key><$keep_alive/>" \
 			'  <key>ThrottleInterval</key><integer>30</integer>' \
 			'  <key>ExitTimeOut</key><integer>120</integer>' \
-			"  <key>StandardOutPath</key><string>$job_log</string>" \
-			"  <key>StandardErrorPath</key><string>$job_log</string>" \
+			"  <key>StandardOutPath</key><string>$job_log.out</string>" \
+			"  <key>StandardErrorPath</key><string>$job_log.err</string>" \
 			'</dict>' \
 			'</plist>'
 	} >"$plist_path"

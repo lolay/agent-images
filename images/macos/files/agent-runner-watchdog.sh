@@ -24,6 +24,7 @@ readonly failures_to_act=2
 readonly curl_connect_failed=7
 
 log() { printf '%s watchdog: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
+warn() { log "$@" >&2; }
 
 action="$(sed -n -E 's/^WATCHDOG_ACTION=(.*)$/\1/p' "$runner_env" 2>/dev/null | tail -n 1)"
 action="${action:-log}"
@@ -60,9 +61,9 @@ for gitconfig in "$sessions_dir"/*.gitconfig; do
 	((failures == failures_to_act)) || continue
 
 	if [[ "$action" == "terminate" ]]; then
-		log "session $session: git proxy port $port is gone; stopping the runner so the session requeues"
-		pkill -TERM -u "$(id -u)" -f '^claude self-hosted-runner( |$)' || log "no runner process to stop"
+		warn "session $session: git proxy port $port is gone; stopping the runner so the session requeues"
+		pkill -TERM -u "$(id -u)" -f '^claude self-hosted-runner( |$)' || warn "no runner process to stop"
 	else
-		log "session $session: git proxy port $port is gone (WATCHDOG_ACTION=log, not acting)"
+		warn "session $session: git proxy port $port is gone (WATCHDOG_ACTION=log, not acting)"
 	fi
 done

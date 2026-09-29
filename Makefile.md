@@ -34,6 +34,7 @@ debugging. Dotted arrows are independent gates.
 | `RUNNER_MAX` / `RUNNER_MIN_IDLE` | `2` / `1` (from `.env`) | Runner VMs at most / kept booted as standby |
 | `RUNNER_SPAWN_SECONDS` | `300` | The orchestrator's `--expected-spawn-seconds` lease |
 | `ORCHESTRATOR_HEALTH_PORT` | `8080` | The orchestrator's `/healthz` on the host |
+| `RUNNER_LABEL_PREFIX` | this Mac's `LocalHostName` | Runner label and guest hostname: `<prefix>-<vm>` |
 | `VM_BOOT_TIMEOUT` | `300` | Seconds `vm-configure` waits for the guest agent |
 | `VM_CPU` / `VM_MEMORY_GB` | `4` / `12` | runner VMs, `vm-create` |
 | `MODE` | `run` | `doctor`: `run` or `build` |
@@ -62,7 +63,7 @@ debugging. Dotted arrows are independent gates.
 | Target | Description |
 | --- | --- |
 | `runner-run` | `scripts/orchestrator-run.sh` in the foreground: Keychain secret into the environment, then `claude self-hosted-runner orchestrator --hooks-dir hooks`. Runner VMs outlive Ctrl-C |
-| `runner-install` | `scripts/orchestrator-service.sh install`: host LaunchAgent `com.agent-images.orchestrator`; log in `build/logs/orchestrator.log` |
+| `runner-install` | `scripts/orchestrator-service.sh install`: host LaunchAgent `com.agent-images.orchestrator`; logs in `build/logs/orchestrator.{out,err}` |
 | `runner-uninstall` | Boots out the orchestrator, then stops and deletes every runner VM |
 | `runner-stop` | Stops and deletes every runner VM (sessions requeue); a running orchestrator boots replacements |
 | `runner-status` | Orchestrator state, its `/healthz` body and log tail, then `vm-status` for each runner VM |
@@ -71,12 +72,14 @@ Each runner VM is its own launchd job, `com.agent-images.runner-N`, running
 `scripts/runner-once.sh`. Claims live in `build/runners/runner-N/`. Logs, all on the
 host so they outlive the VM:
 
-| Log | What |
+Every LaunchAgent and job writes stdout to `.out` and stderr to `.err`.
+
+| Logs (`.out` / `.err`) | What |
 | --- | --- |
-| `build/logs/orchestrator.log` | The orchestrator and every `spawn-runner` run |
-| `build/logs/runner-N.runner.log` | `runner-once`: clone, configure, wait, delete |
-| `build/logs/runner-N.guest.log` | The VM's `agent-runner.log` (the self-hosted runner's stdout and stderr, and `brew upgrade`) and watchdog log, streamed while it runs; a `=== time runner-N order … ===` header per VM |
-| `build/logs/runner-N.log` | `tart run` output |
+| `build/logs/orchestrator` | The orchestrator and every `spawn-runner` run |
+| `build/logs/runner-N.runner` | `runner-once`: clone, configure, wait, delete |
+| `build/logs/runner-N.guest` | The VM's `agent-runner` (the self-hosted runner and `brew upgrade`) and watchdog output, streamed while it runs; a `=== time runner-N order … ===` header per VM |
+| `build/logs/runner-N.tart` | `tart run` output |
 
 ### VMs (manual, persistent; for debugging)
 
@@ -89,7 +92,7 @@ host so they outlive the VM:
 | `vm-up` | `vm-start` + `vm-configure` |
 | `vm-stop` / `vm-delete` | `tart stop`; `tart delete` after stopping |
 | `vm-status` | `scripts/vm-status.sh`: runner, process, Claude `/healthz`, last log lines |
-| `vm-logs` | Tails the guest's `~/Library/Logs/agent-runner.log` |
+| `vm-logs` | Tails a running guest's `~/Library/Logs/agent-runner.out` and `.err` |
 | `vm-versions` | macOS, Xcode, and Claude Code versions in the guest |
 | `vm-list` | `tart list` |
 | `secret-set` | `security add-generic-password` into service `agent-images.<NAME>`, account `<VM>` or `default`; prompts for the value |

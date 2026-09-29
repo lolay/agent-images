@@ -73,8 +73,19 @@ session, powers off, and is deleted. A session can `brew install` whatever its r
 needs without affecting the next one. Up to `RUNNER_MAX` (default 2, Apple's limit)
 VMs, named `runner-1`, `runner-2`; each needs `VM_MEMORY_GB` (default 12) free.
 
-`runner-install` starts the orchestrator whenever the host user logs in; turn on
-automatic login for that user so runners come back after a restart. Runner VMs outlive
-an orchestrator restart; `make runner-stop` deletes them (their sessions requeue), and
+`runner-install` starts the orchestrator whenever the host user logs in. After the
+host restarts, pick one:
+
+| Option | After a restart | Use it for |
+| --- | --- | --- |
+| **Log in each time** (FileVault on) | Runners start once you enter your password at the startup screen, which unlocks the disk and logs you in. For planned restarts, `sudo fdesetup authrestart` skips that once | Laptops, or any Mac that isn't physically secure |
+| **Automatic login** (FileVault off) | Runners come back on their own, even after a power cut. Turn FileVault off (System Settings → Privacy & Security → FileVault, or `sudo fdesetup disable`), then set System Settings → Users & Groups → Automatically log in as | A dedicated Mac in a locked space |
+
+macOS won't turn on automatic login while FileVault is on. Either way, the orchestrator
+runs as whoever logs in, so a dedicated runner account must be the one that logs in.
+This is only about the host: VM disks are separate and always boot straight to the
+`agent` user.
+
+Runner VMs outlive an orchestrator restart; `make runner-stop` deletes them (their sessions requeue), and
 `make runner-uninstall` stops everything. `make vm-create` / `vm-up` still give you a
 persistent VM for debugging, under any name except `runner-N`.

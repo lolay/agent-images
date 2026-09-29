@@ -4,9 +4,10 @@
 #
 # Usage: scripts/orchestrator-service.sh install|uninstall|stop-runners|status
 #
-# The LaunchAgent starts at the host user's login. Turn on automatic login for
-# that user so runners come back after a host restart. Runner VMs run as their
-# own launchd jobs, so restarting the orchestrator leaves them serving.
+# The LaunchAgent starts at the host user's login. After a host restart, either
+# log in (FileVault on) or use automatic login (FileVault off); see README "Run".
+# Runner VMs run as their own launchd jobs, so restarting the orchestrator
+# leaves them serving.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,7 +18,7 @@ source "$script_dir/lib.sh"
 readonly action="${1:?usage: orchestrator-service.sh install|uninstall|stop-runners|status}"
 readonly label="com.agent-images.orchestrator"
 readonly plist="$HOME/Library/LaunchAgents/$label.plist"
-readonly log_file="$AGENT_IMAGES_LOG_DIR/orchestrator.log"
+readonly log_base="$AGENT_IMAGES_LOG_DIR/orchestrator"
 domain="$(launchd_domain)"
 readonly domain
 
@@ -50,10 +51,10 @@ install)
 		die "no Keychain item agent-images.claude-environment-secret; run make secret-set NAME=claude-environment-secret"
 	is_loaded "$label" && die "$label is already installed; run make runner-uninstall first"
 	mkdir -p "$(dirname "$plist")" "$AGENT_IMAGES_LOG_DIR"
-	write_host_plist "$plist" "$label" "$log_file" true \
+	write_host_plist "$plist" "$label" "$log_base" true \
 		/bin/bash "$AGENT_IMAGES_DIR/scripts/orchestrator-run.sh"
 	launchctl bootstrap "$domain" "$plist"
-	log "installed $label (log: $log_file)"
+	log "installed $label (logs: $log_base.out, $log_base.err)"
 	;;
 uninstall)
 	if is_loaded "$label"; then
@@ -75,10 +76,12 @@ status)
 	else
 		printf 'orchestrator  not installed\n'
 	fi
-	if [[ -f "$log_file" ]]; then
-		printf '  log\n'
-		tail -n "${LOG_LINES:-5}" "$log_file" | sed 's/^/    /'
-	fi
+	for stream in out err; do
+		if [[ -s "$log_base.$stream" ]]; then
+			printf '  %s\n' "$(basename "$log_base.$stream")"
+			tail -n "${LOG_LINES:-5}" "$log_base.$stream" | sed 's/^/    /'
+		fi
+	done
 	names="$(runner_names)"
 	if [[ -z "$names" ]]; then
 		printf '\nno runner VMs\n'

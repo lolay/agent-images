@@ -16,6 +16,7 @@ readonly config_dir="$HOME/.config/agent-runner"
 readonly runner_env="$config_dir/runner.env"
 
 log() { printf '%s agent-runner: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
+warn() { log "$@" >&2; }
 
 if [[ ! -f "$runner_env" ]]; then
 	# Not configured yet. Exiting is fine: launchd starts us once the file appears.
@@ -31,7 +32,7 @@ set +a
 : "${AGENT:?AGENT is not set in $runner_env}"
 readonly runner_command="$HOME/bin/agent-runner-$AGENT"
 if [[ ! -x "$runner_command" ]]; then
-	log "unknown AGENT=$AGENT (no $runner_command)"
+	warn "unknown AGENT=$AGENT (no $runner_command)"
 	exit 1
 fi
 
@@ -39,8 +40,18 @@ export AGENT_RUNNER_CONFIG_DIR="$config_dir"
 log "starting $AGENT runner as ${RUNNER_LABEL:-$(hostname -s)}"
 
 if [[ "${EPHEMERAL:-false}" == "true" ]]; then
-	status=0
-	"$runner_command" || status=$?
+	# Not exec: this script powers the VM off afterwards. launchd signals only
+	# this process, so pass SIGTERM on and let the runner drain and push its
+	# session's work before exiting.
+	"$runner_command" &
+	runner_pid=$!
+	trap 'kill -TERM "$runner_pid" 2>/dev/null' TERM INT
+	# A trapped signal interrupts wait with 128+signal; wait again until the
+	# runner itself exits, so status is its own.
+	while :; do
+		if wait "$runner_pid"; then status=0; else status=$?; fi
+		kill -0 "$runner_pid" 2>/dev/null || break
+	done
 	log "$AGENT runner exited ($status); shutting down"
 	exec sudo /sbin/shutdown -h now
 fi

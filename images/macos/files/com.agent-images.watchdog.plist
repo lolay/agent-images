@@ -18,7 +18,7 @@
   </dict>
   <key>StartInterval</key><integer>30</integer>
   <key>ProcessType</key><string>Background</string>
-  <key>StandardOutPath</key><string>__AGENT_HOME__/Library/Logs/agent-runner-watchdog.log</string>
-  <key>StandardErrorPath</key><string>__AGENT_HOME__/Library/Logs/agent-runner-watchdog.log</string>
+  <key>StandardOutPath</key><string>__AGENT_HOME__/Library/Logs/agent-runner-watchdog.out</string>
+  <key>StandardErrorPath</key><string>__AGENT_HOME__/Library/Logs/agent-runner-watchdog.err</string>
 </dict>
 </plist>
