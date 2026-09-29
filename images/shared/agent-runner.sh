@@ -1,7 +1,7 @@
 #!/bin/bash
 # Starts this VM's runner, and restarts it whenever it exits for as long as
 # ~/.config/agent-runner/runner.env exists. On macOS, launchd runs it in the
-# agent user's GUI session (Simulator needs one) through `zsh -l`, so PATH comes
+# guest user's GUI session (Simulator needs one) through `zsh -l`, so PATH comes
 # from ~/.zprofile (KeepAlive PathState). On Linux, systemd's agent-runner.path
 # starts agent-runner.service through `bash -l` (PATH from /etc/profile.d).
 #
@@ -54,6 +54,6 @@ if [[ "${EPHEMERAL:-false}" == "true" ]]; then
 		kill -0 "$runner_pid" 2>/dev/null || break
 	done
 	log "$AGENT runner exited ($status); shutting down"
-	exec sudo /sbin/shutdown -h now
+	exec sudo -n /sbin/shutdown -h now
 fi
 exec "$runner_command"

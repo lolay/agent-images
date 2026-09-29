@@ -1,27 +1,35 @@
 #!/bin/bash
-# Hands Homebrew to the agent user, then installs the Brewfile as that user.
-# Homebrew's standard setup is one owning user; making it the agent lets each
-# runner upgrade its own CLI and lets sessions install what a project needs.
+# Installs the Brewfile as the guest user, who owns the base image's Homebrew
+# and its trust store, so each runner can upgrade its own CLI and sessions can
+# install what a project needs.
 set -euo pipefail
 
-: "${STAGING_DIR:?}" "${AGENT_USER:?}"
+: "${STAGING_DIR:?}"
 
 readonly brewfile="$STAGING_DIR/Brewfile"
 
-# sudo keeps admin's working directory, which the agent user can't read.
-cd /
+# Homebrew first on PATH, as in a login shell, so it doesn't warn that its git
+# is shadowed by /usr/bin/git; and no environment-variable hints in build logs.
+eval "$(/opt/homebrew/bin/brew shellenv)"
+export HOMEBREW_NO_ENV_HINTS=1
 
-sudo chown -R "$AGENT_USER:admin" /opt/homebrew
-
-brew_as_agent() { sudo -u "$AGENT_USER" -H /opt/homebrew/bin/brew "$@"; }
-
-brew_as_agent update --quiet
+# Packer shows stderr in red, and brew update and tap print routine progress
+# there (including a note that the base image's tuist tap had local edits it set
+# aside). Send those two to stdout; brew bundle keeps stderr, so a real error
+# still stands out, and set -e still fails the build on any non-zero exit.
+brew update --quiet 2>&1
 
 # Homebrew refuses to load formulae from untrusted third-party taps, so trust
 # each Brewfile tap before the bundle loads them.
 sed -n 's/^tap "\([^"]*\)".*/\1/p' "$brewfile" | while read -r tap; do
-	brew_as_agent tap "$tap"
-	brew_as_agent trust --tap "$tap"
+	brew tap "$tap" 2>&1
+	brew trust --tap "$tap"
 done
 
-brew_as_agent bundle --file="$brewfile"
+# The base image ships the stable claude-code cask, which conflicts with the
+# claude-code@latest the Brewfile installs; the Brewfile's channel wins.
+if brew list --cask claude-code >/dev/null 2>&1; then
+	brew uninstall --cask claude-code
+fi
+
+brew bundle --file="$brewfile"

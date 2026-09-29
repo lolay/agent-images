@@ -46,7 +46,7 @@ failing `make ci` points at a change in this repo rather than a tool update.
 | Two running macOS guests per host (Apple license, enforced by Virtualization.framework) | Scale with more hosts, not more VMs |
 | Simulator and UI tests need a GUI login session | One auto-login user per VM; the runner is a LaunchAgent in that session |
 | Guest macOS can't be newer than the host | Hosts and guests on Golden Gate |
-| Cirrus base images symlink `/Users/runner` to `/Users/admin` | The user is `agent` |
+| Cirrus base images log `admin` in automatically, with Homebrew, sudo, and Xcode set up for it | The guest user is `admin`; a separate user would have to redo all of that (and lost Homebrew's trust store) |
 | Hosted GitHub macOS runners can't nest VMs | CI lints and validates; images build on a Mac |
 | `/workspace` can't be created on macOS's read-only system volume | Claude's `--base-dir` is `~/workspace` |
 | macOS guests can't nest a hypervisor (on any chip), and Google ships no Linux arm64 emulator | Android emulator work runs on an x86_64 Linux host with nested KVM ([linux.md](linux.md)) |
@@ -65,9 +65,11 @@ failing `make ci` points at a change in this repo rather than a tool update.
 | Sessions push their work before an early end | `--push-outcome-on-release` plus a Stop hook in the image's `~/.claude` that asks Claude to commit and push; a fresh VM per session otherwise loses unpushed work |
 | Git proxy watchdog, log-only at first | [anthropics/claude-code#96856](https://github.com/anthropics/claude-code/issues/96856) breaks git for the rest of a session; `WATCHDOG_ACTION=terminate` requeues it onto a fresh VM once detection is proven |
 | No secrets for sessions | Parity with Anthropic-hosted environments; secret-needing work stays in GitHub Actions ([secrets.md](secrets.md)) |
-| The agent user owns Homebrew; runner CLIs are casks | Homebrew's standard single-owner setup; sessions can `brew install` what a project needs |
+| The guest user (`admin`) owns Homebrew; runner CLIs are casks | The base image's own setup; sessions can `brew install` what a project needs |
 | The runner upgrades its own cask at start | Rebuilds would otherwise be weekly; each `AGENT` upgrades only its own CLI |
-| File ownership isn't an isolation boundary | Sessions run as `agent`, which owns its home and Homebrew; the fresh clone per session is the reset |
+| The guest user is root in its VM (the base image's passwordless sudo) | Sessions can run installers that need root, and the host sets the hostname over `tart exec`. SSH with `admin`/`admin` stays on, reachable only from the host through Tart's NAT. The blast radius is one session's throwaway VM |
+| Host scripts act in the guest as the guest user | `tart exec` runs in the logged-in GUI session, which automatic login makes `admin`'s; only the hostname needs `sudo` |
+| File ownership isn't an isolation boundary | Sessions run as `admin`, which owns its home and Homebrew and has sudo; the fresh clone per session is the reset |
 | Claude's orchestrator starts VMs, not our own loop | The environment secret stays on the host; VMs boot per session plus `RUNNER_MIN_IDLE` standby; the hook is ~100 lines of shell |
 | Runners start at host login | Hosts are Macs with a display. After a restart, either log in each time (FileVault on) or use automatic login (FileVault off); macOS allows automatic login only without FileVault |
 | Android on a Linux host, one LXD VM per session | The emulator stays inside the session's VM with nested KVM; LXD is Tart's counterpart (ephemeral copy-on-write clones, `lxc exec`, image publish) and Ubuntu's first-party VM manager ([linux.md](linux.md)) |
@@ -102,17 +104,17 @@ order that's spent at registration, so a session that reads it gets nothing usab
 
 In the guest:
 
-1. Boot → `agent` auto-logs in → LaunchAgent `com.agent-images.runner` loads.
+1. Boot → `admin` logs in automatically → LaunchAgent `com.agent-images.runner` loads.
 2. launchd runs `~/bin/agent-runner` through `zsh -l`, so `PATH` comes from
    `~/.zprofile` (`brew shellenv`, then `~/bin`). It reads `~/.config/agent-runner/runner.env`. If it's
    missing, it exits and launchd waits for the file (`KeepAlive` / `PathState`).
 3. It execs `~/bin/agent-runner-<AGENT>`, which runs `brew upgrade --cask` for its
-   own CLI (`claude-code@latest`), makes sure the agent has an iPhone simulator
+   own CLI (`claude-code@latest`), makes sure the user has an iPhone simulator
    (`agent-ensure-simulator`; devices are per user, and this is the first moment the
-   agent's GUI session exists), and then starts the runner.
+   GUI session exists), and then starts the runner.
 4. The runner exits (Claude exits after every session by default). With
-   `EPHEMERAL=true`, `agent-runner` then runs `sudo /sbin/shutdown -h now`, the agent
-   user's only sudo rule (`/etc/sudoers.d/agent-shutdown`). Without it (a persistent
+   `EPHEMERAL=true`, `agent-runner` then runs `sudo -n /sbin/shutdown -h now` (the
+   base image gives `admin` passwordless sudo). Without it (a persistent
    VM from `make vm-up`), launchd restarts the runner, throttled to one start per 30 s.
 
 Alongside, LaunchAgent `com.agent-images.watchdog` runs `~/bin/agent-runner-watchdog`
@@ -133,7 +135,7 @@ is gone. It logs to `~/Library/Logs/agent-runner-watchdog.{out,err}`, and with
 **Claude**: `claude self-hosted-runner --environment-secret-file … --client-label
 <host>-<vm> --base-dir ~/workspace --capacity 1 --remove-session-state
 --confine-repo-settings enforce`, plus by default `--use-anthropic-git-proxy`
-(Anthropic-managed git auth; it replaces the agent user's `~/.gitconfig`),
+(Anthropic-managed git auth; it replaces the guest user's `~/.gitconfig`; fine, since each VM serves one session),
 `--configure-git` (git identity and Anthropic commit signing; the image has none),
 `--push-outcome-on-release`, `--release-idle-session-min 60` (an idle session gives
 its VM back and resumes on a fresh one), and `--kill-session-after-min 480`; and
@@ -161,24 +163,26 @@ stop; in ephemeral mode `agent-runner` forwards SIGTERM to it.
 A GitHub Actions self-hosted runner mode would cover Codex, Gemini, and OpenCode; not
 built yet.
 
-## 7. Open items to verify on first build
+## 7. Open items
+
+Verified on the first builds and boots (2026-09-29, Xcode 27.0 base image): `brew
+bundle` including casks; automatic login, which also decides who `tart exec` runs as
+(so the guest user is the base image's `admin`); `ensure-xcode.sh` end to end
+(`automationmodetool` prints a root password prompt but succeeds); `simctl` at build
+time (5 iPhone simulators); the runner starting with every flag, including bare
+`--remove-session-state`, and asking for a stop budget of 110 s (the plist gives 120 s).
+
+Still to check, mostly on the first real session:
 
 | Item | Why |
 | --- | --- |
-| `brew bundle` works as `agent` after the `/opt/homebrew` chown | The base image installs Homebrew as `admin` |
-| Casks install without a Gatekeeper prompt in a headless build | First cask installs in this image |
-| `--remove-session-state` accepts the bare form | Help shows `[bool]` |
-| `/etc/kcpassword` + `autoLoginUser` override the base image's admin auto-login | Golden Gate sets auto-login through Tart's provisioning options |
-| `tart exec` runs as a user with passwordless sudo | Every `vm-*` script relies on it |
 | The orchestrator LaunchAgent (`make runner-install`) starts at login and keeps running | Designed for it; not yet exercised (Anthropic's examples are Kubernetes and EC2) |
 | A standby VM registered with a work order claims the next queued session | A runner registered with the environment secret does (tested by hand); the docs say standby work orders behave the same |
 | 300 s covers clone, boot, auto-login, configure, and `brew upgrade` | `--expected-spawn-seconds` is the server lease; too short re-offers the session |
 | Hooks can `launchctl bootstrap` into the GUI domain from the orchestrator LaunchAgent | Runner VMs are launchd jobs so they outlive the hook and orchestrator restarts |
-| `ensure-xcode.sh` passes on the latest base image: license, first launch, iOS runtime, `_developer`, `DevToolsSecurity`, `automationmodetool` all non-interactive under `sudo` | It fails the build if Xcode isn't usable by `agent` |
-| `simctl` works for `agent` through `sudo -u` at build time, with no agent login session | If not, the build only warns and the runner creates the simulator at start |
-| macOS UI tests run as `agent` without prompts (automation mode, `_developer`) | The alternative is making `agent` an admin with passwordless sudo; test without it first |
+| macOS UI tests run without prompts (automation mode, `_developer`) | Checked at build: automation mode needs no authentication, the user is in `_developer`, developer mode is on; a real UI test hasn't run yet |
 | The watchdog's inputs exist: `_sessions/<id>.gitconfig` with `http.https://github.com/.proxy` | Runner internals from #96856; if they move, the watchdog silently finds nothing |
 | The runner process's command line starts `claude self-hosted-runner` | The watchdog's `pkill -f` pattern |
-| The Stop hook reaches sessions from `~agent/.claude` | The runner seeds that directory at startup; check a session's `$CLAUDE_CONFIG_DIR/hooks/` |
+| The Stop hook reaches sessions from `~admin/.claude` | The runner seeds that directory at startup; check a session's `$CLAUDE_CONFIG_DIR/hooks/` |
 | The Linux host's open items | Nested KVM in an LXD VM, ephemeral VM deletion, and the rest in [linux.md](linux.md#open-items) |
 

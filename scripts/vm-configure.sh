@@ -64,12 +64,12 @@ push_registration_secret() {
 	printf '%s' "$value" | guest_write "$vm" "$guest_path"
 }
 
-log "$vm: waiting for guest agent"
+log "$vm: waiting for the $GUEST_USER session"
 wait_for_guest "$vm" "$(setting VM_BOOT_TIMEOUT 300)"
 
 log "$vm: setting hostname to $runner_label"
 for key in ComputerName HostName LocalHostName; do
-	tart exec "$vm" sudo scutil --set "$key" "$runner_label"
+	tart exec "$vm" sudo -n /usr/sbin/scutil --set "$key" "$runner_label"
 done
 
 log "$vm: writing $agent registration secret"
@@ -90,8 +90,8 @@ if [[ "${EPHEMERAL:-false}" == "true" ]]; then
 	# Restarting it would register a second time, and a work order is single-use.
 	log "$vm: runner starts on runner.env"
 else
-	agent_uid="$(tart exec "$vm" id -u "$AGENT_USER")"
+	agent_uid="$(tart exec "$vm" id -u)"
 	log "$vm: restarting runner"
-	tart exec "$vm" sudo launchctl kickstart -k "gui/$agent_uid/$runner_agent"
+	tart exec "$vm" launchctl kickstart -k "gui/$agent_uid/$runner_agent"
 fi
 log "$vm: configured as $agent ($runner_label)"

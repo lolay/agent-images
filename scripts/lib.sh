@@ -3,7 +3,8 @@
 # Needs tart, launchctl, and the macOS `security` tool; the orchestrator also
 # needs claude.
 
-AGENT_USER="${AGENT_USER:-agent}"
+# The base image's user that logs in automatically and runs the runner.
+GUEST_USER="${GUEST_USER:-admin}"
 readonly KEYCHAIN_SERVICE_PREFIX="agent-images"
 
 # Hooks and LaunchAgents run these scripts outside make, so paths come from here.
@@ -25,11 +26,13 @@ die() {
 
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 
-# Waits until the guest agent answers, so tart exec works.
+# Waits until tart exec runs as the guest user. Tart's guest agent runs in the
+# logged-in GUI session, so exec is only useful once automatic login has put the
+# guest user there; every guest command in these scripts runs as that user.
 wait_for_guest() {
 	local target_vm="$1" timeout="${2:-180}" waited=0
-	until tart exec "$target_vm" true >/dev/null 2>&1; do
-		((waited >= timeout)) && die "$target_vm: guest agent not reachable after ${timeout}s (is the VM running?)"
+	until [[ "$(tart exec "$target_vm" id -un 2>/dev/null)" == "$GUEST_USER" ]]; do
+		((waited >= timeout)) && die "$target_vm: no $GUEST_USER session after ${timeout}s (is the VM running, and does it log in automatically?)"
 		sleep 5
 		waited=$((waited + 5))
 	done
@@ -43,14 +46,15 @@ keychain_secret() {
 		security find-generic-password -s "$service" -a default -w 2>/dev/null
 }
 
-# Writes stdin to a path under the agent user's home, owner-only. The content
-# travels over stdin so secrets never appear in a process list. It lands in a
-# temp file and is renamed into place, because launchd starts the runner the
-# moment runner.env appears and must never read half of it.
+# Writes stdin to a path under the guest user's home, owner-only. tart exec runs
+# as that user (see wait_for_guest). The content travels over stdin so secrets
+# never appear in a process list. It lands in a temp file and is renamed into
+# place, because launchd starts the runner the moment runner.env appears and
+# must never read half of it.
 guest_write() {
 	local target_vm="$1" relative_path="$2"
 	# shellcheck disable=SC2016 # expanded by the guest shell, not here
-	tart exec -i "$target_vm" sudo -u "$AGENT_USER" -H /bin/bash -c \
+	tart exec -i "$target_vm" /bin/bash -c \
 		'umask 077; target="$HOME/$1"; mkdir -p "$(dirname "$target")"; cat >"$target.partial" && mv -f "$target.partial" "$target"' \
 		_ "$relative_path"
 }

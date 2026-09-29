@@ -61,8 +61,8 @@ log "claude $(claude --version)"
 
 # Devices the image provides. A missing device shouldn't keep the runner from
 # serving sessions that don't need one.
-# macOS: simulator devices are per user, and this is the first point the agent's
-# GUI session exists.
+# macOS: simulator devices are per user, and this is the first point the guest
+# user's GUI session exists.
 if command -v agent-ensure-simulator >/dev/null 2>&1; then
 	agent-ensure-simulator || warn "no iPhone simulator; iOS simulator builds and UI tests will fail"
 fi

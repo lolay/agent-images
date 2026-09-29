@@ -10,7 +10,8 @@ source "tart-cli" "agent" {
   disk_size_gb = var.disk_size_gb
   headless     = true
 
-  # Cirrus base images ship with admin/admin and passwordless sudo.
+  # Cirrus base images ship with admin/admin and passwordless sudo. That user is
+  # also the guest user (var.guest_user): it logs in automatically and runs the runner.
   ssh_username = "admin"
   ssh_password = "admin"
   ssh_timeout  = "300s"
@@ -27,7 +28,6 @@ build {
   # Claude settings the Linux image uses too; both land flat in staging.
   provisioner "file" {
     sources = [
-      "${path.root}/scripts/make_kcpassword.py",
       "${path.root}/Brewfile",
       "${path.root}/files/",
       "${path.root}/../shared/",
@@ -38,18 +38,16 @@ build {
   provisioner "shell" {
     environment_vars = [
       "STAGING_DIR=${local.guest_staging}",
-      "AGENT_USER=${var.agent_user}",
-      "USER_PASSWORD=${var.user_password}",
+      "GUEST_USER=${var.guest_user}",
     ]
     scripts = [
-      "${path.root}/scripts/create-user.sh",
-      "${path.root}/scripts/enable-autologin.sh",
+      "${path.root}/scripts/setup-user.sh",
       "${path.root}/scripts/install-packages.sh",
       "${path.root}/scripts/ensure-xcode.sh",
     ]
   }
 
-  # Staging copies (including the generated kcpassword) shouldn't outlive the build.
+  # Staging copies shouldn't outlive the build.
   provisioner "shell" {
     inline = ["rm -rf ${local.guest_staging}"]
   }

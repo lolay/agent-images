@@ -1,7 +1,7 @@
 #!/bin/bash
 # Makes sure this user has an available iPhone simulator, creating one for the
-# newest iOS runtime if not. Simulator devices are per user and the agent user
-# starts with none, while the runtimes are machine-wide (ensure-xcode.sh).
+# newest iOS runtime if not. Simulator devices are per user, while the runtimes
+# are machine-wide (ensure-xcode.sh).
 # Idempotent. Installed as ~/bin/agent-ensure-simulator; agent-runner-claude
 # runs it at every start, and the image build tries it once.
 set -euo pipefail
