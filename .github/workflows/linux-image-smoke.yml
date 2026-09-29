@@ -61,6 +61,7 @@ jobs:
             adb -s emulator-5554 shell getprop ro.product.cpu.abi
             agent-emulator status
             agent-emulator stop
+            java -version 2>&1 | head -n 1
             claude --version
             ls ~/.claude ~/.claude/skills'
       - name: Green (no stderr from the image scripts)
