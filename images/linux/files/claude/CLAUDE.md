@@ -1,9 +1,8 @@
 # This machine
 
 A disposable Linux VM (Ubuntu 24.04, x86_64) that serves this one session and is
-deleted when it ends, so push anything worth keeping. You're the `agent` user,
-without sudo: add system packages to agent-images' `images/linux/packages.txt`
-rather than installing them here.
+deleted when it ends, so push anything worth keeping. You're the image's `ubuntu`
+user, with passwordless sudo: `sudo apt-get install` whatever a project needs.
 
 ## Android
 

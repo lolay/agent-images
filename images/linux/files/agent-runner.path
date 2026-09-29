@@ -1,11 +1,11 @@
-# Installed to /etc/systemd/system by create-user.sh, which replaces __AGENT_HOME__.
+# Installed to /etc/systemd/system by setup-user.sh, which replaces __GUEST_HOME__.
 # Starts the runner once vm-configure writes runner.env (launchd's PathState on
 # macOS), so a VM never starts a runner with missing settings or secrets.
 [Unit]
 Description=Start the agent runner once it is configured
 
 [Path]
-PathExists=__AGENT_HOME__/.config/agent-runner/runner.env
+PathExists=__GUEST_HOME__/.config/agent-runner/runner.env
 Unit=agent-runner.service
 
 [Install]

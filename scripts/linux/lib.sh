@@ -5,6 +5,11 @@
 # env_value, is_runner_name, paths) and replaces its Tart, launchd, and Keychain
 # functions with these.
 
+# The base image's own user, which runs the runner: the Ubuntu cloud image's
+# ubuntu (cloud-init gives it passwordless sudo), as Cirrus's admin is on macOS.
+# Set before sourcing lib.sh, which defaults it to admin.
+GUEST_USER="${GUEST_USER:-ubuntu}"
+
 # shellcheck source=scripts/lib.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib.sh"
 
@@ -40,13 +45,22 @@ wait_for_guest() {
 	done
 }
 
-# Writes stdin to a path under the agent user's home, owner-only, like the
+# Runs a command in the guest as the guest user, the way tart exec does on macOS.
+# lxc exec runs as root, so this goes through sudo; stdin passes through.
+# Usage: guest_exec <vm> <command>...
+guest_exec() {
+	local target_vm="$1"
+	shift
+	lxc exec "$target_vm" --force-noninteractive -- sudo -u "$GUEST_USER" -H "$@"
+}
+
+# Writes stdin to a path under the guest user's home, owner-only, like the
 # macOS guest_write: over stdin so secrets never appear in a process list, and
 # renamed into place so systemd never starts the runner on half a runner.env.
 guest_write() {
 	local target_vm="$1" relative_path="$2"
 	# shellcheck disable=SC2016 # expanded by the guest shell, not here
-	lxc exec "$target_vm" --force-noninteractive -- sudo -u "$AGENT_USER" -H /bin/bash -c \
+	guest_exec "$target_vm" /bin/bash -c \
 		'umask 077; target="$HOME/$1"; mkdir -p "$(dirname "$target")"; cat >"$target.partial" && mv -f "$target.partial" "$target"' \
 		_ "$relative_path"
 }

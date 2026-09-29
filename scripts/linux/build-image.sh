@@ -22,7 +22,9 @@ readonly next_alias="$LINUX_IMAGE_ALIAS-next"
 readonly guest_staging="/tmp/agent-images"
 readonly linux_dir="$AGENT_IMAGES_DIR/images/linux"
 readonly shared_dir="$AGENT_IMAGES_DIR/images/shared"
-readonly provisioners=(create-user install-packages ensure-android-sdk)
+readonly provisioners=(setup-user install-packages ensure-android-sdk)
+# Every provisioner's stderr, so a build that isn't green says so.
+readonly build_err="$AGENT_IMAGES_LOG_DIR/linux-build.err"
 base_image="$(setting LINUX_BASE_IMAGE ubuntu:24.04)"
 cpu="$(setting BUILD_CPU 8)"
 memory_gb="$(setting BUILD_MEMORY_GB 16)"
@@ -47,7 +49,8 @@ image_fingerprint() {
 # newest.
 if command -v snap >/dev/null 2>&1 && snap list lxd >/dev/null 2>&1; then
 	log "refreshing LXD"
-	sudo snap refresh lxd || log "LXD refresh failed; building with the installed version" >&2
+	# snap reports "no updates available" on stderr; it's progress, not an error.
+	sudo snap refresh lxd 2>&1 || log "LXD refresh failed; building with the installed version" >&2
 fi
 
 cleanup
@@ -57,7 +60,7 @@ lxc launch "$base_image" "$build_vm" --vm \
 	--device root,size="${disk_gb}GiB"
 wait_for_guest "$build_vm" 300
 # First-boot cloud-init holds the apt lock until it's done.
-lxc exec "$build_vm" -- cloud-init status --wait >/dev/null || true
+lxc exec "$build_vm" -- cloud-init status --wait >/dev/null 2>&1 || true
 
 log "staging files"
 lxc exec "$build_vm" -- mkdir -p "$guest_staging/scripts"
@@ -67,18 +70,20 @@ done
 tar -C "$linux_dir" -cf - packages.txt | lxc exec "$build_vm" --force-noninteractive -- tar -xf - --no-same-owner -C "$guest_staging"
 tar -C "$linux_dir/scripts" -cf - . | lxc exec "$build_vm" --force-noninteractive -- tar -xf - --no-same-owner -C "$guest_staging/scripts"
 
+# The provisioners run as the guest user, as the macOS image's do, and use sudo
+# for the root parts. Their stderr also goes to build_err: a green build has none.
+mkdir -p "$AGENT_IMAGES_LOG_DIR"
+: >"$build_err"
 for provisioner in "${provisioners[@]}"; do
-	log "running $provisioner"
-	lxc exec "$build_vm" --env STAGING_DIR="$guest_staging" --env AGENT_USER="$AGENT_USER" -- \
-		bash "$guest_staging/scripts/$provisioner.sh"
+	log "running $provisioner as $GUEST_USER"
+	guest_exec "$build_vm" env STAGING_DIR="$guest_staging" GUEST_USER="$GUEST_USER" \
+		bash "$guest_staging/scripts/$provisioner.sh" 2> >(tee -a "$build_err" >&2)
 done
 
 log "cleaning up the guest"
 # Staging copies shouldn't outlive the build. A cleared machine-id and
 # cloud-init state make each clone a new machine.
 lxc exec "$build_vm" -- rm -rf "$guest_staging"
-lxc exec "$build_vm" -- apt-get clean
-lxc exec "$build_vm" -- journalctl --vacuum-time=1s --quiet
 lxc exec "$build_vm" -- cloud-init clean --logs --machine-id
 lxc stop "$build_vm"
 
@@ -104,3 +109,8 @@ if [[ -n "$old_image" && "$old_image" != "$new_image" ]]; then
 	lxc image delete "$old_image" || log "couldn't delete the previous image $old_image" >&2
 fi
 log "built $LINUX_IMAGE_ALIAS (${new_image:0:12}) from $base_image"
+if [[ -s "$build_err" ]]; then
+	log "not green: $(wc -l <"$build_err") stderr lines from the provisioners (see $build_err)"
+else
+	log "green: no stderr from the provisioners"
+fi

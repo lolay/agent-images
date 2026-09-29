@@ -132,7 +132,7 @@ step. It passes `--var image_ref=$(IMAGE_REF)` so the image check follows `.env`
 | --- | --- |
 | `host` | Apple Silicon, `make`, `tart` ≥ 2.38, `security`, `.env` |
 | `default` (run host) | `claude`, `vms/runner.env`, the Keychain environment secret, the `IMAGE_REF` image; FileVault state (info only) |
-| `build` | `packer` ≥ 1.16.1, the Packer Tart plugin, `python3`, the agent password isn't the placeholder, `shellcheck`, `shfmt`, `plutil` |
+| `build` | `packer` ≥ 1.16.1, the Packer Tart plugin, `python3`, `shellcheck`, `shfmt`, `plutil` |
 | `linux` (Linux host) | x86_64, VT-x/AMD-V, nested KVM, `make`, `.env`, `lxc`, a ZFS storage pool, the `IMAGE_REF` image, `claude`, `vms/runner.env`, the environment secret file, lingering |
 
 ## Linux host

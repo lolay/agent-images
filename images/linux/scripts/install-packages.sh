@@ -1,26 +1,26 @@
 #!/bin/bash
 # Installs packages.txt from Ubuntu's archive, then Claude Code with its native
-# installer as the agent user (~/.local/bin/claude, which `claude update`
-# upgrades; the runner does that at every start). Runs in the guest as root,
-# after create-user.sh.
+# installer (~/.local/bin/claude, which `claude update` upgrades; the runner does
+# that at every start). Runs in the guest as the guest user, after setup-user.sh.
+#
+# No apt-get upgrade: each build starts from a fresh ubuntu:24.04, the way the
+# macOS image doesn't run softwareupdate. needrestart stays out of the build.
 set -euo pipefail
 
-: "${STAGING_DIR:?}" "${AGENT_USER:?}"
+: "${STAGING_DIR:?}"
 
 log() { printf '==> install-packages: %s\n' "$*"; }
-
-export DEBIAN_FRONTEND=noninteractive
+apt() { sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get -q "$@"; }
 
 mapfile -t packages < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$STAGING_DIR/packages.txt")
 log "installing ${#packages[@]} packages"
-apt-get update -q
-apt-get upgrade -y -q
-apt-get install -y -q --no-install-recommends "${packages[@]}"
-apt-get autoremove -y -q
-apt-get clean
+apt update
+apt install -y --no-install-recommends "${packages[@]}"
+apt clean
 
-if ! sudo -u "$AGENT_USER" -H bash -lc 'command -v claude' >/dev/null 2>&1; then
-	log "installing Claude Code for $AGENT_USER"
-	sudo -u "$AGENT_USER" -H bash -lc 'curl -fsSL https://claude.ai/install.sh | bash'
+readonly claude="$HOME/.local/bin/claude"
+if [[ ! -x "$claude" ]]; then
+	log "installing Claude Code"
+	curl -fsSL https://claude.ai/install.sh | bash
 fi
-log "claude $(sudo -u "$AGENT_USER" -H bash -lc 'claude --version')"
+log "claude $("$claude" --version)"

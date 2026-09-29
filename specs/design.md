@@ -69,6 +69,7 @@ failing `make ci` points at a change in this repo rather than a tool update.
 | The runner upgrades its own cask at start | Rebuilds would otherwise be weekly; each `AGENT` upgrades only its own CLI |
 | The guest user is root in its VM (the base image's passwordless sudo) | Sessions can run installers that need root, and the host sets the hostname over `tart exec`. SSH with `admin`/`admin` stays on, reachable only from the host through Tart's NAT. The blast radius is one session's throwaway VM |
 | Host scripts act in the guest as the guest user | `tart exec` runs in the logged-in GUI session, which automatic login makes `admin`'s; only the hostname needs `sudo` |
+| On Linux the guest user is the cloud image's `ubuntu` | The same reasoning as `admin`: cloud-init gives it passwordless sudo, so a separate user would redo and fight that in every clone ([linux.md](linux.md)) |
 | File ownership isn't an isolation boundary | Sessions run as `admin`, which owns its home and Homebrew and has sudo; the fresh clone per session is the reset |
 | Claude's orchestrator starts VMs, not our own loop | The environment secret stays on the host; VMs boot per session plus `RUNNER_MIN_IDLE` standby; the hook is ~100 lines of shell |
 | Runners start at host login | Hosts are Macs with a display. After a restart, either log in each time (FileVault on) or use automatic login (FileVault off); macOS allows automatic login only without FileVault |

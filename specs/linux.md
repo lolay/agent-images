@@ -39,8 +39,8 @@ emulator.wtf, Genymotion).
 
 ## Design
 
-The same model as the Mac runner: one image, one ephemeral VM per session, one
-`agent` user per VM, Claude's orchestrator on the host. The emulator runs inside the
+The same model as the Mac runner: one image, one ephemeral VM per session, the base
+image's own user in each VM, Claude's orchestrator on the host. The emulator runs inside the
 session's VM with nested KVM, so the session owns it: restarts, other API levels,
 Gradle Managed Devices.
 
@@ -67,7 +67,7 @@ writing the exec channel, image publishing, and ephemeral VMs ourselves.
 - **Packages:** `packages.txt` from Ubuntu's archive, unpinned: the Brewfile's session
   tools, OpenJDK 21, and the emulator's libraries.
 - **Claude Code:** the native installer; the runner runs `claude update` at start.
-- **Android SDK** in `/opt/android-sdk`, owned by `agent`:
+- **Android SDK** in `/opt/android-sdk`, owned by the guest user:
   - installed through Google's Android CLI (`android sdk`, which replaced sdkmanager in
     2026): the newest stable API level with an x86_64 Google APIs image (37.0 today)
     and the newest build tools;
@@ -87,10 +87,14 @@ writing the exec channel, image publishing, and ephemeral VMs ourselves.
   the Claude runner script, the git proxy watchdog, and the Stop hook and settings.
   systemd stands in for launchd: `agent-runner.path` starts the runner when
   `runner.env` appears, and `agent-runner-watchdog.timer` runs the watchdog every 30 s.
-- **Users:** `agent` only, in `kvm`, with the same single sudo rule
-  (`/sbin/shutdown -h now`). The cloud image's `ubuntu` user and `openssh-server` are
-  removed; the host manages VMs through `lxc exec`. Sessions can't `apt-get install`;
-  system packages go in `packages.txt`.
+- **User:** the cloud image's own `ubuntu` (`GUEST_USER`), the counterpart of the
+  macOS image's `admin`: cloud-init creates it with passwordless sudo, so it's root in
+  its VM and sessions can `sudo apt-get install` what a project needs. `setup-user.sh`
+  only adds it to `kvm` and installs agent-images' files, and fails the build if a new
+  base image stops giving it passwordless sudo. The provisioners run as that user and
+  use `sudo` for the root parts, and host scripts act in the guest as that user
+  (`guest_exec`), as on macOS. A separate user would redo what cloud-init sets up and
+  fight it in every clone.
 - `~/.claude/CLAUDE.md` tells sessions about the emulator and the SDK.
 
 ### Host
@@ -104,6 +108,15 @@ journal to `build/logs/`, and waits for the VM to delete itself. The shared help
 come from `scripts/lib.sh`; the host scripts weren't merged into one platform layer
 because the macOS path hasn't run on hardware yet either. Once both have, that's a
 follow-up.
+
+### Green builds
+
+As on the Mac, a good build writes nothing to stderr: tools that report routine
+progress there (`snap refresh`, `cloud-init status`, `adb`'s daemon notices) are sent
+to stdout, and real errors keep stderr and fail the build through `set -e`.
+`make build` copies the provisioners' stderr to `build/logs/linux-build.err` and ends
+with "green" or the number of stderr lines. The `linux-image-smoke` workflow fails
+if the image scripts write any stderr.
 
 ## Hardware
 
@@ -149,7 +162,8 @@ for an afternoon's validation; it has to be `.metal`.
 ## Limits
 
 - Two sessions per 64 GB box, like a Mac host.
-- Sessions have no root, so system packages come from the image.
+- Sessions are root in their VM (passwordless sudo), as on the Mac; the VM is thrown
+  away after one session.
 - Container isolation isn't used: each session gets a VM, as on the Mac.
 - Google's Android CLI collects usage metrics unless called with `--no-metrics`; the
   image build always passes it, and `CLAUDE.md` asks sessions to.
@@ -167,7 +181,7 @@ assumptions):
 | A session running `./gradlew connectedDebugAndroidTest` (nowinandroid) | End to end |
 | The VM deletes itself after its session; `runner-stop` requeues it | Lifecycle |
 | Two VMs at once; the orchestrator back after a reboot | Capacity, lingering |
-| `CLAUDE.md` and `skills/android-cli` reach sessions from `~agent/.claude` | The runner seeds settings and hooks; skills and memory are assumed |
+| `CLAUDE.md` and `skills/android-cli` reach sessions from `~ubuntu/.claude` | The runner seeds settings and hooks; skills and memory are assumed |
 | `systemd-run --user` works from the orchestrator's user unit | The hook's job submission |
 | triage runs on Linux and the `linux` profile's checks read as intended | Written without a Linux triage run |
 

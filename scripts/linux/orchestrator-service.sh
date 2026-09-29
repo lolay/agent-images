@@ -47,14 +47,14 @@ vm_status() {
 		printf '  state    not running (or lxd-agent unreachable)\n'
 		return
 	fi
-	if lxc exec "$vm" -- pgrep -u "$AGENT_USER" -f 'self-hosted-runner' >/dev/null 2>&1; then
+	if lxc exec "$vm" -- pgrep -u "$GUEST_USER" -f 'self-hosted-runner' >/dev/null 2>&1; then
 		printf '  process  up\n'
 	else
 		printf '  process  down\n'
 	fi
 	health="$(lxc exec "$vm" -- curl -fsS --max-time 5 "$claude_health_url" 2>/dev/null || true)"
 	printf '  healthz  %s\n' "${health:-no response}"
-	printf '  %s\n' "$(lxc exec "$vm" -- sudo -u "$AGENT_USER" -H bash -lc 'agent-emulator status' 2>/dev/null |
+	printf '  %s\n' "$(guest_exec "$vm" bash -lc 'agent-emulator status' 2>/dev/null |
 		head -n 1 || echo 'emulator  unknown')"
 }
 
