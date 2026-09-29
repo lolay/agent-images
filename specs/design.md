@@ -27,6 +27,7 @@ a logged-in GUI session; the vendor's runner supplies the work.
 | Ephemeral VMs: one session per clone | A session can `brew install` or decrypt secrets without affecting the next, like a GitHub Actions runner |
 | One image; runner chosen at configure time | The Xcode image is ~150 GB; variants would differ by almost nothing |
 | Secrets in the host Keychain, pushed over `tart exec` stdin | Never in the repo, the image, or a process list |
+| No secrets for sessions | Parity with Anthropic-hosted environments; secret-needing work stays in GitHub Actions ([secrets.md](secrets.md)) |
 | The agent user owns Homebrew; runner CLIs are casks | Homebrew's standard single-owner setup; sessions can `brew install` what a project needs |
 | The runner upgrades its own cask at start | Rebuilds would otherwise be weekly; each `AGENT` upgrades only its own CLI |
 | File ownership isn't an isolation boundary | Sessions run as `agent`, which owns its home and Homebrew; the fresh clone per session is the reset |
