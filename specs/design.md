@@ -27,6 +27,8 @@ a logged-in GUI session; the vendor's runner supplies the work.
 | Ephemeral VMs: one session per clone | A session can `brew install` or decrypt secrets without affecting the next, like a GitHub Actions runner |
 | One image; runner chosen at configure time | The Xcode image is ~150 GB; variants would differ by almost nothing |
 | Secrets in the host Keychain, pushed over `tart exec` stdin | Never in the repo, the image, or a process list |
+| Sessions push their work before an early end | `--push-outcome-on-release` plus a Stop hook in the image's `~/.claude` that asks Claude to commit and push; a fresh VM per session otherwise loses unpushed work |
+| Git proxy watchdog, log-only at first | [anthropics/claude-code#96856](https://github.com/anthropics/claude-code/issues/96856) breaks git for the rest of a session; `WATCHDOG_ACTION=terminate` requeues it onto a fresh VM once detection is proven |
 | No secrets for sessions | Parity with Anthropic-hosted environments; secret-needing work stays in GitHub Actions ([secrets.md](secrets.md)) |
 | The agent user owns Homebrew; runner CLIs are casks | Homebrew's standard single-owner setup; sessions can `brew install` what a project needs |
 | The runner upgrades its own cask at start | Rebuilds would otherwise be weekly; each `AGENT` upgrades only its own CLI |
@@ -60,6 +62,12 @@ In the guest:
    `EPHEMERAL=true`, `agent-runner` then runs `sudo /sbin/shutdown -h now`, the agent
    user's only sudo rule (`/etc/sudoers.d/agent-shutdown`). Without it (a persistent
    VM from `make vm-up`), launchd restarts the runner, throttled to one start per 30 s.
+
+Alongside, LaunchAgent `com.agent-images.watchdog` runs `~/bin/agent-runner-watchdog`
+every 30 s. It reads each session's git proxy port from
+`~/workspace/_sessions/<id>.gitconfig`; two refused connections in a row mean the relay
+is gone. It logs to `~/Library/Logs/agent-runner-watchdog.log`, and with
+`WATCHDOG_ACTION=terminate` sends the runner SIGTERM so the session requeues.
 
 | File in the guest | Written by | Mode |
 | --- | --- | --- |
@@ -101,4 +109,7 @@ built yet.
 | `/etc/kcpassword` + `autoLoginUser` override the base image's admin auto-login | Golden Gate sets auto-login through Tart's provisioning options |
 | `tart exec` runs as a user with passwordless sudo | Every `vm-*` script relies on it |
 | Pin `base_image` to a specific Xcode tag | `latest` moves |
+| The watchdog's inputs exist: `_sessions/<id>.gitconfig` with `http.https://github.com/.proxy` | Runner internals from #96856; if they move, the watchdog silently finds nothing |
+| The runner process's command line starts `claude self-hosted-runner` | The watchdog's `pkill -f` pattern |
+| The Stop hook reaches sessions from `~agent/.claude` | The runner seeds that directory at startup; check a session's `$CLAUDE_CONFIG_DIR/hooks/` |
 

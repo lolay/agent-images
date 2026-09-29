@@ -7,6 +7,10 @@
 #   CLAUDE_LOCK_TO_ACCOUNT  Optional. Only this account's sessions are assigned.
 #   CLAUDE_USE_GIT_PROXY    true (default) = Anthropic-managed git auth; no git
 #                           credentials on the VM. Replaces ~/.gitconfig.
+#   CLAUDE_PUSH_OUTCOME_ON_RELEASE
+#                           true (default) = when the runner ends a session early
+#                           (drain, idle release, failure), push its committed work
+#                           so the session resumes from it on the next runner.
 # Secret: ~/.claude-runner/environment-secret (mode 600).
 #
 # With the default --drain-grace-sec 0 and --capacity 1, the runner exits after
@@ -17,6 +21,7 @@ readonly secret_file="$HOME/.claude-runner/environment-secret"
 readonly base_dir="$HOME/workspace"
 : "${RUNNER_LABEL:=$(hostname -s)}"
 : "${CLAUDE_USE_GIT_PROXY:=true}"
+: "${CLAUDE_PUSH_OUTCOME_ON_RELEASE:=true}"
 
 log() { printf '%s claude-runner: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 
@@ -44,6 +49,9 @@ if [[ -n "${CLAUDE_LOCK_TO_ACCOUNT:-}" ]]; then
 fi
 if [[ "$CLAUDE_USE_GIT_PROXY" == "true" ]]; then
 	args+=(--use-anthropic-git-proxy)
+fi
+if [[ "$CLAUDE_PUSH_OUTCOME_ON_RELEASE" == "true" ]]; then
+	args+=(--push-outcome-on-release)
 fi
 
 exec claude "${args[@]}"

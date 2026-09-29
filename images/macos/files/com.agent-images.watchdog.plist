@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Installed to ~/Library/LaunchAgents by create-user.sh, which replaces __AGENT_HOME__.
+     Checks every session's git proxy every 30 s; see agent-runner-watchdog. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.agent-images.watchdog</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-l</string>
+    <string>-c</string>
+    <string>exec "$HOME/bin/agent-runner-watchdog"</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string>__AGENT_HOME__</string>
+  </dict>
+  <key>StartInterval</key><integer>30</integer>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>__AGENT_HOME__/Library/Logs/agent-runner-watchdog.log</string>
+  <key>StandardErrorPath</key><string>__AGENT_HOME__/Library/Logs/agent-runner-watchdog.log</string>
+</dict>
+</plist>

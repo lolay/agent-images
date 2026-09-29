@@ -50,7 +50,8 @@ SECRET_NAMES := claude-environment-secret
 RUN_TOOLS := tart security
 BUILD_TOOLS := $(RUN_TOOLS) packer python3 shellcheck shfmt plutil
 SHELL_SCRIPTS := $(wildcard $(MACOS_DIR)/scripts/*.sh $(MACOS_DIR)/files/*.sh \
-                   $(MACOS_DIR)/files/runners/*.sh scripts/*.sh)
+                   $(MACOS_DIR)/files/runners/*.sh $(MACOS_DIR)/files/claude/hooks/*.sh \
+                   scripts/*.sh)
 
 confirm = @if [ -z "$($(1))" ]; then \
   printf 'Refusing to run "make %s": %s\nRe-run with %s=1.\n' "$@" "$(2)" "$(1)"; \
@@ -90,6 +91,7 @@ lint: ## Check formatting and static analysis (no writes)
 	shellcheck -x $(SHELL_SCRIPTS)
 	shfmt -d $(SHELL_SCRIPTS)
 	@for plist in $(MACOS_DIR)/files/*.plist; do plutil -lint "$$plist"; done
+	@python3 -m json.tool $(MACOS_DIR)/files/claude/settings.json >/dev/null && printf '%s: OK\n' $(MACOS_DIR)/files/claude/settings.json
 
 format: ## Auto-fix Packer and shell formatting
 	packer fmt -recursive $(MACOS_DIR)
