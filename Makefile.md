@@ -95,7 +95,7 @@ Every LaunchAgent and job writes stdout to `.out` and stderr to `.err`.
 | `vm-stop` / `vm-delete` | `tart stop`; `tart delete` after stopping |
 | `vm-status` | `scripts/vm-status.sh`: runner, process, Claude `/healthz`, last log lines |
 | `vm-logs` | Tails a running guest's `~/Library/Logs/agent-runner.out` and `.err` |
-| `vm-versions` | macOS, Xcode, and Claude Code versions in the guest |
+| `vm-versions` | macOS, Xcode and its developer dir, iOS simulator runtimes, the agent's iPhone simulators, and Claude Code in the guest |
 | `vm-list` | `tart list` |
 | `secret-set` | `security add-generic-password` into service `agent-images.<NAME>`, account `<VM>` or `default`; prompts for the value |
 

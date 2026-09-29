@@ -98,7 +98,9 @@ In the guest:
    `~/.zprofile` (`brew shellenv`, then `~/bin`). It reads `~/.config/agent-runner/runner.env`. If it's
    missing, it exits and launchd waits for the file (`KeepAlive` / `PathState`).
 3. It execs `~/bin/agent-runner-<AGENT>`, which runs `brew upgrade --cask` for its
-   own CLI (`claude-code@latest`) and then starts the runner.
+   own CLI (`claude-code@latest`), makes sure the agent has an iPhone simulator
+   (`agent-ensure-simulator`; devices are per user, and this is the first moment the
+   agent's GUI session exists), and then starts the runner.
 4. The runner exits (Claude exits after every session by default). With
    `EPHEMERAL=true`, `agent-runner` then runs `sudo /sbin/shutdown -h now`, the agent
    user's only sudo rule (`/etc/sudoers.d/agent-shutdown`). Without it (a persistent
@@ -163,6 +165,9 @@ built yet.
 | A standby VM registered with a work order claims the next queued session | A runner registered with the environment secret does (tested by hand); the docs say standby work orders behave the same |
 | 300 s covers clone, boot, auto-login, configure, and `brew upgrade` | `--expected-spawn-seconds` is the server lease; too short re-offers the session |
 | Hooks can `launchctl bootstrap` into the GUI domain from the orchestrator LaunchAgent | Runner VMs are launchd jobs so they outlive the hook and orchestrator restarts |
+| `ensure-xcode.sh` passes on the latest base image: license, first launch, iOS runtime, `_developer`, `DevToolsSecurity`, `automationmodetool` all non-interactive under `sudo` | It fails the build if Xcode isn't usable by `agent` |
+| `simctl` works for `agent` through `sudo -u` at build time, with no agent login session | If not, the build only warns and the runner creates the simulator at start |
+| macOS UI tests run as `agent` without prompts (automation mode, `_developer`) | The alternative is making `agent` an admin with passwordless sudo; test without it first |
 | The watchdog's inputs exist: `_sessions/<id>.gitconfig` with `http.https://github.com/.proxy` | Runner internals from #96856; if they move, the watchdog silently finds nothing |
 | The runner process's command line starts `claude self-hosted-runner` | The watchdog's `pkill -f` pattern |
 | The Stop hook reaches sessions from `~agent/.claude` | The runner seeds that directory at startup; check a session's `$CLAUDE_CONFIG_DIR/hooks/` |

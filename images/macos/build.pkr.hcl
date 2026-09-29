@@ -42,6 +42,7 @@ build {
       "${path.root}/scripts/create-user.sh",
       "${path.root}/scripts/enable-autologin.sh",
       "${path.root}/scripts/install-packages.sh",
+      "${path.root}/scripts/ensure-xcode.sh",
     ]
   }
 

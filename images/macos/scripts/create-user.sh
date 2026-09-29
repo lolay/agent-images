@@ -21,6 +21,7 @@ sudo chmod 700 "$home/.claude-runner"
 sudo install -m 644 "$STAGING_DIR/zprofile" "$home/.zprofile"
 sudo install -m 755 "$STAGING_DIR/agent-runner.sh" "$home/bin/agent-runner"
 sudo install -m 755 "$STAGING_DIR/agent-runner-watchdog.sh" "$home/bin/agent-runner-watchdog"
+sudo install -m 755 "$STAGING_DIR/agent-ensure-simulator.sh" "$home/bin/agent-ensure-simulator"
 for runner in "$STAGING_DIR"/runners/*.sh; do
 	sudo install -m 755 "$runner" "$home/bin/agent-runner-$(basename "$runner" .sh)"
 done
