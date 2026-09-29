@@ -13,6 +13,8 @@
 #   stop    Shut it down and wait for it to exit.
 #   status  Whether it runs, its adb state, and KVM acceleration.
 #
+# AGENT_EMULATOR_ARGS adds emulator flags to start (space-separated).
+#
 # Sessions own it: stop it and run `emulator` with other flags or AVDs as needed.
 set -euo pipefail
 
@@ -43,10 +45,15 @@ start() {
 		die "no usable /dev/kvm; the emulator needs KVM (nested virtualization on the host, and $(id -un) in the kvm group)"
 	command -v emulator >/dev/null 2>&1 || die "emulator not on PATH (is ANDROID_HOME set?)"
 
-	local args=(-avd "$avd" -port "$port" -no-window -no-audio -no-boot-anim -gpu swiftshader -accel on)
+	# -no-metrics: the emulator's metrics notice is due to become a blocking prompt.
+	local args=(-avd "$avd" -port "$port" -no-window -no-audio -no-boot-anim -no-metrics -gpu swiftshader -accel on)
 	if [[ "${AGENT_EMULATOR_SAVE_SNAPSHOT:-0}" != "1" ]]; then
 		args+=(-no-snapshot-save)
 	fi
+	# AGENT_EMULATOR_ARGS: extra emulator flags, space-separated.
+	local extra=()
+	read -r -a extra <<<"${AGENT_EMULATOR_ARGS:-}"
+	args+=("${extra[@]}")
 	mkdir -p "$log_dir"
 	printf '\n=== %s emulator %s ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${args[*]}" >>"$log_file"
 	# Detached from this shell, so it outlives the caller (the runner's start).

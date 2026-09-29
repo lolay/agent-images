@@ -1,0 +1,61 @@
+# Temporary: finds emulator flags that boot reliably two virtualization levels
+# deep (a hosted runner is itself a VM, like an LXD runner VM). Deleted once
+# agent-emulator's defaults are settled.
+name: emulator-experiment
+
+on:
+  push:
+    branches: [claude/laughing-wright-catzvb]
+
+permissions:
+  contents: read
+
+jobs:
+  boot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - { name: baseline, args: "" }
+          - { name: crash-report-off, args: "-crash-report-mode disabled" }
+          - { name: no-snapshot, args: "-no-snapshot" }
+          - { name: no-snapshot-crash-off, args: "-no-snapshot -crash-report-mode disabled" }
+          - { name: two-cores, args: "-cores 2 -crash-report-mode disabled" }
+    name: boot (${{ matrix.variant.name }})
+    env:
+      STAGING_DIR: /tmp/agent-images
+      AGENT_USER: agent
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+            sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          nproc; free -g; cat /sys/module/kvm_*/parameters/nested || true
+      - name: Provision
+        run: |
+          mkdir -p "$STAGING_DIR/scripts"
+          cp -R images/shared/. images/linux/files/. "$STAGING_DIR/"
+          cp images/linux/packages.txt "$STAGING_DIR/"
+          cp images/linux/scripts/*.sh "$STAGING_DIR/scripts/"
+          for s in create-user install-packages; do
+            sudo --preserve-env=STAGING_DIR,AGENT_USER bash "$STAGING_DIR/scripts/$s.sh" >/dev/null
+          done
+          sudo --preserve-env=STAGING_DIR,AGENT_USER AGENT_EMULATOR_SNAPSHOT=0 bash "$STAGING_DIR/scripts/ensure-android-sdk.sh"
+      - name: Boot
+        env:
+          AGENT_EMULATOR_ARGS: ${{ matrix.variant.args }}
+        run: |
+          sudo --preserve-env=AGENT_EMULATOR_ARGS -u "$AGENT_USER" -H bash -lc '
+            set -euo pipefail
+            start=$SECONDS
+            agent-emulator start && agent-emulator wait
+            echo "booted in $((SECONDS - start)) s"
+            adb -s emulator-5554 shell getprop ro.build.version.sdk'
+      - name: Emulator log
+        if: always()
+        run: sudo grep -E 'ERROR|WARNING|hang|Hang|boot' "/home/$AGENT_USER/.local/state/agent-emulator.log" | tail -40 || true
