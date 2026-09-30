@@ -176,12 +176,13 @@ the runner deregistered, the VM powered off and was deleted. Tart before 2.39 ca
 `tart get`/`list` a running VM with an ASIF disk (openai/tart#1344), so `vm_exists`
 checks Tart's VM directory instead.
 
+Verified on a second host (hangar): `make runner-install` runs the orchestrator as a
+LaunchAgent, and its `spawn-runner` hook submits runner VM jobs from there.
+
 Still to check:
 
 | Item | Why |
 | --- | --- |
-| The orchestrator LaunchAgent (`make runner-install`) starts at login and keeps running | Designed for it; not yet exercised (Anthropic's examples are Kubernetes and EC2) |
-| Hooks can `launchctl bootstrap` into the GUI domain from the orchestrator LaunchAgent | Works from an orchestrator started in a terminal (`make runner-run`); the LaunchAgent case is untested |
 | macOS UI tests run without prompts (automation mode, `_developer`) | Checked at build: automation mode needs no authentication, the user is in `_developer`, developer mode is on; a real UI test hasn't run yet |
 | The watchdog acts on a real broken relay (`WATCHDOG_ACTION=terminate`) and the session resumes on the standby | Detection and the `pkill` pattern are verified; a real #96856 failure hasn't happened yet |
 | The Stop hook's nudge actually gets Claude to push before a turn ends | The hook reaches sessions; its effect on a session with unpushed work is untested |
