@@ -44,6 +44,8 @@ build {
       "${path.root}/scripts/setup-user.sh",
       "${path.root}/scripts/install-packages.sh",
       "${path.root}/scripts/ensure-xcode.sh",
+      "${path.root}/scripts/grant-privacy.sh",
+      "${path.root}/scripts/clear-notifications.sh",
     ]
   }
 
