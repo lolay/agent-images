@@ -18,6 +18,8 @@
 set -euo pipefail
 
 readonly runner_env="$HOME/.config/agent-runner/runner.env"
+# Nothing to watch until the VM is configured.
+[[ -f "$runner_env" ]] || exit 0
 readonly sessions_dir="$HOME/workspace/_sessions"
 if [[ "$(uname -s)" == "Darwin" ]]; then
 	readonly state_dir="$HOME/Library/Caches/agent-runner-watchdog"
