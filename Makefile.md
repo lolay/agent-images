@@ -4,6 +4,11 @@ The [`Makefile`](./Makefile) is the single source of truth for building the agen
 and running VMs cloned from it. Run `make help` for the quick target list; this file is
 the narrative reference.
 
+The same verbs work on both kinds of host. On a Linux host (the Linux runner image, see
+[specs/linux.md](specs/linux.md)), `init`, `doctor`, `build`, `runner-*`, and
+`secret-set` run the Linux side, and `host-setup` prepares the host; see
+[Linux host](#linux-host). The Tart targets (`image-*`, `vm-*`, `publish`) are macOS only.
+
 ## Target overview
 
 ```mermaid
@@ -30,18 +35,26 @@ debugging. Dotted arrows are independent gates.
 | Variable | Default | Used by |
 | --- | --- | --- |
 | `VM` | none (required) | all `vm-*` (`vm-create` refuses `runner-N`), optional for `secret-set` |
-| `IMAGE_REF` | `agent-macos` (from `.env`) | `image-pull`, `vm-create`, runner VMs |
+| `IMAGE_REF` | `agent-macos` (Linux: `agent-linux`), from `.env` | `image-pull`, `vm-create`, runner VMs |
 | `RUNNER_MAX` / `RUNNER_MIN_IDLE` | `2` / `1` (from `.env`) | Runner VMs at most / kept booted as standby |
 | `RUNNER_SPAWN_SECONDS` | `300` | The orchestrator's `--expected-spawn-seconds` lease |
 | `ORCHESTRATOR_HEALTH_PORT` | `8080` | The orchestrator's `/healthz` on the host |
 | `RUNNER_LABEL_PREFIX` | this Mac's `LocalHostName` | Runner label and guest hostname: `<prefix>-<vm>` |
 | `VM_BOOT_TIMEOUT` | `300` | Seconds `vm-configure` waits for the guest agent |
-| `VM_CPU` / `VM_MEMORY_GB` | `4` / `12` | runner VMs, `vm-create` |
+| `VM_CPU` / `VM_MEMORY_GB` | `4` / `12` (Linux: `6` / `24`) | runner VMs, `vm-create` |
 | `MODE` | `run` | `doctor`: `run` or `build` |
 | `NAME` | none | `secret-set`: `claude-environment-secret` |
 | `LOG_LINES` | `100` | `vm-logs` |
 | `REGISTRY` | from `.env` | `publish` |
 | `PKR_VAR_base_image` | `ghcr.io/cirruslabs/macos-$(MACOS_CODENAME)-xcode:latest` | `build`, `test`; the codename comes from the host's macOS major version (`MACOS_CODENAME_<major>`); set it in `.env` to override |
+
+Linux hosts only, from `.env` (see `.env.linux.example`):
+
+| Variable | Default | Used by |
+| --- | --- | --- |
+| `LINUX_BASE_IMAGE` | `ubuntu:24.04` | `build`: the LXD image the build VM starts from |
+| `BUILD_CPU` / `BUILD_MEMORY_GB` / `BUILD_DISK_GB` | `8` / `16` / `64` | `build`: the build VM |
+| `LXD_POOL_GB` | 70% of the free space on `/` | `host-setup`: the ZFS pool (a sparse file) |
 
 ## Targets
 
@@ -50,7 +63,7 @@ debugging. Dotted arrows are independent gates.
 | Target | Description |
 | --- | --- |
 | `help` | List targets (default goal) |
-| `init` | Creates `.env` from `.env.example`; runs `packer init` when Packer is installed |
+| `init` | Creates `.env` from `.env.example` (Linux: `.env.linux.example`); runs `packer init` when Packer is installed |
 | `doctor` | `triage` against `triage.yaml` for `MODE` (`run` or `build`). Read-only |
 | `build` | `tart pull` the base image, `packer build` into `agent-macos-next`, then swap it into `agent-macos` so runner VMs never clone a half-built image |
 | `lint` | `packer fmt -check`, `shellcheck`, `shfmt -d`, `plutil -lint` |
@@ -119,12 +132,43 @@ step. It passes `--var image_ref=$(IMAGE_REF)` so the image check follows `.env`
 | --- | --- |
 | `host` | Apple Silicon, `make`, `tart` ≥ 2.38, `security`, `.env` |
 | `default` (run host) | `claude`, `vms/runner.env`, the Keychain environment secret, the `IMAGE_REF` image; FileVault state (info only) |
-| `build` | `packer` ≥ 1.16.1, the Packer Tart plugin, `python3`, the agent password isn't the placeholder, `shellcheck`, `shfmt`, `plutil` |
+| `build` | `packer` ≥ 1.16.1, the Packer Tart plugin, `python3`, `shellcheck`, `shfmt`, `plutil` |
+| `linux` (Linux host) | x86_64, VT-x/AMD-V, nested KVM, `make`, `.env`, `lxc`, a ZFS storage pool, the `IMAGE_REF` image, `claude`, `vms/runner.env`, the environment secret file, lingering |
+
+## Linux host
+
+| Target | On Linux |
+| --- | --- |
+| `host-setup` | `scripts/linux/host-setup.sh`: checks VT-x/AMD-V and turns on nested KVM, installs the LXD snap (refreshes held) and initializes it with a ZFS pool and the `lxdbr0` bridge, installs Claude Code, enables lingering. Idempotent; uses sudo |
+| `doctor` | `triage --profile linux` (one profile; `MODE` is ignored) |
+| `build` | `scripts/linux/build-image.sh`: refreshes LXD, launches `agent-linux-build` from `ubuntu:24.04`, runs `images/linux/scripts` in it (the SDK step boots the emulator once for its snapshot), publishes `agent-linux-next`, then moves the `agent-linux` alias to it |
+| `runner-run` | `scripts/linux/orchestrator-run.sh`: the secret from `~/.config/agent-images` into the environment, then `claude self-hosted-runner orchestrator --hooks-dir hooks/linux` |
+| `runner-install` | `scripts/linux/orchestrator-service.sh install`: systemd user unit `agent-images-orchestrator.service`, started at boot (lingering) |
+| `runner-uninstall` / `runner-stop` / `runner-status` | As on macOS, with systemd and `lxc` |
+| `secret-set` | `scripts/linux/secret-set.sh`: writes `~/.config/agent-images/<NAME>[.<VM>]` (mode 600). Prompts (hidden) or reads a pipe (`cat key.txt \| make secret-set NAME=…`), trims it, and checks it round-trips; the orchestrator checks the key's shape at startup |
+
+Each runner VM is its own systemd user unit, `agent-images-runner-N.service`, running
+`scripts/linux/runner-once.sh`, which launches an ephemeral LXD VM (deleted when it
+powers off). Claims live in `build/runners/runner-N/`, as on macOS. Logs:
+
+| Log | What |
+| --- | --- |
+| `build/logs/orchestrator.log` | The orchestrator and every `spawn-runner` run |
+| `build/logs/runner-N.runner.log` | `runner-once`: launch, configure, wait, delete |
+| `build/logs/runner-N.guest.log` | The VM's journal for `agent-runner` and the watchdog, streamed while it runs; a `=== time runner-N order … ===` header per VM |
+| `build/logs/runner-N.lxc.log` | `lxc launch` output |
+
+For a debug VM: `lxc launch agent-linux debug-1 --vm`, then
+`scripts/linux/vm-configure.sh debug-1` (settings from `vms/debug-1.env`), and
+`lxc exec debug-1 -- bash` to look around.
 
 ## CI alignment
 
 | Workflow | Target |
 | --- | --- |
 | `.github/workflows/ci.yml` | `make init`, `make ci` on `macos-latest` |
+| `.github/workflows/linux-image-smoke.yml` | Manual only: runs `images/linux/scripts` on `ubuntu-24.04` (which has KVM) and boots the emulator |
 
-Image builds don't run in hosted CI: GitHub's macOS runners can't nest Tart VMs.
+Image builds don't run in hosted CI: GitHub's macOS runners can't nest Tart VMs, and
+the Linux image builds on its host like the macOS one. The Linux smoke test covers
+the image's contents without LXD.

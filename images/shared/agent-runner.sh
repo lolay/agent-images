@@ -1,8 +1,9 @@
 #!/bin/bash
-# Starts this VM's runner. launchd runs it in the guest user's GUI session
-# (Simulator needs one) through `zsh -l`, so PATH comes from ~/.zprofile, and
-# restarts it whenever it exits, for as long as ~/.config/agent-runner/runner.env
-# exists (KeepAlive PathState).
+# Starts this VM's runner, and restarts it whenever it exits for as long as
+# ~/.config/agent-runner/runner.env exists. On macOS, launchd runs it in the
+# guest user's GUI session (Simulator needs one) through `zsh -l`, so PATH comes
+# from ~/.zprofile (KeepAlive PathState). On Linux, systemd's agent-runner.path
+# starts agent-runner.service through `bash -l` (PATH from /etc/profile.d).
 #
 # With EPHEMERAL=true (set by the host's runner loop), the VM serves one
 # session: when the runner exits, it powers off and the host deletes it.

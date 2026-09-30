@@ -1,0 +1,103 @@
+#!/bin/bash
+# Orchestrator hook for a Linux host; the counterpart of hooks/spawn-runner.
+# `claude self-hosted-runner orchestrator` runs it once per queued session that
+# needs a runner, and once per missing standby runner (--min-idle). It must
+# return within the hook timeout (60 s) without waiting for a VM to boot, so it
+# claims a runner name, keeps a copy of the work order, and submits
+# scripts/linux/runner-once.sh as its own systemd user unit.
+#
+# Exit codes (the orchestrator's contract): 0 submitted or already running;
+# 1 retry later (every runner name is busy, or a transient error); 2 don't retry
+# (this host's setup is broken). stderr's tail shows in the environment's
+# Activity tab, so it never carries secrets.
+set -euo pipefail
+
+# The orchestrator's own credential; nothing downstream of this hook needs it.
+unset SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET
+
+hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly hook_dir
+# shellcheck source=scripts/linux/lib.sh
+source "$hook_dir/../../scripts/linux/lib.sh"
+
+failed_on_purpose=false
+claimed_dir=""
+submitted=false
+
+fail() {
+	printf 'agent-images: %s\n' "$2" >&2
+	failed_on_purpose=true
+	exit "$1"
+}
+
+# On any failure, give the name back. An unexpected error (set -e) could exit 2
+# or more, which the orchestrator reads as "never retry", so map it to 1.
+on_exit() {
+	local status=$?
+	((status == 0)) && return
+	if [[ -n "$claimed_dir" ]] && ! $submitted; then
+		rm -rf "$claimed_dir"
+	fi
+	if ! $failed_on_purpose; then
+		printf 'agent-images: spawn-runner failed (exit %s); see the orchestrator log\n' "$status" >&2
+		exit 1
+	fi
+}
+trap on_exit EXIT
+
+: "${CLAUDE_RUNNER_WORK_ORDER_FILE:?}" "${CLAUDE_RUNNER_ORDER_ID:?}"
+readonly order_id="$CLAUDE_RUNNER_ORDER_ID"
+max="$(setting RUNNER_MAX 2)"
+readonly max
+
+[[ -f "$RUNNER_CONFIG" ]] || fail 2 "no vms/runner.env on the runner host"
+[[ -s "$CLAUDE_RUNNER_WORK_ORDER_FILE" ]] || fail 1 "the work order file is empty"
+mkdir -p "$RUNNERS_DIR" "$AGENT_IMAGES_LOG_DIR"
+shopt -s nullglob
+
+# A redelivered order must not start a second VM.
+for claimed_order in "$RUNNERS_DIR"/runner-*/order-id; do
+	if [[ "$(<"$claimed_order")" == "$order_id" ]]; then
+		log "order $order_id already on $(basename "$(dirname "$claimed_order")")"
+		exit 0
+	fi
+done
+
+vm=""
+for ((index = 1; index <= max; index++)); do
+	candidate="runner-$index"
+	mkdir "$RUNNERS_DIR/$candidate" 2>/dev/null || continue
+	# A VM by that name outside our bookkeeping (a leftover, or a manual one).
+	if vm_exists "$candidate"; then
+		rmdir "$RUNNERS_DIR/$candidate"
+		continue
+	fi
+	vm="$candidate"
+	claimed_dir="$RUNNERS_DIR/$candidate"
+	break
+done
+[[ -n "$vm" ]] || fail 1 "all $max runner VMs are busy"
+
+readonly runner_dir="$RUNNERS_DIR/$vm"
+printf '%s\n' "$order_id" >"$runner_dir/order-id"
+# The orchestrator deletes its copy when this hook exits.
+(
+	umask 077
+	cp "$CLAUDE_RUNNER_WORK_ORDER_FILE" "$runner_dir/work-order"
+)
+
+unit="$(runner_unit "$vm")"
+readonly unit
+# An earlier unit by that name has exited but may not be collected yet.
+systemctl --user reset-failed "$unit" >/dev/null 2>&1 || true
+# TimeoutStopSec leaves time to stop and delete a VM after SIGTERM.
+systemd-run --user --quiet --collect --unit "$unit" \
+	--property TimeoutStopSec=150 --property KillMode=mixed \
+	--property "StandardOutput=append:$AGENT_IMAGES_LOG_DIR/$vm.runner.log" \
+	--property "StandardError=append:$AGENT_IMAGES_LOG_DIR/$vm.runner.log" \
+	--working-directory "$AGENT_IMAGES_DIR" --setenv "PATH=$PATH" \
+	/bin/bash "$AGENT_IMAGES_DIR/scripts/linux/runner-once.sh" "$vm" ||
+	fail 1 "could not submit the runner job for $vm"
+submitted=true
+
+log "$vm: submitted for order $order_id${CLAUDE_RUNNER_SESSION_ID:+ (session $CLAUDE_RUNNER_SESSION_ID)}"

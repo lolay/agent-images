@@ -1,0 +1,12 @@
+# Installed to /etc/systemd/system by setup-user.sh. Checks every session's git
+# proxy every 30 s, like the com.agent-images.watchdog LaunchAgent on macOS.
+[Unit]
+Description=Run the agent-images git proxy watchdog every 30 s
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

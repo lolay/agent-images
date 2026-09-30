@@ -6,6 +6,11 @@ Mac build capacity for coding agents that the vendor's service dispatches work t
 Nobody works inside these VMs, even over SSH. The image supplies Xcode, Simulator, and
 a logged-in GUI session; the vendor's runner supplies the work.
 
+A Linux host does the same for Android: an x86_64 box whose VMs carry the Android SDK
+and an emulator that runs inside the session's own VM on nested KVM. Everything below
+is the Mac design; [linux.md](linux.md) covers where the Linux side differs, and the
+two share the guest runner files in `images/shared`.
+
 ### Track the latest; pin only on breakage
 
 This is an informal development environment. Everything in it follows the newest
@@ -44,6 +49,7 @@ failing `make ci` points at a change in this repo rather than a tool update.
 | Cirrus base images log `admin` in automatically, with Homebrew, sudo, and Xcode set up for it | The guest user is `admin`; a separate user would have to redo all of that (and lost Homebrew's trust store) |
 | Hosted GitHub macOS runners can't nest VMs | CI lints and validates; images build on a Mac |
 | `/workspace` can't be created on macOS's read-only system volume | Claude's `--base-dir` is `~/workspace` |
+| macOS guests can't nest a hypervisor (on any chip), and Google ships no Linux arm64 emulator | Android emulator work runs on an x86_64 Linux host with nested KVM ([linux.md](linux.md)) |
 
 ## 3. Decisions
 
@@ -63,9 +69,13 @@ failing `make ci` points at a change in this repo rather than a tool update.
 | The runner upgrades its own cask at start | Rebuilds would otherwise be weekly; each `AGENT` upgrades only its own CLI |
 | The guest user is root in its VM (the base image's passwordless sudo) | Sessions can run installers that need root, and the host sets the hostname over `tart exec`. SSH with `admin`/`admin` stays on, reachable only from the host through Tart's NAT. The blast radius is one session's throwaway VM |
 | Host scripts act in the guest as the guest user | `tart exec` runs in the logged-in GUI session, which automatic login makes `admin`'s; only the hostname needs `sudo` |
+| On Linux the guest user is the cloud image's `ubuntu` | The same reasoning as `admin`: cloud-init gives it passwordless sudo, so a separate user would redo and fight that in every clone ([linux.md](linux.md)) |
 | File ownership isn't an isolation boundary | Sessions run as `admin`, which owns its home and Homebrew and has sudo; the fresh clone per session is the reset |
 | Claude's orchestrator starts VMs, not our own loop | The environment secret stays on the host; VMs boot per session plus `RUNNER_MIN_IDLE` standby; the hook is ~100 lines of shell |
 | Runners start at host login | Hosts are Macs with a display. After a restart, either log in each time (FileVault on) or use automatic login (FileVault off); macOS allows automatic login only without FileVault |
+| Android on a Linux host, one LXD VM per session | The emulator stays inside the session's VM with nested KVM; LXD is Tart's counterpart (ephemeral copy-on-write clones, `lxc exec`, image publish) and Ubuntu's first-party VM manager ([linux.md](linux.md)) |
+| Linux host scripts mirror the macOS ones | Same contracts and file layout; merged into one platform layer only after both hosts have run on hardware |
+| The guest runner files are shared | `images/shared` (runner, Claude runner script, watchdog, Stop hook) goes into both images, so session behavior matches |
 
 ## 4. How a runner runs
 
@@ -187,4 +197,5 @@ Still to check:
 | The watchdog acts on a real broken relay (`WATCHDOG_ACTION=terminate`) and the session resumes on the standby | Detection and the `pkill` pattern are verified; a real #96856 failure hasn't happened yet |
 | The Stop hook's nudge actually gets Claude to push before a turn ends | The hook reaches sessions; its effect on a session with unpushed work is untested |
 | Idle release after `CLAUDE_RELEASE_IDLE_SESSION_MIN` resumes the session on a fresh VM | The test session was deleted rather than left idle |
+| The Linux host's open items | Nested KVM in an LXD VM, ephemeral VM deletion, and the rest in [linux.md](linux.md#open-items) |
 

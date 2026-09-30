@@ -24,10 +24,13 @@ build {
     inline = ["mkdir -p ${local.guest_staging}"]
   }
 
+  # files/ holds the macOS-only pieces, ../shared/ the runner, watchdog, and
+  # Claude settings the Linux image uses too; both land flat in staging.
   provisioner "file" {
     sources = [
       "${path.root}/Brewfile",
       "${path.root}/files/",
+      "${path.root}/../shared/",
     ]
     destination = "${local.guest_staging}/"
   }

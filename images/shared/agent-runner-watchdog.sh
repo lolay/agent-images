@@ -1,7 +1,8 @@
 #!/bin/bash
 # Finds sessions whose git proxy relay is gone and, optionally, stops the runner
 # so the session requeues onto a fresh VM. Runs every 30 s from the
-# com.agent-images.watchdog LaunchAgent.
+# com.agent-images.watchdog LaunchAgent (macOS) or agent-runner-watchdog.timer
+# (Linux).
 #
 # The failure (anthropics/claude-code#96856): a nested `claude` started inside a
 # session rewrites the session's git proxy port to its own relay, then exits and
@@ -18,7 +19,11 @@ set -euo pipefail
 
 readonly runner_env="$HOME/.config/agent-runner/runner.env"
 readonly sessions_dir="$HOME/workspace/_sessions"
-readonly state_dir="$HOME/Library/Caches/agent-runner-watchdog"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+	readonly state_dir="$HOME/Library/Caches/agent-runner-watchdog"
+else
+	readonly state_dir="${XDG_CACHE_HOME:-$HOME/.cache}/agent-runner-watchdog"
+fi
 readonly failures_to_act=2
 # curl's exit code for "couldn't connect". Anything else means something answers.
 readonly curl_connect_failed=7

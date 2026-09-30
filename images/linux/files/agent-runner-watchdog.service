@@ -1,0 +1,10 @@
+# Installed to /etc/systemd/system by setup-user.sh, which replaces __GUEST_USER__
+# and __GUEST_HOME__.
+# Run every 30 s by agent-runner-watchdog.timer; see ~/bin/agent-runner-watchdog.
+[Unit]
+Description=agent-images git proxy watchdog
+
+[Service]
+Type=oneshot
+User=__GUEST_USER__
+ExecStart=/bin/bash -lc 'exec __GUEST_HOME__/bin/agent-runner-watchdog'
