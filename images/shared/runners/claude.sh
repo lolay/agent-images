@@ -8,9 +8,12 @@
 #   CLAUDE_USE_GIT_PROXY    true (default) = Anthropic-managed git auth; no git
 #                           credentials on the VM. Replaces ~/.gitconfig.
 #   CLAUDE_PUSH_OUTCOME_ON_RELEASE
-#                           true (default) = when the runner ends a session early
-#                           (drain, idle release, failure), push its committed work
-#                           so the session resumes from it on the next runner.
+#                           auto (default), true, or false: when the runner ends a
+#                           session early (drain, idle release, failure), push its
+#                           committed work so the session resumes from it. auto is
+#                           on only without the git proxy: the release-time push uses
+#                           git credentials on the VM, which the proxy setup doesn't
+#                           have. With the proxy, the Stop hook asks Claude to push.
 #   CLAUDE_CONFIGURE_GIT    true (default) = git identity Claude <noreply@anthropic.com>
 #                           and Anthropic commit signing; the image has no identity.
 #   CLAUDE_RELEASE_IDLE_SESSION_MIN
@@ -33,7 +36,7 @@ readonly secret_file="$HOME/.claude-runner/environment-secret"
 readonly base_dir="$HOME/workspace"
 : "${RUNNER_LABEL:=$(hostname -s)}"
 : "${CLAUDE_USE_GIT_PROXY:=true}"
-: "${CLAUDE_PUSH_OUTCOME_ON_RELEASE:=true}"
+: "${CLAUDE_PUSH_OUTCOME_ON_RELEASE:=auto}"
 : "${CLAUDE_CONFIGURE_GIT:=true}"
 : "${CLAUDE_CONFINE_REPO_SETTINGS:=enforce}"
 # No colon: set-but-empty means "never" rather than the default.
@@ -89,7 +92,12 @@ fi
 if [[ "$CLAUDE_USE_GIT_PROXY" == "true" ]]; then
 	args+=(--use-anthropic-git-proxy)
 fi
-if [[ "$CLAUDE_PUSH_OUTCOME_ON_RELEASE" == "true" ]]; then
+push_outcome="$CLAUDE_PUSH_OUTCOME_ON_RELEASE"
+if [[ "$push_outcome" == "auto" ]]; then
+	push_outcome=true
+	[[ "$CLAUDE_USE_GIT_PROXY" == "true" ]] && push_outcome=false
+fi
+if [[ "$push_outcome" == "true" ]]; then
 	args+=(--push-outcome-on-release)
 fi
 if [[ "$CLAUDE_CONFIGURE_GIT" == "true" ]]; then

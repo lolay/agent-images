@@ -252,19 +252,10 @@ vm-delete: ## Stop and delete a VM (the image is kept): VM=debug-1
 	-tart stop $(VM)
 	tart delete $(VM)
 
-secret-set: ## Store a runner secret (prompts): NAME=claude-environment-secret [VM=debug-1]. Keychain (macOS) or ~/.config/agent-images (Linux)
+secret-set: ## Store a runner secret (prompts, or pipe it in): NAME=claude-environment-secret [VM=debug-1]. Keychain (macOS) or ~/.config/agent-images (Linux)
 	@if [[ " $(SECRET_NAMES) " != *" $(NAME) "* ]]; then \
 	  printf 'NAME must be one of: %s\n' "$(SECRET_NAMES)" >&2; exit 1; fi
-ifeq ($(HOST_OS),Linux)
-	@install -d -m 700 "$$HOME/.config/agent-images"; \
-	file="$$HOME/.config/agent-images/$(NAME)$(if $(VM),.$(VM))"; \
-	read -rsp "$(NAME): " value; printf '\n'; \
-	[ -n "$$value" ] || { printf 'empty; nothing stored\n' >&2; exit 1; }; \
-	( umask 077; printf '%s' "$$value" >"$$file.partial" ) && mv -f "$$file.partial" "$$file"; \
-	printf 'stored %s\n' "$$file"
-else
-	security add-generic-password -U -s "agent-images.$(NAME)" -a "$(or $(VM),default)" -w
-endif
+	@$(HOST_SCRIPTS)/secret-set.sh "$(NAME)" "$(or $(VM),default)"
 
 ##@ GitHub
 

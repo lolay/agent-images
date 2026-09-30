@@ -59,6 +59,18 @@ guest_write() {
 		_ "$relative_path"
 }
 
+# Fails unless a value looks like a whole Claude environment key: sk-ant-cc-
+# followed by a signed token (header.payload.signature). The orchestrator reads
+# the environment ID from the payload, so a cut-off key fails there obscurely.
+require_environment_key_shape() {
+	local key="$1" token parts
+	token="${key#sk-ant-cc-}"
+	parts="$(printf '%s' "$token" | awk -F. '{ print NF }')"
+	if [[ "$key" != sk-ant-cc-* || "$parts" != 3 ]]; then
+		die "agent-images.claude-environment-secret isn't a whole environment key (${#key} characters, $parts part(s)); it may have been cut off when stored. Copy the key again and run: make secret-set NAME=claude-environment-secret"
+	fi
+}
+
 # Reads KEY=value from a vms/<vm>.env file without executing it.
 env_value() {
 	local file="$1" key="$2"
@@ -77,7 +89,10 @@ setting() {
 # Names the orchestrator owns: runner-1 .. runner-N.
 is_runner_name() { [[ "$1" =~ ^runner-[0-9]+$ ]]; }
 
-vm_exists() { tart get "$1" >/dev/null 2>&1; }
+# A local VM exists when Tart has a directory for it. Not `tart get`: before
+# Tart 2.39 it fails for a running VM with an ASIF disk, which the Golden Gate
+# images use (openai/tart#1344).
+vm_exists() { [[ -d "${TART_HOME:-$HOME/.tart}/vms/$1" ]]; }
 
 launchd_domain() { printf 'gui/%s' "$(id -u)"; }
 

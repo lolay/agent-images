@@ -138,7 +138,8 @@ is gone. It logs to `~/Library/Logs/agent-runner-watchdog.{out,err}`, and with
 --confine-repo-settings enforce`, plus by default `--use-anthropic-git-proxy`
 (Anthropic-managed git auth; it replaces the guest user's `~/.gitconfig`; fine, since each VM serves one session),
 `--configure-git` (git identity and Anthropic commit signing; the image has none),
-`--push-outcome-on-release`, `--release-idle-session-min 60` (an idle session gives
+`--push-outcome-on-release` only without the git proxy (its release-time push needs git
+credentials on the VM, and the proxy setup has none; the Stop hook covers that case), `--release-idle-session-min 60` (an idle session gives
 its VM back and resumes on a fresh one), and `--kill-session-after-min 480`; and
 `--lock-to-account` if set. Each is a setting in `vms/runner.env`. The label, which is
 also the guest's hostname, is `RUNNER_LABEL_PREFIX` (default the host's
@@ -173,17 +174,28 @@ bundle` including casks; automatic login, which also decides who `tart exec` run
 time (5 iPhone simulators); the runner starting with every flag, including bare
 `--remove-session-state`, and asking for a stop budget of 110 s (the plist gives 120 s).
 
-Still to check, mostly on the first real session:
+Verified on the first real session (2026-09-29, `make runner-run` on a MacBook): the
+orchestrator reads the environment ID from the environment key (a key cut off at 128
+characters fails; `make secret-set` now stores keys whole); a standby VM registered
+with a work order 43 s after the spawn request and picked up the next session; the
+orchestrator spawned a new standby as soon as it did; the repo cloned through the git
+proxy; the Stop hook reached the session (2 files seeded from `~/.claude`); the
+watchdog's inputs exist in a live session (`_sessions/<id>.gitconfig` naming a live
+relay port) and the `pkill` pattern matches; deleting the session completed it, and
+the runner deregistered, the VM powered off and was deleted. Tart before 2.39 can't
+`tart get`/`list` a running VM with an ASIF disk (openai/tart#1344), so `vm_exists`
+checks Tart's VM directory instead.
+
+Verified on a second host (hangar): `make runner-install` runs the orchestrator as a
+LaunchAgent, and its `spawn-runner` hook submits runner VM jobs from there.
+
+Still to check:
 
 | Item | Why |
 | --- | --- |
-| The orchestrator LaunchAgent (`make runner-install`) starts at login and keeps running | Designed for it; not yet exercised (Anthropic's examples are Kubernetes and EC2) |
-| A standby VM registered with a work order claims the next queued session | A runner registered with the environment secret does (tested by hand); the docs say standby work orders behave the same |
-| 300 s covers clone, boot, auto-login, configure, and `brew upgrade` | `--expected-spawn-seconds` is the server lease; too short re-offers the session |
-| Hooks can `launchctl bootstrap` into the GUI domain from the orchestrator LaunchAgent | Runner VMs are launchd jobs so they outlive the hook and orchestrator restarts |
 | macOS UI tests run without prompts (automation mode, `_developer`) | Checked at build: automation mode needs no authentication, the user is in `_developer`, developer mode is on; a real UI test hasn't run yet |
-| The watchdog's inputs exist: `_sessions/<id>.gitconfig` with `http.https://github.com/.proxy` | Runner internals from #96856; if they move, the watchdog silently finds nothing |
-| The runner process's command line starts `claude self-hosted-runner` | The watchdog's `pkill -f` pattern |
-| The Stop hook reaches sessions from `~admin/.claude` | The runner seeds that directory at startup; check a session's `$CLAUDE_CONFIG_DIR/hooks/` |
+| The watchdog acts on a real broken relay (`WATCHDOG_ACTION=terminate`) and the session resumes on the standby | Detection and the `pkill` pattern are verified; a real #96856 failure hasn't happened yet |
+| The Stop hook's nudge actually gets Claude to push before a turn ends | The hook reaches sessions; its effect on a session with unpushed work is untested |
+| Idle release after `CLAUDE_RELEASE_IDLE_SESSION_MIN` resumes the session on a fresh VM | The test session was deleted rather than left idle |
 | The Linux host's open items | Nested KVM in an LXD VM, ephemeral VM deletion, and the rest in [linux.md](linux.md#open-items) |
 

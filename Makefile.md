@@ -110,7 +110,7 @@ Every LaunchAgent and job writes stdout to `.out` and stderr to `.err`.
 | `vm-logs` | Tails a running guest's `~/Library/Logs/agent-runner.out` and `.err` |
 | `vm-versions` | macOS, Xcode and its developer dir, iOS simulator runtimes, the guest user's iPhone simulators, and Claude Code in the guest |
 | `vm-list` | `tart list` |
-| `secret-set` | `security add-generic-password` into service `agent-images.<NAME>`, account `<VM>` or `default`; prompts for the value |
+| `secret-set` | `scripts/secret-set.sh`: stores service `agent-images.<NAME>`, account `<VM>` or `default`. Prompts (hidden) or reads a pipe (`pbpaste \| make secret-set NAME=…`); sends the value to `security -i` over stdin (the `-w` prompt truncates at 128 characters) and checks it round-trips |
 
 ### Release / Danger
 

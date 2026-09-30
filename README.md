@@ -38,7 +38,7 @@ tracks the latest and pins only on breakage
 
 | Component | Version | Where it's set |
 | --- | --- | --- |
-| Tart | 2.38.0 | Host install (`brew install openai/tools/tart`) |
+| Tart | 2.38.0 (2.39+ recommended: fixes `tart list` while runners run) | Host install (`brew install openai/tools/tart`) |
 | Packer | 1.16.1 | `required_version` in `images/macos/plugins.pkr.hcl` |
 | packer-plugin-tart | 1.21.0 | `~> 1.21` in `images/macos/plugins.pkr.hcl` |
 | Base image | `macos-<host codename>-xcode:latest`, today `macos-golden-gate-xcode` | Not pinned: `make build` pulls the newest Xcode image for the host's macOS (`MACOS_CODENAME_<major>` in the Makefile) |
