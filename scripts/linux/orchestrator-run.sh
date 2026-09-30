@@ -33,6 +33,7 @@ reclaim_stale_runners 0
 # An environment variable, not an argument: nothing in `ps`. The hook unsets it.
 SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET="$(host_secret claude-environment-secret orchestrator)" ||
 	die "no $SECRETS_DIR/claude-environment-secret; run make secret-set NAME=claude-environment-secret"
+require_environment_key_shape "$SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET"
 export SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET
 
 log "orchestrator: up to $max runner VMs, $min_idle standby"

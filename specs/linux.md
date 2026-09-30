@@ -182,7 +182,7 @@ assumptions):
 | A session running `./gradlew connectedDebugAndroidTest` (nowinandroid) | End to end |
 | The VM deletes itself after its session; `runner-stop` requeues it | Lifecycle |
 | Two VMs at once; the orchestrator back after a reboot | Capacity, lingering |
-| `CLAUDE.md` and `skills/android-cli` reach sessions from `~ubuntu/.claude` | The runner seeds settings and hooks; skills and memory are assumed |
+| `CLAUDE.md` and `skills/android-cli` reach sessions from `~ubuntu/.claude` | Documented: the runner seeds each session from a snapshot of `~/.claude` taken at startup, "`settings.json`, `CLAUDE.md`, hooks, agents, commands, and skills" ([configuration](https://code.claude.com/docs/en/self-hosted-environments-configuration)); the Mac's first session saw both files its `~/.claude` holds. The Claude install leaves nothing else large there (20 KB: empty `downloads/` and `sessions/`, an 84-byte `.claude.json` backup; the 230 MB binary is in `~/.local/share/claude`). Confirm in a session |
 | `systemd-run --user` works from the orchestrator's user unit | The hook's job submission |
 | triage runs on Linux and the `linux` profile's checks read as intended | Written without a Linux triage run |
 

@@ -125,7 +125,7 @@ make build                 # the agent-linux LXD image (SDK, emulator snapshot)
 
 # A separate self-hosted environment in claude.ai for this box, so sessions choose
 # it for Android work. Its secret stays in ~/.config/agent-images (mode 600).
-make secret-set NAME=claude-environment-secret
+make secret-set NAME=claude-environment-secret   # prompts; or pipe it in
 cp vms/example-linux.env vms/runner.env
 make runner-run            # try it in the foreground
 make runner-install        # systemd user unit; starts at boot, no login needed

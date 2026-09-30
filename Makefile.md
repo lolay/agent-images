@@ -145,7 +145,7 @@ step. It passes `--var image_ref=$(IMAGE_REF)` so the image check follows `.env`
 | `runner-run` | `scripts/linux/orchestrator-run.sh`: the secret from `~/.config/agent-images` into the environment, then `claude self-hosted-runner orchestrator --hooks-dir hooks/linux` |
 | `runner-install` | `scripts/linux/orchestrator-service.sh install`: systemd user unit `agent-images-orchestrator.service`, started at boot (lingering) |
 | `runner-uninstall` / `runner-stop` / `runner-status` | As on macOS, with systemd and `lxc` |
-| `secret-set` | Writes `~/.config/agent-images/<NAME>[.<VM>]` (mode 600); prompts for the value |
+| `secret-set` | `scripts/linux/secret-set.sh`: writes `~/.config/agent-images/<NAME>[.<VM>]` (mode 600). Prompts (hidden) or reads a pipe (`cat key.txt \| make secret-set NAME=…`), trims it, and checks it round-trips; the orchestrator checks the key's shape at startup |
 
 Each runner VM is its own systemd user unit, `agent-images-runner-N.service`, running
 `scripts/linux/runner-once.sh`, which launches an ephemeral LXD VM (deleted when it
