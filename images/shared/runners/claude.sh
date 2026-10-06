@@ -57,6 +57,14 @@ fi
 # installs Claude as a Homebrew cask, Linux with the native installer.
 if command -v brew >/dev/null 2>&1; then
 	brew upgrade --cask claude-code@latest 2>&1 || warn "claude upgrade failed; continuing"
+	# Homebrew quarantines what a cask downloads, so Gatekeeper asks "downloaded
+	# from the Internet, are you sure you want to open it?" at the next launch,
+	# and nobody at the VM's screen answers. Homebrew 5 dropped --no-quarantine;
+	# clear the flag here, which also covers the copy the image build installed.
+	claude_bin="$(realpath "$(command -v claude)")"
+	if xattr -p com.apple.quarantine "$claude_bin" >/dev/null 2>&1; then
+		xattr -d com.apple.quarantine "$claude_bin" || warn "couldn't clear quarantine on $claude_bin; launch may prompt"
+	fi
 else
 	claude update 2>&1 || warn "claude update failed; continuing"
 fi
