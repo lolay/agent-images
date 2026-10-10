@@ -106,8 +106,9 @@ This is only about the host: VM disks are separate and always boot straight to t
 base image's `admin` user.
 
 Runner VMs outlive an orchestrator restart; `make runner-stop` deletes them (their sessions requeue), and
-`make runner-uninstall` stops everything. `make vm-create` / `vm-up` still give you a
-persistent VM for debugging, under any name except `runner-N`.
+`make runner-uninstall` stops everything (see [Stop, rebuild, restart](#stop-rebuild-restart)).
+`make vm-create` / `vm-up` still give you a persistent VM for debugging, under any
+name except `runner-N`.
 
 ## Linux host (Android)
 
@@ -136,3 +137,48 @@ Every session gets a fresh VM from `agent-linux`, with the emulator booted as
 `emulator-5554` from a clean snapshot. The VM powers off after its session and LXD
 deletes it. Up to `RUNNER_MAX` (default 2) VMs, each `VM_CPU` (6) and `VM_MEMORY_GB`
 (24).
+
+## Stop, rebuild, restart
+
+The same targets work on both host types. Claude Code upgrades itself at every VM
+start, so a rebuild is for everything else: the base image, Homebrew packages, the
+Android SDK. VMs already running, standby ones included, keep the image they were cloned
+from, so a rebuild reaches a runner only after its VM is replaced.
+
+To stop the runners and keep them stopped, take down the orchestrator along with the
+VMs:
+
+```bash
+make runner-uninstall      # orchestrator and every runner VM; sessions on them requeue
+```
+
+`runner-stop` alone deletes the VMs, but a running orchestrator boots replacements
+right away (`RUNNER_MIN_IDLE` standby), so use it to recycle VMs, not to stop. If you
+started with `make runner-run`, Ctrl-C stops the orchestrator and leaves the VMs; run
+`make runner-stop` to delete them.
+
+To rebuild and restart with the runners down:
+
+```bash
+make runner-uninstall
+make build                 # pulls the newest base image and current packages
+make runner-install        # or make runner-run
+make runner-status         # orchestrator healthz, then each VM
+```
+
+The runners need to be down for the build when the host is full. On a Mac the build VM
+counts toward the two-VM limit, so with both slots busy it can't start. On the Linux box
+the build VM wants `BUILD_MEMORY_GB` (16) on top of the runners' 24 GB each, which
+leaves a 64 GB host no headroom.
+
+To roll the new image out without a gap in service (a host with room for the build VM,
+or a separate build host), build while the runners work and recycle the VMs after:
+
+```bash
+make build                 # the new image replaces agent-macos / agent-linux only once finished
+make runner-stop           # the running orchestrator boots replacements from the new image
+```
+
+`runner-stop` requeues any session in progress, so run it between sessions if you can.
+If a separate host builds and publishes the image, run `make image-pull` on each run
+host, with `IMAGE_REF` in `.env` pointing at the new tag, before `make runner-stop`.
