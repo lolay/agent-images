@@ -7,7 +7,11 @@
 tap "lolay/tap"
 
 brew "age"
-brew "asccli" # command is asccli; core's asc formula is a different tool
+# asc-cli (tddworks/asc-cli); its command is `asc`. homebrew-core installed it
+# as `asccli` until 2026-10-10, when it dropped the rename to match upstream's
+# own docs. Core's `asc` formula is a different App Store Connect CLI that
+# installs its own `asc`, so the two conflict and only one can be installed.
+brew "asccli"
 brew "gh"
 brew "git"
 brew "jq"
