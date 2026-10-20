@@ -33,3 +33,14 @@ if brew list --cask claude-code >/dev/null 2>&1; then
 fi
 
 brew bundle --file="$brewfile"
+
+# Sessions expect the image's `asc` to be asc-cli (the Brewfile's asccli
+# formula). Core's conflicting `asc` formula is a different App Store Connect
+# CLI that installs the same name, so finding `asc` doesn't say which one it is;
+# only asc-cli's profiles subcommand has --bundle-id-id. Fail the build rather
+# than ship an image whose `asc` isn't the one projects are written against.
+if ! asc profiles list --help 2>/dev/null | grep -q -- --bundle-id-id; then
+	echo "the image's asc is not asc-cli (asc: $(command -v asc || echo none))" >&2
+	echo "install the 'asccli' formula, not core's 'asc' formula" >&2
+	exit 1
+fi
