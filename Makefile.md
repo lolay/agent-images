@@ -77,7 +77,7 @@ Linux hosts only, from `.env` (see `.env.linux.example`):
 | Target | Description |
 | --- | --- |
 | `runner-run` | `scripts/orchestrator-run.sh` in the foreground: Keychain secret into the environment, then `claude self-hosted-runner orchestrator --hooks-dir hooks`. Runner VMs outlive Ctrl-C |
-| `runner-install` | `scripts/orchestrator-service.sh install`: host LaunchAgent `com.agent-images.orchestrator`; logs in `build/logs/orchestrator.{out,err}` |
+| `runner-install` | `scripts/orchestrator-service.sh install`: host LaunchAgent `com.agent-images.orchestrator`; logs in `build/logs/orchestrator.{out,err}`. Over SSH, run `security unlock-keychain ~/Library/Keychains/login.keychain-db` first. The install and every orchestrator start clear Homebrew's quarantine on a Developer ID-signed `claude` |
 | `runner-uninstall` | Boots out the orchestrator, then stops and deletes every runner VM |
 | `runner-stop` | Stops and deletes every runner VM (sessions requeue); a running orchestrator boots replacements |
 | `runner-status` | Orchestrator state, its `/healthz` body and log tail, then `vm-status` for each runner VM |
@@ -131,7 +131,7 @@ step. It passes `--var image_ref=$(IMAGE_REF)` so the image check follows `.env`
 | Profile | Checks |
 | --- | --- |
 | `host` | Apple Silicon, `make`, `tart` ≥ 2.38, `security`, `.env` |
-| `default` (run host) | `claude`, `vms/runner.env`, the Keychain environment secret, the `IMAGE_REF` image; FileVault state (info only) |
+| `default` (run host) | `claude` (and, as a warning, that Homebrew's quarantine is off it), `vms/runner.env`, the Keychain environment secret, a login keychain this session can read (it stays locked over SSH), the `IMAGE_REF` image; FileVault state (info only) |
 | `build` | `packer` ≥ 1.16.1, the Packer Tart plugin, `python3`, `shellcheck`, `shfmt`, `plutil` |
 | `linux` (Linux host) | x86_64, VT-x/AMD-V, nested KVM, `make`, `.env`, `lxc`, a ZFS storage pool, the `IMAGE_REF` image, `claude`, `vms/runner.env`, the environment secret file, lingering |
 

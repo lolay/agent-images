@@ -38,12 +38,58 @@ wait_for_guest() {
 	done
 }
 
+# security's exit status is the low byte of the OSStatus: errSecItemNotFound and
+# errSecInteractionNotAllowed. The second is what a locked login keychain gives
+# in an SSH session, which a login at the Mac's own screen doesn't unlock.
+readonly SECURITY_ITEM_NOT_FOUND=44
+readonly SECURITY_INTERACTION_NOT_ALLOWED=36
+readonly LOGIN_KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
+
 # Prints a secret from the host Keychain: the VM-specific item if present,
-# else the "default" one. Returns non-zero if neither exists.
+# else the "default" one. If neither can be read, says why on stderr (missing,
+# or the keychain is locked) and returns non-zero.
 keychain_secret() {
-	local service="$KEYCHAIN_SERVICE_PREFIX.$1" target_vm="$2"
-	security find-generic-password -s "$service" -a "$target_vm" -w 2>/dev/null ||
-		security find-generic-password -s "$service" -a default -w 2>/dev/null
+	local name="$1" target_vm="$2" service="$KEYCHAIN_SERVICE_PREFIX.$1"
+	local account output status
+	for account in "$target_vm" default; do
+		status=0
+		output="$(security find-generic-password -s "$service" -a "$account" -w 2>&1)" || status=$?
+		case "$status" in
+		0)
+			printf '%s\n' "$output"
+			return 0
+			;;
+		"$SECURITY_ITEM_NOT_FOUND") ;;
+		"$SECURITY_INTERACTION_NOT_ALLOWED")
+			printf 'error: the login keychain is locked in this session (usual over SSH), so %s is unreadable; run: security unlock-keychain %s\n' \
+				"$service" "$LOGIN_KEYCHAIN" >&2
+			return 1
+			;;
+		*)
+			printf 'error: reading %s from the Keychain: %s\n' "$service" "$output" >&2
+			return 1
+			;;
+		esac
+	done
+	printf 'error: no Keychain item %s for %s or default; run: make secret-set NAME=%s\n' \
+		"$service" "$target_vm" "$name" >&2
+	return 1
+}
+
+# Homebrew quarantines what a cask downloads, so after every brew upgrade
+# Gatekeeper asks "downloaded from the Internet, are you sure you want to open
+# it?" at claude's next launch, and a LaunchAgent or an SSH session can't answer.
+# Homebrew 5 dropped --no-quarantine. Clears the flag, but only on a binary
+# signed with an Apple-issued (Developer ID) certificate. The guest does the same
+# in images/shared/runners/claude.sh.
+clear_claude_quarantine() {
+	local claude_bin
+	claude_bin="$(realpath "$(command -v claude)")"
+	xattr -p com.apple.quarantine "$claude_bin" >/dev/null 2>&1 || return 0
+	codesign --verify --strict -R='anchor apple generic' "$claude_bin" ||
+		die "$claude_bin is quarantined and its signature doesn't verify; reinstall it: brew reinstall --cask claude-code@latest"
+	xattr -d com.apple.quarantine "$claude_bin"
+	log "cleared Homebrew's quarantine on $claude_bin"
 }
 
 # Writes stdin to a path under the guest user's home, owner-only. tart exec runs
