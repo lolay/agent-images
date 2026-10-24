@@ -105,6 +105,17 @@ runs as whoever logs in, so a dedicated runner account must be the one that logs
 This is only about the host: VM disks are separate and always boot straight to the
 base image's `admin` user.
 
+Over SSH, the login keychain stays locked even while you're logged in at the Mac, so
+the scripts can't read the environment secret. Unlock it for the SSH session first:
+`security unlock-keychain ~/Library/Keychains/login.keychain-db`. The LaunchAgent itself
+runs in the GUI session and needs nothing extra. `make doctor` reports a locked keychain
+apart from a missing secret.
+
+Each `brew upgrade` leaves a quarantined `claude`, and Gatekeeper's "downloaded from the
+Internet" prompt would block a launch nobody is at the screen for. The orchestrator
+clears the quarantine whenever it starts, after checking that `claude` has a Developer ID
+signature.
+
 Runner VMs outlive an orchestrator restart; `make runner-stop` deletes them (their sessions requeue), and
 `make runner-uninstall` stops everything (see [Stop, rebuild, restart](#stop-rebuild-restart)).
 `make vm-create` / `vm-up` still give you a persistent VM for debugging, under any

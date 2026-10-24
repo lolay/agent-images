@@ -38,10 +38,14 @@ value="${value%"${value##*[![:space:]]}"}"
 [[ "$value" != *[\"\\]* && "$value" != *$'\n'* ]] ||
 	die "the value contains a quote, backslash, or newline, which this script can't pass to security safely"
 
+# The read-back below decides whether this worked, and says why when it didn't.
 printf 'add-generic-password -U -s "%s" -a "%s" -w "%s"\n' "$service" "$account" "$value" |
-	security -i >/dev/null
+	security -i >/dev/null || true
 
-stored="$(security find-generic-password -s "$service" -a "$account" -w 2>/dev/null)" ||
-	die "security didn't store $service"
+status=0
+stored="$(security find-generic-password -s "$service" -a "$account" -w 2>/dev/null)" || status=$?
+((status != SECURITY_INTERACTION_NOT_ALLOWED)) ||
+	die "the login keychain is locked in this session (usual over SSH); run: security unlock-keychain $LOGIN_KEYCHAIN"
+((status == 0)) || die "security didn't store $service"
 [[ "$stored" == "$value" ]] || die "the stored value doesn't match what was entered"
 log "stored $service for $account (${#value} characters)"

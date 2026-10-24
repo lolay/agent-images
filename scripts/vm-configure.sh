@@ -59,8 +59,7 @@ push_registration_secret() {
 		guest_write "$vm" "$guest_path" <"$ENVIRONMENT_SECRET_FILE"
 		return
 	fi
-	value="$(keychain_secret claude-environment-secret "$vm")" ||
-		die "no Keychain item agent-images.claude-environment-secret for $vm or default; run make secret-set NAME=claude-environment-secret"
+	value="$(keychain_secret claude-environment-secret "$vm")" || exit 1
 	printf '%s' "$value" | guest_write "$vm" "$guest_path"
 }
 

@@ -54,12 +54,25 @@ default:
       items:
         - tool: claude
           hint: brew install --cask claude-code@latest
+        # Each brew upgrade quarantines the new claude, and Gatekeeper's "downloaded
+        # from the Internet" prompt blocks a launch nobody is at the screen for. The
+        # orchestrator clears it when it starts; this catches it for runs by hand.
+        - command: sh -c '! xattr -p com.apple.quarantine "$(realpath "$(command -v claude)")" >/dev/null 2>&1'
+          label: claude not quarantined (no Gatekeeper prompt at launch)
+          severity: warn
+          hint: xattr -d com.apple.quarantine "$(realpath "$(command -v claude)")"
         - path: vms/runner.env
           hint: cp vms/example-claude.env vms/runner.env
-        # No -w: prints the item's attributes, never the secret.
-        - command: security find-generic-password -s agent-images.claude-environment-secret
+        # Reading the value (-w, sent to /dev/null) is what the scripts do, and only
+        # it tells the two failures apart by exit status: 44 is a missing item, 36 a
+        # login keychain locked in this session, as it stays over SSH. A locked
+        # keychain passes the first check, since it can't say whether the item exists.
+        - command: sh -c 'security find-generic-password -s agent-images.claude-environment-secret -w >/dev/null 2>&1; [ $? -ne 44 ]'
           label: Claude environment secret in the Keychain
           hint: make secret-set NAME=claude-environment-secret
+        - command: sh -c 'security find-generic-password -s agent-images.claude-environment-secret -w >/dev/null 2>&1; [ $? -ne 36 ]'
+          label: login keychain unlocked in this session (it stays locked over SSH)
+          hint: security unlock-keychain ~/Library/Keychains/login.keychain-db
         - command: tart get {{ image_ref }}
           label: "image {{ image_ref }} available"
           hint: "make build   # or make image-pull when IMAGE_REF is a registry image"

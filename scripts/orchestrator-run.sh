@@ -21,6 +21,8 @@ health_port="$(setting ORCHESTRATOR_HEALTH_PORT 8080)"
 readonly max min_idle spawn_seconds health_port
 
 command -v claude >/dev/null 2>&1 || die "claude not found; brew install --cask claude-code@latest"
+# launchd restarts this after a brew upgrade has left a quarantined claude.
+clear_claude_quarantine
 [[ -f "$RUNNER_CONFIG" ]] || die "no $RUNNER_CONFIG; cp vms/example-claude.env vms/runner.env"
 ((min_idle <= max)) || die "RUNNER_MIN_IDLE ($min_idle) is more than RUNNER_MAX ($max)"
 
@@ -30,8 +32,7 @@ reclaim_stale_runners 0
 
 # An environment variable, not a file or an argument: nothing on disk, nothing
 # in `ps`. hooks/spawn-runner unsets it.
-SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET="$(keychain_secret claude-environment-secret orchestrator)" ||
-	die "no Keychain item agent-images.claude-environment-secret; run make secret-set NAME=claude-environment-secret"
+SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET="$(keychain_secret claude-environment-secret orchestrator)" || exit 1
 require_environment_key_shape "$SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET"
 export SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET
 
