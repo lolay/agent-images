@@ -59,7 +59,7 @@ push_registration_secret() {
 		guest_write "$vm" "$guest_path" <"$ENVIRONMENT_SECRET_FILE"
 		return
 	fi
-	value="$(keychain_secret claude-environment-secret "$vm")" || exit 1
+	value="$(keychain_secret claude-environment-secret "$vm" default)" || exit 1
 	printf '%s' "$value" | guest_write "$vm" "$guest_path"
 }
 

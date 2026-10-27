@@ -55,7 +55,7 @@ case "$action" in
 install)
 	command -v claude >/dev/null 2>&1 || die "claude not found; brew install --cask claude-code@latest"
 	[[ -f "$RUNNER_CONFIG" ]] || die "no $RUNNER_CONFIG; cp vms/example-claude.env vms/runner.env"
-	keychain_secret claude-environment-secret orchestrator >/dev/null || exit 1
+	keychain_secret claude-environment-secret orchestrator default >/dev/null || exit 1
 	clear_claude_quarantine
 	is_loaded "$label" && die "$label is already installed; run make runner-uninstall first"
 	mkdir -p "$(dirname "$plist")" "$AGENT_IMAGES_LOG_DIR"

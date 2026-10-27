@@ -18,6 +18,10 @@ readonly RUNNERS_DIR="$AGENT_IMAGES_DIR/build/runners"
 # Settings for every orchestrator-spawned runner VM.
 # shellcheck disable=SC2034 # used by the scripts that source this
 readonly RUNNER_CONFIG="$AGENT_IMAGES_DIR/vms/runner.env"
+# Settings for the host runner (scripts/host-runner-run.sh), which runs on this
+# Mac rather than in a VM.
+# shellcheck disable=SC2034 # used by the scripts that source this
+readonly HOST_RUNNER_CONFIG="$AGENT_IMAGES_DIR/vms/host.env"
 
 die() {
 	printf 'error: %s\n' "$*" >&2
@@ -45,13 +49,16 @@ readonly SECURITY_ITEM_NOT_FOUND=44
 readonly SECURITY_INTERACTION_NOT_ALLOWED=36
 readonly LOGIN_KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
 
-# Prints a secret from the host Keychain: the VM-specific item if present,
-# else the "default" one. If neither can be read, says why on stderr (missing,
-# or the keychain is locked) and returns non-zero.
+# Prints a secret from the host Keychain: the item for the first of the given
+# accounts that has one (callers end the list with "default" to fall back to
+# it). If none can be read, says why on stderr and returns 2 when no account
+# has the item, 1 for anything else (such as a keychain locked over SSH).
+# Usage: keychain_secret <name> <account>...
 keychain_secret() {
-	local name="$1" target_vm="$2" service="$KEYCHAIN_SERVICE_PREFIX.$1"
+	local name="$1" service="$KEYCHAIN_SERVICE_PREFIX.$1"
 	local account output status
-	for account in "$target_vm" default; do
+	shift
+	for account in "$@"; do
 		status=0
 		output="$(security find-generic-password -s "$service" -a "$account" -w 2>&1)" || status=$?
 		case "$status" in
@@ -71,9 +78,21 @@ keychain_secret() {
 			;;
 		esac
 	done
-	printf 'error: no Keychain item %s for %s or default; run: make secret-set NAME=%s\n' \
-		"$service" "$target_vm" "$name" >&2
-	return 1
+	local hint="make secret-set NAME=$name"
+	[[ "${!#}" == default ]] || hint+=" VM=${!#}"
+	printf 'error: no Keychain item %s for account %s; run: %s\n' \
+		"$service" "$(printf '%s' "$*" | sed 's/ / or /g')" "$hint" >&2
+	return 2
+}
+
+# Prints the email address of the account a Claude config directory is logged
+# in to (oauthAccount.emailAddress in its .claude.json), or nothing. The default
+# ~/.claude keeps that file beside it, as ~/.claude.json.
+claude_account_email() {
+	local config_file="$1/.claude.json"
+	[[ -f "$config_file" || "$1" != "$HOME/.claude" ]] || config_file="$HOME/.claude.json"
+	[[ -f "$config_file" ]] || return 0
+	plutil -extract oauthAccount.emailAddress raw -o - "$config_file" 2>/dev/null || true
 }
 
 # Homebrew quarantines what a cask downloads, so after every brew upgrade
@@ -161,7 +180,8 @@ write_host_plist() {
 			'  <key>ProgramArguments</key>' \
 			'  <array>'
 		for job_arg in "$@"; do
-			printf '    <string>%s</string>\n' "$job_arg"
+			printf '    <string>%s</string>\n' \
+				"$(printf '%s' "$job_arg" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')"
 		done
 		# ExitTimeOut leaves time to stop and delete a VM after SIGTERM.
 		printf '%s\n' \
