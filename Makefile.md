@@ -44,7 +44,7 @@ debugging. Dotted arrows are independent gates.
 | `VM_CPU` / `VM_MEMORY_GB` | `4` / `12` (Linux: `6` / `24`) | runner VMs, `vm-create` |
 | `DIR` | where make started (`$(PWD)`, which `make -C` keeps) | `host-runner-run`, `host-runner-install`: the context directory |
 | `HOST_RUNNER_HEALTH_PORT` | `8081` | The host runner's `/healthz` |
-| `HOST_CLAUDE_CONFIG_DIR` | none | The host runner's Claude config directory when the context's shell sets no `CLAUDE_CONFIG_DIR`; an absolute path |
+| `HOST_CLAUDE_CONFIG_DIR` | `CLAUDE_CONFIG_DIR`, else `~/.claude` | The host runner's Claude config directory (session config, lock account); `~/` or an absolute path. Read at `host-runner-run`/`-install` time from the command line or `.env` |
 | `HOST_RUNNER_SHELL` | your login shell | The shell that sets up the host runner's environment |
 | `MODE` | `run` | `doctor`: `run` or `build` |
 | `NAME` | none | `secret-set`: `claude-environment-secret` |
@@ -103,7 +103,7 @@ Every LaunchAgent and job writes stdout to `.out` and stderr to `.err`.
 
 | Target | Description |
 | --- | --- |
-| `host-runner-run` | `scripts/host-runner-service.sh run`: from launchd's minimal environment, `cd $(DIR)`, start your login shell there, and run `scripts/host-runner-run.sh` in the foreground. It reads the secret (Keychain account `host-<context>`, else `host`), locks to the email of `CLAUDE_CONFIG_DIR`'s account, and runs `images/shared/runners/claude.sh` again after every session. Refuses when the LaunchAgent is installed |
+| `host-runner-run` | `scripts/host-runner-service.sh run`: from launchd's minimal environment, `cd $(DIR)`, start your login shell there, and run `scripts/host-runner-run.sh` in the foreground. It reads the secret (Keychain account `host-<context>`, else `host`), locks to the email of the Claude config directory's account, and runs `images/shared/runners/claude.sh` again after every session. Refuses when the LaunchAgent is installed |
 | `host-runner-install` | The same command as LaunchAgent `com.agent-images.host-runner` (`KeepAlive`): starts at once in the GUI session and at every login. Runs `host-runner-run.sh --check` first, which fails on a missing secret but not on a keychain locked over SSH |
 | `host-runner-uninstall` | Boots out the LaunchAgent, waits up to 130 s for the runner to drain, removes the plist |
 | `host-runner-status` | LaunchAgent state, the running runner's context, `/healthz`, log tail |

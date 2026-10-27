@@ -140,6 +140,7 @@ pbpaste | make secret-set NAME=claude-environment-secret VM=host
 
 cd ~/Projects/lolay/some-repo          # the context: see below
 make -C ~/Projects/lolay/agent-images host-runner-run       # foreground; Ctrl-C stops it
+make -C ~/Projects/lolay/agent-images host-runner-run HOST_CLAUDE_CONFIG_DIR=~/.claude-work
 make -C ~/Projects/lolay/agent-images host-runner-install   # LaunchAgent: now and at each login
 make -C ~/Projects/lolay/agent-images host-runner-status
 make -C ~/Projects/lolay/agent-images host-runner-uninstall
@@ -159,7 +160,7 @@ included. From that environment:
 
 | What | From |
 | --- | --- |
-| Claude config seeded into each session (settings, plugins, skills) | `CLAUDE_CONFIG_DIR`, else `HOST_CLAUDE_CONFIG_DIR` in `.env` (an absolute path) |
+| Claude config seeded into each session (settings, plugins, skills) | `HOST_CLAUDE_CONFIG_DIR` on the make command line or in `.env` (`~/` or an absolute path), else `CLAUDE_CONFIG_DIR`, else `~/.claude` |
 | The account the runner is locked to (`--lock-to-account`) | That directory's `.claude.json`, `oauthAccount.emailAddress`; or `CLAUDE_LOCK_TO_ACCOUNT` in `vms/host.env` |
 | The environment secret | Keychain `agent-images.claude-environment-secret`, account `host-<context>` (fish's `__active_context`), else `host` |
 

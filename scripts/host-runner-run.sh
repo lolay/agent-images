@@ -13,12 +13,12 @@
 #   directory, and sessions inherit it in turn. --check prints what it would
 #   run with and exits.
 #
-# From that environment:
-#   CLAUDE_CONFIG_DIR  Seeds every session's Claude config; the account it's
-#                      logged in to (oauthAccount.emailAddress) is the account
-#                      the runner is locked to. Else HOST_CLAUDE_CONFIG_DIR (.env).
-#   __active_context   fish's per-directory context: the secret is Keychain
-#                      account host-<context>, else host.
+# The Claude config directory seeds every session's Claude config, and the
+# account it's logged in to (oauthAccount.emailAddress) is the account the
+# runner is locked to: HOST_CLAUDE_CONFIG_DIR (make's command line or .env),
+# else CLAUDE_CONFIG_DIR from that environment, else ~/.claude.
+# The secret is Keychain account host-<context> when the environment has fish's
+# per-directory __active_context, else host.
 # Settings: vms/host.env (vms/example-host.env); .env for HOST_RUNNER_HEALTH_PORT.
 set -euo pipefail
 
@@ -34,10 +34,13 @@ readonly check_only
 [[ -f "$HOST_RUNNER_CONFIG" ]] || die "no $HOST_RUNNER_CONFIG; cp vms/example-host.env vms/host.env"
 command -v claude >/dev/null 2>&1 || die "claude not found; brew install --cask claude-code@latest"
 
-config_dir="${CLAUDE_CONFIG_DIR:-$(setting HOST_CLAUDE_CONFIG_DIR "")}"
-[[ -n "$config_dir" ]] ||
-	die "no Claude config directory: CLAUDE_CONFIG_DIR isn't set in $PWD's shell environment, and .env has no HOST_CLAUDE_CONFIG_DIR"
-[[ -d "$config_dir" ]] || die "$config_dir (the Claude config directory) doesn't exist"
+config_dir="$(setting HOST_CLAUDE_CONFIG_DIR "")"
+config_dir="${config_dir:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}}"
+# .env can't say $HOME (make would expand it), so take a leading ~/ instead.
+# shellcheck disable=SC2088 # matching a literal ~/, not expanding one
+[[ "$config_dir" != "~/"* ]] || config_dir="$HOME/${config_dir#"~/"}"
+[[ -d "$config_dir" ]] ||
+	die "$config_dir (the Claude config directory) doesn't exist; set HOST_CLAUDE_CONFIG_DIR on the make command line or in .env"
 readonly config_dir
 context="${__active_context:-}"
 secret_accounts=(host)

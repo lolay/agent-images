@@ -9,7 +9,8 @@
 # shell opened there would have: with fish's per-context config, that
 # directory's markers (CLAUDE_CONFIG_DIR and the rest) and loadenv files.
 # run and the LaunchAgent both start it from launchd's minimal environment, so
-# they see the same thing.
+# they see the same thing. HOST_CLAUDE_CONFIG_DIR, from the environment (make's
+# command line) or .env, is read here and carried into it.
 #
 # install starts the runner at once, in the GUI session (Simulator and Apple
 # Intelligence need one; a process started from SSH isn't in it), and again at
@@ -62,10 +63,13 @@ clean_env=(
 # quotes, which fish, zsh, and bash read alike for a path without one; no
 # && in it either, so the command stays valid plist text.
 set_runner_command() {
-	local shell_path
+	local shell_path config_override
 	shell_path="$(login_shell)"
+	config_override="$(setting HOST_CLAUDE_CONFIG_DIR "")"
+	runner_command=(/usr/bin/env)
+	[[ -z "$config_override" ]] || runner_command+=("HOST_CLAUDE_CONFIG_DIR=$config_override")
 	# shellcheck disable=SC2016 # expanded by that bash, not here
-	runner_command=(
+	runner_command+=(
 		/bin/bash -c 'cd "$1" || exit 1; SHELL="$2" exec "$2" -l -c "$3"' host-runner
 		"$context_dir" "$shell_path" "exec /bin/bash '$run_script' $*"
 	)
