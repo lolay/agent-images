@@ -18,7 +18,7 @@ Review time: ~15 min
 - `shellcheck -x` and `shfmt -d` on every script in the Makefile's list: pass
 - Smoke test on Linux with fish 3.7, the public fish dotfiles, a stub context registry and stubbed `security`/`plutil`/`launchctl`/`dscl`/`claude`: context applied in a non-interactive `fish -l -c`; markers reached the runner; lock email and secret account `host-lolay` resolved; runner restarted after each exit; Ctrl-C stopped it and cleared the lock
 - Same setup, failures and precedence: no secret fails install before the plist is written; a locked keychain only warns; `CLAUDE_USE_GIT_PROXY=true` refused; a second runner refused; config dir from the command line, then `.env`, then `CLAUDE_CONFIG_DIR`, then `~/.claude`; the override lands in the plist
-- `make test` (`packer validate`): not run, no Packer here; CI runs it
+- CI `make ci` (lint and `packer validate`, macos-latest): pass on `4bc6e21`
 - On a Mac: not run. Untested: Apple Intelligence from the LaunchAgent, `launchctl bootstrap gui/<uid>` over SSH, the runner handing its environment to sessions, and a VM runner session after the shared changes
 
 ## Rollback
