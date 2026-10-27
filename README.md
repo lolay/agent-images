@@ -134,6 +134,7 @@ push as you; there's no reset between them. So give it a self-hosted environment
 its own in claude.ai (its own secret), and it always locks itself to your account.
 
 ```bash
+make init && $EDITOR .env      # optional: HOST_CLAUDE_CONFIG_DIR (see below)
 cp vms/example-host.env vms/host.env
 # The new environment's key. Account host-<fish context> (host-lolay) wins over host.
 pbpaste | make secret-set NAME=claude-environment-secret VM=host
@@ -163,6 +164,20 @@ included. From that environment:
 | Claude config seeded into each session (settings, plugins, skills) | `HOST_CLAUDE_CONFIG_DIR` on the make command line or in `.env` (`~/` or an absolute path), else `CLAUDE_CONFIG_DIR`, else `~/.claude` |
 | The account the runner is locked to (`--lock-to-account`) | That directory's `.claude.json`, `oauthAccount.emailAddress`; or `CLAUDE_LOCK_TO_ACCOUNT` in `vms/host.env` |
 | The environment secret | Keychain `agent-images.claude-environment-secret`, account `host-<context>` (fish's `__active_context`), else `host` |
+
+**Settings.** The same files as the VM runners, side by side on one Mac:
+
+| File | Holds | VM runners | Host runner |
+| --- | --- | --- | --- |
+| `.env` (from `.env.example`) | Settings for this Mac, read by make and the scripts | `IMAGE_REF`, `RUNNER_MAX`, `RUNNER_MIN_IDLE`, `VM_CPU`, `VM_MEMORY_GB`, `ORCHESTRATOR_HEALTH_PORT` | `HOST_CLAUDE_CONFIG_DIR`, `HOST_RUNNER_HEALTH_PORT`, `HOST_RUNNER_SHELL` |
+| `vms/*.env` | Runner settings; every line reaches sessions as an environment variable | `vms/runner.env` | `vms/host.env` |
+| Keychain `agent-images.claude-environment-secret` | The environment secret | Account `orchestrator`, else `default` | Account `host-<context>`, else `host` |
+
+Both read `RUNNER_LABEL_PREFIX` (default: the Mac's `LocalHostName`), so one Mac's
+runners show in the console as `<prefix>-runner-1`, `<prefix>-runner-2`, and
+`<prefix>-host`. `host-runner-install` writes the context directory and
+`HOST_CLAUDE_CONFIG_DIR` into the LaunchAgent, so a later change to either takes an
+uninstall and install.
 
 **Differences from a VM runner.** No git proxy and no `--configure-git` (both rewrite
 your `~/.gitconfig`; the runner refuses to start with either); no `brew upgrade` (it's

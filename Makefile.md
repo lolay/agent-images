@@ -39,7 +39,7 @@ debugging. Dotted arrows are independent gates.
 | `RUNNER_MAX` / `RUNNER_MIN_IDLE` | `2` / `1` (from `.env`) | Runner VMs at most / kept booted as standby |
 | `RUNNER_SPAWN_SECONDS` | `300` | The orchestrator's `--expected-spawn-seconds` lease |
 | `ORCHESTRATOR_HEALTH_PORT` | `8080` | The orchestrator's `/healthz` on the host |
-| `RUNNER_LABEL_PREFIX` | this Mac's `LocalHostName` | Runner label and guest hostname: `<prefix>-<vm>` |
+| `RUNNER_LABEL_PREFIX` | this Mac's `LocalHostName` | Runner label and guest hostname: `<prefix>-<vm>`; the host runner's label is `<prefix>-host` |
 | `VM_BOOT_TIMEOUT` | `300` | Seconds `vm-configure` waits for the guest agent |
 | `VM_CPU` / `VM_MEMORY_GB` | `4` / `12` (Linux: `6` / `24`) | runner VMs, `vm-create` |
 | `DIR` | where make started (`$(PWD)`, which `make -C` keeps) | `host-runner-run`, `host-runner-install`: the context directory |
