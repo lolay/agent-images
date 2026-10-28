@@ -23,6 +23,11 @@ jobs:
       - name: Install tools
         run: brew install shellcheck shfmt
       - name: Init
+        # packer init looks the Tart plugin up through GitHub's API; anonymous
+        # calls share the hosted runner's IP limit and fail with a 403 once it's
+        # spent. The job's token gets the repository's own, higher limit.
+        env:
+          PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: make init
       - name: Gate
         run: make ci
