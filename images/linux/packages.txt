@@ -16,6 +16,11 @@ tmux
 unzip
 zip
 
+# Homebrew's prerequisites on Ubuntu (git and curl are above). The Brewfile's
+# formulae are prebuilt, so no compiler.
+file
+procps
+
 # KVM checks (kvm-ok) for make doctor and agent-emulator status.
 cpu-checker
 

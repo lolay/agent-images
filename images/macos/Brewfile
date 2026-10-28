@@ -22,6 +22,7 @@ brew "swiftlint"
 brew "tmux"
 brew "xcbeautify"
 brew "xcodegen"
+brew "lolay/tap/nowline"
 brew "lolay/tap/triage"
 
 # Runner CLI. The runner script upgrades it at each start.

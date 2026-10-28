@@ -47,11 +47,11 @@ tracks the latest and pins only on breakage
 | packer-plugin-tart | 1.21.0 | `~> 1.21` in `images/macos/plugins.pkr.hcl` |
 | Base image | `macos-<host codename>-xcode:latest`, today `macos-golden-gate-xcode` | Not pinned: `make build` pulls the newest Xcode image for the host's macOS (`MACOS_CODENAME_<major>` in the Makefile) |
 | Claude Code | `claude-code@latest` cask (2.1.286) | `images/macos/Brewfile`; the Claude runner upgrades it at each start |
-| Image packages | xcodegen 2.46.0, xcbeautify 3.2.1, swiftlint 0.65.1, swiftformat 0.63.1, sops 3.13.3, age 1.3.2, triage 0.4.0 (`lolay/tap`), asccli 0.18.6 (command `asc`) | `images/macos/Brewfile`; current release at build time |
+| Image packages | xcodegen 2.46.0, xcbeautify 3.2.1, swiftlint 0.65.1, swiftformat 0.63.1, sops 3.13.3, age 1.3.2, nowline 0.11.0 and triage 0.4.0 (`lolay/tap`), asccli 0.18.6 (command `asc`) | `images/macos/Brewfile`; current release at build time |
 | shellcheck / shfmt | 0.11.0 / 3.14.1 | Build host tools for `make lint` |
 | actions/checkout | v7.0.1 | `.github/workflows/ci.yml`, `.github/workflows/linux-image-smoke.yml` |
 | Linux host | Ubuntu 24.04 Server, LXD snap `latest/stable` (refreshes held; `make build` refreshes) | `scripts/linux/host-setup.sh` |
-| Linux image | `ubuntu:24.04`; OpenJDK 21; Android command-line tools 23.0, emulator 37.1.11, platform and x86_64 Google APIs image `android-37.0`, build-tools 37.0.0 | `images/linux/packages.txt`, `images/linux/scripts/ensure-android-sdk.sh`: newest stable at build time |
+| Linux image | `ubuntu:24.04`; OpenJDK 21; Android command-line tools 23.0, emulator 37.1.11, platform and x86_64 Google APIs image `android-37.0`, build-tools 37.0.0 | `images/linux/packages.txt`, `images/linux/Brewfile` (Homebrew: nowline 0.11.0, triage 0.5.0), `images/linux/scripts/ensure-android-sdk.sh`: newest stable at build time |
 | hashicorp/setup-packer | v3.4.0 (installs Packer 1.16.1) | `.github/workflows/ci.yml` |
 
 ## Build (build host)
