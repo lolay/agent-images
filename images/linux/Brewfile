@@ -1,0 +1,9 @@
+# Homebrew formulae installed into every Linux image, after the apt packages in
+# packages.txt. The Linux counterpart of the lines in images/macos/Brewfile; no
+# versions, same policy (specs/design.md, "Track the latest").
+#
+# Every tap listed here is trusted by install-packages.sh before the bundle runs.
+tap "lolay/tap"
+
+brew "lolay/tap/nowline"
+brew "lolay/tap/triage"

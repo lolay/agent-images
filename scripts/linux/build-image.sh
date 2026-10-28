@@ -67,7 +67,7 @@ lxc exec "$build_vm" -- mkdir -p "$guest_staging/scripts"
 for source_dir in "$shared_dir" "$linux_dir/files"; do
 	tar -C "$source_dir" -cf - . | lxc exec "$build_vm" --force-noninteractive -- tar -xf - --no-same-owner -C "$guest_staging"
 done
-tar -C "$linux_dir" -cf - packages.txt | lxc exec "$build_vm" --force-noninteractive -- tar -xf - --no-same-owner -C "$guest_staging"
+tar -C "$linux_dir" -cf - packages.txt Brewfile | lxc exec "$build_vm" --force-noninteractive -- tar -xf - --no-same-owner -C "$guest_staging"
 tar -C "$linux_dir/scripts" -cf - . | lxc exec "$build_vm" --force-noninteractive -- tar -xf - --no-same-owner -C "$guest_staging/scripts"
 
 # The provisioners run as the guest user, as the macOS image's do, and use sudo
