@@ -77,6 +77,10 @@ failing `make ci` points at a change in this repo rather than a tool update.
 | Runners start at host login | Hosts are Macs with a display. After a restart, either log in each time (FileVault on) or use automatic login (FileVault off); macOS allows automatic login only without FileVault |
 | Android on a Linux host, one LXD VM per session | The emulator stays inside the session's VM with nested KVM; LXD is Tart's counterpart (ephemeral copy-on-write clones, `lxc exec`, image publish) and Ubuntu's first-party VM manager ([linux.md](linux.md)) |
 | Linux host scripts mirror the macOS ones | Same contracts and file layout; merged into one platform layer only after both hosts have run on hardware |
+| A host runner for what a VM can't do | Apple Intelligence isn't available in a macOS guest. One `claude self-hosted-runner` on the Mac itself, as the logged-in user ([README](../README.md#host-runner-no-vm)) |
+| The host runner skips the orchestrator | The orchestrator keeps the secret out of a VM and starts one per session; on the host there's no VM, and a session running as the host user can read the Keychain anyway. The script reruns `claude.sh` after each session; `--remove-session-state` is the cleanup |
+| The host runner runs as the logged-in user, without the git proxy | A second macOS user is a hassle and may not get Apple Intelligence; the git proxy and `--configure-git` would rewrite that user's `~/.gitconfig`, so sessions use the user's own git and SSH keys. Its own environment and secret, and always `--lock-to-account` (the email of the account its Claude config directory is logged in to: `~/.claude` unless `HOST_CLAUDE_CONFIG_DIR` or `CLAUDE_CONFIG_DIR` says otherwise): whoever can pick the environment in claude.ai gets a shell as that user |
+| The host runner's environment comes from the login shell in a chosen directory | Sessions get the same tools and per-directory context (fish markers, `loadenv`) as a shell there. run and the LaunchAgent both start from launchd's minimal environment, so the two match |
 | The guest runner files are shared | `images/shared` (runner, Claude runner script, watchdog, Stop hook) goes into both images, so session behavior matches |
 
 ## 4. How a runner runs
@@ -199,5 +203,6 @@ Still to check:
 | The watchdog acts on a real broken relay (`WATCHDOG_ACTION=terminate`) and the session resumes on the standby | Detection and the `pkill` pattern are verified; a real #96856 failure hasn't happened yet |
 | The Stop hook's nudge actually gets Claude to push before a turn ends | The hook reaches sessions; its effect on a session with unpushed work is untested |
 | Idle release after `CLAUDE_RELEASE_IDLE_SESSION_MIN` resumes the session on a fresh VM | The test session was deleted rather than left idle |
+| The host runner on hardware | Apple Intelligence (Foundation Models) from a LaunchAgent session; `launchctl bootstrap gui/<uid>` from an SSH session; fish applying the context in `fish -l -c` (verified with fish 3.7 on Linux, not on a Mac); the runner handing its environment to sessions |
 | The Linux host's open items | Nested KVM in an LXD VM, ephemeral VM deletion, and the rest in [linux.md](linux.md#open-items) |
 

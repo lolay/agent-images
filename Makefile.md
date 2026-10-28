@@ -20,6 +20,9 @@ graph LR
     runner-run --> runner-install --> runner-status
     runner-install --> runner-stop
     runner-install --> runner-uninstall
+    secret-set --> host-runner-run
+    host-runner-run --> host-runner-install --> host-runner-status
+    host-runner-install --> host-runner-uninstall
     image-pull --> vm-create --> vm-up
     vm-up --> vm-status
     ci -.-> lint
@@ -27,7 +30,8 @@ graph LR
 ```
 
 `runner-run` and `runner-install` are the normal way to run VMs: Claude's
-orchestrator boots a fresh VM per session. `vm-up` (`vm-start` followed by `vm-configure`) gives a persistent VM for
+orchestrator boots a fresh VM per session. `host-runner-run` and
+`host-runner-install` run one runner on the Mac itself instead, with no image. `vm-up` (`vm-start` followed by `vm-configure`) gives a persistent VM for
 debugging. Dotted arrows are independent gates.
 
 ## Variables
@@ -39,9 +43,13 @@ debugging. Dotted arrows are independent gates.
 | `RUNNER_MAX` / `RUNNER_MIN_IDLE` | `2` / `1` (from `.env`) | Runner VMs at most / kept booted as standby |
 | `RUNNER_SPAWN_SECONDS` | `300` | The orchestrator's `--expected-spawn-seconds` lease |
 | `ORCHESTRATOR_HEALTH_PORT` | `8080` | The orchestrator's `/healthz` on the host |
-| `RUNNER_LABEL_PREFIX` | this Mac's `LocalHostName` | Runner label and guest hostname: `<prefix>-<vm>` |
+| `RUNNER_LABEL_PREFIX` | this Mac's `LocalHostName` | Runner label and guest hostname: `<prefix>-<vm>`; the host runner's label is `<prefix>-host` |
 | `VM_BOOT_TIMEOUT` | `300` | Seconds `vm-configure` waits for the guest agent |
 | `VM_CPU` / `VM_MEMORY_GB` | `4` / `12` (Linux: `6` / `24`) | runner VMs, `vm-create` |
+| `DIR` | where make started (`$(PWD)`, which `make -C` keeps) | `host-runner-run`, `host-runner-install`: the context directory |
+| `HOST_RUNNER_HEALTH_PORT` | `8081` | The host runner's `/healthz` |
+| `HOST_CLAUDE_CONFIG_DIR` | `CLAUDE_CONFIG_DIR`, else `~/.claude` | The host runner's Claude config directory (session config, lock account); `~/` or an absolute path. Read at `host-runner-run`/`-install` time from the command line or `.env` |
+| `HOST_RUNNER_SHELL` | your login shell | The shell that sets up the host runner's environment |
 | `MODE` | `run` | `doctor`: `run` or `build` |
 | `NAME` | none | `secret-set`: `claude-environment-secret` |
 | `LOG_LINES` | `100` | `vm-logs` |
@@ -95,6 +103,19 @@ Every LaunchAgent and job writes stdout to `.out` and stderr to `.err`.
 | `build/logs/runner-N.guest` | The VM's `agent-runner` (the self-hosted runner and `brew upgrade`) and watchdog output, streamed while it runs; a `=== time runner-N order … ===` header per VM |
 | `build/logs/runner-N.tart` | `tart run` output |
 
+### Host runner (this Mac itself, no VM)
+
+| Target | Description |
+| --- | --- |
+| `host-runner-run` | `scripts/host-runner-service.sh run`: from launchd's minimal environment, `cd $(DIR)`, start your login shell there, and run `scripts/host-runner-run.sh` in the foreground. It reads the secret (Keychain account `host-<context>`, else `host`), locks to the email of the Claude config directory's account, and runs `images/shared/runners/claude.sh` again after every session. Refuses when the LaunchAgent is installed |
+| `host-runner-install` | The same command as LaunchAgent `com.agent-images.host-runner` (`KeepAlive`): starts at once in the GUI session and at every login. Runs `host-runner-run.sh --check` first, which fails on a missing secret but not on a keychain locked over SSH |
+| `host-runner-uninstall` | Boots out the LaunchAgent, waits up to 130 s for the runner to drain, removes the plist |
+| `host-runner-status` | LaunchAgent state, the running runner's context, `/healthz`, log tail |
+
+A running host runner holds `build/host-runner/` (its PID and a summary of its
+context), which keeps a second one from starting. LaunchAgent logs:
+`build/logs/host-runner.{out,err}`.
+
 ### VMs (manual, persistent; for debugging)
 
 | Target | Description |
@@ -110,7 +131,7 @@ Every LaunchAgent and job writes stdout to `.out` and stderr to `.err`.
 | `vm-logs` | Tails a running guest's `~/Library/Logs/agent-runner.out` and `.err` |
 | `vm-versions` | macOS, Xcode and its developer dir, iOS simulator runtimes, the guest user's iPhone simulators, and Claude Code in the guest |
 | `vm-list` | `tart list` |
-| `secret-set` | `scripts/secret-set.sh`: stores service `agent-images.<NAME>`, account `<VM>` or `default`. Prompts (hidden) or reads a pipe (`pbpaste \| make secret-set NAME=…`); sends the value to `security -i` over stdin (the `-w` prompt truncates at 128 characters) and checks it round-trips |
+| `secret-set` | `scripts/secret-set.sh`: stores service `agent-images.<NAME>`, account `<VM>` or `default` (the host runner reads `host-<context>` or `host`). Prompts (hidden) or reads a pipe (`pbpaste \| make secret-set NAME=…`); sends the value to `security -i` over stdin (the `-w` prompt truncates at 128 characters) and checks it round-trips |
 
 ### Release / Danger
 

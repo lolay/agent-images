@@ -15,6 +15,10 @@ Apple Silicon can't run the emulator inside a VM, so Android needs this host; se
 [specs/linux.md](specs/linux.md) for why, the design, and hardware to buy. Setup is
 [below](#linux-host-android).
 
+For work a VM can't do, such as Apple Intelligence, which isn't available in a macOS
+guest, a **host runner** runs one Claude runner on the Mac itself, as you, with your
+shell's environment for a directory you pick. See [Host runner](#host-runner-no-vm).
+
 Design, constraints, and open items are in [specs/design.md](specs/design.md). Make
 targets are documented in [Makefile.md](Makefile.md).
 
@@ -120,6 +124,70 @@ Runner VMs outlive an orchestrator restart; `make runner-stop` deletes them (the
 `make runner-uninstall` stops everything (see [Stop, rebuild, restart](#stop-rebuild-restart)).
 `make vm-create` / `vm-up` still give you a persistent VM for debugging, under any
 name except `runner-N`.
+
+## Host runner (no VM)
+
+One runner on the Mac itself, for sessions that need what a VM can't give them: Apple
+Intelligence, mainly. It runs alongside the VM runners on the same Mac or on its own.
+Sessions run as you, in your home directory, with your git config and SSH keys, and
+push as you; there's no reset between them. So give it a self-hosted environment of
+its own in claude.ai (its own secret), and it always locks itself to your account.
+
+```bash
+make init && $EDITOR .env      # optional: HOST_CLAUDE_CONFIG_DIR (see below)
+cp vms/example-host.env vms/host.env
+# The new environment's key. Account host-<fish context> (host-lolay) wins over host.
+pbpaste | make secret-set NAME=claude-environment-secret VM=host
+
+cd ~/Projects/lolay/some-repo          # the context: see below
+make -C ~/Projects/lolay/agent-images host-runner-run       # foreground; Ctrl-C stops it
+make -C ~/Projects/lolay/agent-images host-runner-run HOST_CLAUDE_CONFIG_DIR=~/.claude-work
+make -C ~/Projects/lolay/agent-images host-runner-install   # LaunchAgent: now and at each login
+make -C ~/Projects/lolay/agent-images host-runner-status
+make -C ~/Projects/lolay/agent-images host-runner-uninstall
+```
+
+On demand over Tailscale: `ssh mac 'cd ~/Projects/lolay/x && make -C
+~/Projects/lolay/agent-images host-runner-install'`, and `host-runner-uninstall` when
+you're done. Install, not run, from SSH: the LaunchAgent runs in your GUI session,
+which Simulator and Apple Intelligence need and an SSH shell isn't in, and it reads the
+Keychain there, where it's unlocked. You need to be logged in at the Mac.
+
+**Context.** The runner starts through your login shell in the directory make was
+started from (`DIR=<dir>` picks another), from launchd's minimal environment, so it
+gets what a new shell there would have. With fish's per-context config, that's the
+directory's markers and `loadenv` files, and sessions inherit all of it, secrets
+included. From that environment:
+
+| What | From |
+| --- | --- |
+| Claude config seeded into each session (settings, plugins, skills) | `HOST_CLAUDE_CONFIG_DIR` on the make command line or in `.env` (`~/` or an absolute path), else `CLAUDE_CONFIG_DIR`, else `~/.claude` |
+| The account the runner is locked to (`--lock-to-account`) | That directory's `.claude.json`, `oauthAccount.emailAddress`; or `CLAUDE_LOCK_TO_ACCOUNT` in `vms/host.env` |
+| The environment secret | Keychain `agent-images.claude-environment-secret`, account `host-<context>` (fish's `__active_context`), else `host` |
+
+**Settings.** The same files as the VM runners, side by side on one Mac:
+
+| File | Holds | VM runners | Host runner |
+| --- | --- | --- | --- |
+| `.env` (from `.env.example`) | Settings for this Mac, read by make and the scripts | `IMAGE_REF`, `RUNNER_MAX`, `RUNNER_MIN_IDLE`, `VM_CPU`, `VM_MEMORY_GB`, `ORCHESTRATOR_HEALTH_PORT` | `HOST_CLAUDE_CONFIG_DIR`, `HOST_RUNNER_HEALTH_PORT`, `HOST_RUNNER_SHELL` |
+| `vms/*.env` | Runner settings; every line reaches sessions as an environment variable | `vms/runner.env` | `vms/host.env` |
+| Keychain `agent-images.claude-environment-secret` | The environment secret | Account `orchestrator`, else `default` | Account `host-<context>`, else `host` |
+
+Both read `RUNNER_LABEL_PREFIX` (default: the Mac's `LocalHostName`), so one Mac's
+runners show in the console as `<prefix>-runner-1`, `<prefix>-runner-2`, and
+`<prefix>-host`. `host-runner-install` writes the context directory and
+`HOST_CLAUDE_CONFIG_DIR` into the LaunchAgent, so a later change to either takes an
+uninstall and install.
+
+**Differences from a VM runner.** No git proxy and no `--configure-git` (both rewrite
+your `~/.gitconfig`; the runner refuses to start with either); no `brew upgrade` (it's
+your Claude Code); `/healthz` on `HOST_RUNNER_HEALTH_PORT` (8081), so it doesn't
+collide with the orchestrator's 8080; repos in `~/agent-host-workspace`, where clones
+stay between sessions while `--remove-session-state` removes each session's worktree
+and state. One host runner per Mac, one session at a time; it restarts the runner after
+every session. Sessions share your Simulator devices, Homebrew, and localhost ports,
+and anything a session leaves running keeps running. Logs: `build/logs/host-runner.{out,err}`
+(the LaunchAgent), the terminal (`host-runner-run`).
 
 ## Linux host (Android)
 

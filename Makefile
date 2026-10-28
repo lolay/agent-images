@@ -28,6 +28,7 @@ export
 
 .PHONY: help init build lint format test ci pre-commit doctor clean host-setup \
         runner-run runner-install runner-uninstall runner-stop runner-status \
+        host-runner-run host-runner-install host-runner-uninstall host-runner-status \
         image-pull image-prune vm-create vm-start vm-configure vm-up vm-stop vm-status vm-logs \
         vm-versions vm-list vm-delete secret-set \
         gh-runs-list gh-runs-watch gh-runs-status bump publish
@@ -53,6 +54,8 @@ else
 IMAGE_REF ?= $(IMAGE_NAME)
 endif
 VM ?=
+# The host runner's context directory: where make was started (make -C keeps it).
+DIR ?= $(PWD)
 ifeq ($(HOST_OS),Linux)
 VM_CPU ?= 6
 VM_MEMORY_GB ?= 24
@@ -109,7 +112,7 @@ require_manual_vm = @[ -n "$(VM)" ] || { printf 'Set VM=<name>, e.g. make $@ VM=
 ##@ Develop
 
 help: ## Show this help
-	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_.-]+:.*?##/ {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2} /^##@/ {printf "\n\033[1m%s\033[0m\n", substr($$0,5)}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_.-]+:.*?##/ {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2} /^##@/ {printf "\n\033[1m%s\033[0m\n", substr($$0,5)}' $(MAKEFILE_LIST)
 
 init: ## Install Packer plugins (build hosts) and create .env if missing
 	@[ -f .env ] || { cp $(ENV_EXAMPLE) .env; printf 'Created .env from $(ENV_EXAMPLE).\n'; }
@@ -185,6 +188,24 @@ runner-stop: ## Stop and delete every runner VM; a running orchestrator boots ne
 
 runner-status: ## Orchestrator state and health, then each runner VM
 	@$(HOST_SCRIPTS)/orchestrator-service.sh status
+
+##@ Host runner (this Mac itself, no VM; for Apple Intelligence)
+
+host-runner-run: ## Run a runner on this Mac in the foreground, from your shell's context for DIR (default: where make started)
+	$(require_macos)
+	scripts/host-runner-service.sh run "$(DIR)"
+
+host-runner-install: ## Start the host runner as a LaunchAgent now and at login, from the context for DIR
+	$(require_macos)
+	scripts/host-runner-service.sh install "$(DIR)"
+
+host-runner-uninstall: ## Stop the host runner and remove its LaunchAgent (its session requeues)
+	$(require_macos)
+	scripts/host-runner-service.sh uninstall
+
+host-runner-status: ## Host runner state, context, health, and log tail
+	$(require_macos)
+	@scripts/host-runner-service.sh status
 
 ##@ VMs (manual, persistent; for debugging)
 

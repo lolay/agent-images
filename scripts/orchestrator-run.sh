@@ -32,7 +32,7 @@ reclaim_stale_runners 0
 
 # An environment variable, not a file or an argument: nothing on disk, nothing
 # in `ps`. hooks/spawn-runner unsets it.
-SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET="$(keychain_secret claude-environment-secret orchestrator)" || exit 1
+SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET="$(keychain_secret claude-environment-secret orchestrator default)" || exit 1
 require_environment_key_shape "$SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET"
 export SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET
 

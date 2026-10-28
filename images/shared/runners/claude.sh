@@ -25,7 +25,12 @@
 #   CLAUDE_CONFINE_REPO_SETTINGS
 #                           enforce (default), warn, or off: refuse repos whose
 #                           committed settings grant writes outside the workspace.
-# Secret: ~/.claude-runner/environment-secret (mode 600).
+#   CLAUDE_BASE_DIR         ~/workspace (default): where repos are checked out.
+#   CLAUDE_HEALTH_PORT      The runner's /healthz port. Empty (default) = 8080.
+#   CLAUDE_UPGRADE          true (default) = upgrade Claude Code before starting.
+# Secret: ~/.claude-runner/environment-secret (mode 600), or
+# SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET when set (the host runner,
+# scripts/host-runner-run.sh, which runs this script on a Mac rather than a VM).
 #
 # With the default --drain-grace-sec 0 and --capacity 1, the runner exits after
 # one session; launchd (systemd on Linux) restarts it, so each session gets a
@@ -33,8 +38,10 @@
 set -euo pipefail
 
 readonly secret_file="$HOME/.claude-runner/environment-secret"
-readonly base_dir="$HOME/workspace"
 : "${RUNNER_LABEL:=$(hostname -s)}"
+: "${CLAUDE_BASE_DIR:=$HOME/workspace}"
+: "${CLAUDE_HEALTH_PORT:=}"
+: "${CLAUDE_UPGRADE:=true}"
 : "${CLAUDE_USE_GIT_PROXY:=true}"
 : "${CLAUDE_PUSH_OUTCOME_ON_RELEASE:=auto}"
 : "${CLAUDE_CONFIGURE_GIT:=true}"
@@ -46,7 +53,7 @@ readonly base_dir="$HOME/workspace"
 log() { printf '%s claude-runner: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 warn() { log "$@" >&2; }
 
-if [[ ! -s "$secret_file" ]]; then
+if [[ -z "${SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET:-}" && ! -s "$secret_file" ]]; then
 	warn "missing $secret_file; run make vm-configure"
 	exit 1
 fi
@@ -55,7 +62,10 @@ fi
 # The upgrade's chatter (including "already installed") goes to stdout, into the
 # runner's log like everything else; a failure is flagged on stderr. macOS
 # installs Claude as a Homebrew cask, Linux with the native installer.
-if command -v brew >/dev/null 2>&1; then
+# The host runner sets CLAUDE_UPGRADE=false: that Claude Code is the host user's.
+if [[ "$CLAUDE_UPGRADE" != "true" ]]; then
+	:
+elif command -v brew >/dev/null 2>&1; then
 	brew upgrade --cask claude-code@latest 2>&1 || warn "claude upgrade failed; continuing"
 	# Homebrew quarantines what a cask downloads, so Gatekeeper asks "downloaded
 	# from the Internet, are you sure you want to open it?" at the next launch,
@@ -83,17 +93,23 @@ if command -v agent-emulator >/dev/null 2>&1; then
 	agent-emulator start || warn "Android emulator didn't start; instrumented tests will fail"
 fi
 
-mkdir -p "$base_dir"
+mkdir -p "$CLAUDE_BASE_DIR"
 
 args=(
 	self-hosted-runner
-	--environment-secret-file "$secret_file"
 	--client-label "$RUNNER_LABEL"
-	--base-dir "$base_dir"
+	--base-dir "$CLAUDE_BASE_DIR"
 	--capacity 1
 	--remove-session-state
 	--confine-repo-settings "$CLAUDE_CONFINE_REPO_SETTINGS"
 )
+# The runner reads SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET itself when it's set.
+if [[ -z "${SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET:-}" ]]; then
+	args+=(--environment-secret-file "$secret_file")
+fi
+if [[ -n "$CLAUDE_HEALTH_PORT" ]]; then
+	args+=(--health-port "$CLAUDE_HEALTH_PORT")
+fi
 if [[ -n "${CLAUDE_LOCK_TO_ACCOUNT:-}" ]]; then
 	args+=(--lock-to-account "$CLAUDE_LOCK_TO_ACCOUNT")
 fi
