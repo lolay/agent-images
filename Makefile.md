@@ -20,6 +20,9 @@ graph LR
     runner-run --> runner-install --> runner-status
     runner-install --> runner-stop
     runner-install --> runner-uninstall
+    secret-set --> host-runner-run
+    host-runner-run --> host-runner-install --> host-runner-status
+    host-runner-install --> host-runner-uninstall
     image-pull --> vm-create --> vm-up
     vm-up --> vm-status
     ci -.-> lint
@@ -27,7 +30,8 @@ graph LR
 ```
 
 `runner-run` and `runner-install` are the normal way to run VMs: Claude's
-orchestrator boots a fresh VM per session. `vm-up` (`vm-start` followed by `vm-configure`) gives a persistent VM for
+orchestrator boots a fresh VM per session. `host-runner-run` and
+`host-runner-install` run one runner on the Mac itself instead, with no image. `vm-up` (`vm-start` followed by `vm-configure`) gives a persistent VM for
 debugging. Dotted arrows are independent gates.
 
 ## Variables
