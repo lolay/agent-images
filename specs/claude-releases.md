@@ -1,7 +1,7 @@
 # Claude Code releases and image freshness
 
-Status: **research and proposal.** Data pulled 2026-11-04: npm publish times for
-`@anthropic-ai/claude-code` (82 releases, 2026-08-06 to 2026-11-03), the
+Status: **research.** The automation proposal is in [gcp.md](gcp.md#image-pipeline).
+Data pulled 2026-11-04: npm publish times for `@anthropic-ai/claude-code` (82 releases, 2026-08-06 to 2026-11-03), the
 `claude-code@latest` bumps merged into Homebrew/homebrew-cask over the same window,
 and update timings measured on a Linux container.
 
@@ -49,66 +49,21 @@ Two smaller wins regardless of the image:
 
 ## Proposal
 
-### Schedules
+The automation is for the GCP images, where builds are plain container builds on
+GitHub-hosted runners: an hourly watch from 08:00 to 22:00 Pacific that rebuilds when
+Claude or any other dependency moves, a nightly no-cache build at 04:00, one image
+kept, and build logs and manifests on GitHub. See
+[gcp.md](gcp.md#image-pipeline).
 
-| Job | When (Pacific) | What |
-| --- | --- | --- |
-| Full build | 04:00 Tuesday to Saturday | `make build`: newest base image and packages. Every npm release of the previous day is out by 22:00, and nearly every Homebrew bump by about 04:00 |
-| Release check | Hourly 08:00 to 22:00, every day | If the published version (cask version on macOS, `downloads.claude.ai` on Linux) is newer than the image's, run a refresh build, then recycle idle standbys |
+The macOS and Linux hosts stay manual: `make build` when you choose, and Claude
+upgrades itself at each VM start as it does today. Two small changes would still help
+them:
 
-A refresh build is not a full build. It clones the current image, boots it, upgrades
-Claude, shuts it down, and swaps it in, the same `-next` swap `make build` does. That's
-minutes, not the full build. On macOS the refresh VM counts toward the two-VM limit;
-with both slots busy it skips, and the next hourly check tries again. On GCP it's the
-last Dockerfile layer only.
-
-Recycling idle standbys: for each runner VM, read the runner's `/healthz`
-(`active_sessions`) and `/metrics` (`claude_code_self_hosted_runner_info{version}`) on
-port 8080 in the guest. Stop only those with no active sessions and an older version.
-The orchestrator replaces them from the new image. If a session lands between check
-and stop, `SIGTERM` drains it and it requeues onto a fresh runner. `--exit-if-unused-min`
-on standbys (say 240) stays as the backstop if the check is down.
-
-### Where it runs: GitHub Actions on the build host
-
-Hosted runners can't build these images (no nested virtualization for Tart, no LXD),
-so the jobs run on a **self-hosted GitHub Actions runner on each build host**, labeled
-for that host (`agent-images-macos`, `agent-images-linux`). That also puts every build's
-log on GitHub, which is the point.
-
-- Scheduled workflows take a `timezone` since March 2026, so the schedules read as
-  written: `cron: '17 8-22 * * *'` and `cron: '7 4 * * 2-6'` with
-  `timezone: America/Los_Angeles`. Off the hour on purpose; GitHub delays runs at :00.
-- One `concurrency` group per host, so a refresh never overlaps a full build.
-- State between runs: none needed in Actions. The job runs on the host, and the host
-  knows what it built: the build writes `build/images/<image>.json` (Claude version,
-  base image digest, build time, run URL), and the check compares against that.
-  If a check ever runs on a hosted runner instead, `actions/cache` with a
-  `lookup-only` restore on a key like `claude-2.1.318` works as a "seen this version"
-  flag; repository variables work too but need a token with variables write, which
-  `GITHUB_TOKEN` doesn't have.
-- **This repo is public**, and a self-hosted runner on a public repo will run whatever
-  a fork's pull request puts in a workflow file, unless someone approves the run.
-  Before registering one: workflows that target these labels trigger only on
-  `schedule` and `workflow_dispatch`; set "Require approval for all external
-  contributors" for fork pull request workflows; run the Actions runner as its own
-  macOS/Linux user without access to the Keychain items or `~/.config/agent-images`.
-  Or make the repo private, which removes the problem.
-
-### Keep one image, keep the logs
-
-- **Images: keep the last one.** `make build` already deletes the old `agent-macos`
-  before renaming the new one, and `build-image.sh` deletes the old LXD image after
-  moving the alias; the refresh build does the same. Add `make image-prune` after each
-  full build so Tart's cache doesn't hold old Xcode base images. On GCP, an Artifact
-  Registry cleanup policy keeping the most recent image. Keeping one means rollback
-  is a rebuild; keeping two would make it a swap.
-- **Logs: on GitHub.** The run log, plus a manifest artifact per build: `brew list
-  --versions`, `brew list --cask --versions`, `xcodebuild -version` and runtimes (or
-  `dpkg-query -W` and the Android SDK list on Linux), `claude --version`, the base image
-  digest. Also written to the job summary for a quick look. Artifacts and logs keep
-  for 90 days (the maximum for a public repo), which covers far more than the one image
-  we keep. Logs of a public repo are public; builds hold no secrets, so that's fine.
+- **Skip the upgrade when current.** Compare `claude --version` with the published
+  version (one HTTPS request) and skip `brew upgrade` or `claude update` when they
+  match.
+- **Bound standby age** with `--exit-if-unused-min` (say 240) on standby runners, so
+  one never serves a session on a version more than four hours old.
 
 ## If `latest` bites
 

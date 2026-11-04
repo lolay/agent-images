@@ -70,8 +70,9 @@ images/cloud/
 
 Choices, carried over from [design.md](design.md):
 
-- **Track latest, pin on breakage.** No versions in package lists; Claude Code updates
-  itself at start (`claude.sh` already runs `claude update`). Images rebuild nightly.
+- **Track latest, pin on breakage.** No versions in package lists. The pipeline below
+  rebuilds whenever anything upstream moves, so images stay current without a
+  self-update on every start.
 - **One unprivileged user with passwordless sudo**, like `admin` and `ubuntu`, not
   root: sessions can install what a repo needs, and nothing outlives the execution.
 - **CUDA matches the host driver.** Cloud Run mounts its driver (580.x, CUDA 13.0) at
@@ -82,19 +83,112 @@ Choices, carried over from [design.md](design.md):
 - **No secrets in images or sessions** ([secrets.md](secrets.md)). The runner's
   service account gets logging only.
 
-Build and promote, the `-next` pattern from `build-image.sh`:
+Layer order, slowest-moving first, so a rebuild only redoes what changed:
 
-1. GitHub Actions builds each image on push and nightly, and pushes
-   `us-central1-docker.pkg.dev/<project>/agent-images/<image>:<date>-<sha>`.
-   Workload identity federation pinned to the repo's numeric id, no keys.
-2. It updates `agent-<type>-next` to that digest and runs one smoke execution:
+```
+FROM <base>@<digest>      ubuntu:24.04, or nvidia/cuda 13.0 runtime for gpu
+apt packages              packages.txt
+Homebrew + Brewfile       incl. lolay/tap
+type tools                gis, 3d, ...
+images/shared files
+Claude Code               ARG CLAUDE_VERSION; RUN install that exact version
+manifest                  /etc/agent-images/manifest.json, also an OCI label
+```
+
+Claude goes last because it moves most often (most weekdays): a new release rebuilds
+one layer.
+
+## Image pipeline
+
+Everything runs on GitHub-hosted runners. These are plain container builds, so no
+self-hosted Actions runner and none of the public-repo risk that comes with one. Pushes
+go to Artifact Registry through workload identity federation pinned to the repo's
+numeric id. Fork pull requests get no OIDC token, so they can't push.
+
+### Watch: hourly, 08:00 to 22:00 Pacific
+
+`cron: '17 8-22 * * *'` with `timezone: America/Los_Angeles` (schedules take a time
+zone since March 2026). For each image, it compares what's promoted with what a build
+would produce now:
+
+| Dependency | What's promoted | What's current |
+| --- | --- | --- |
+| Base image | Digest in the manifest | `crane digest ubuntu:24.04` (or the CUDA tag) |
+| Claude Code | `CLAUDE_VERSION` in the manifest | `https://downloads.claude.ai/claude-code-releases/latest` |
+| apt packages | Run the promoted image: `apt-get update`, `apt list --upgradable` | Same command; Ubuntu's own answer |
+| Homebrew, including `lolay/tap` | Run the promoted image: `brew update`, `brew outdated --json=v2` | Same command; Homebrew's own answer |
+| Type tools from GitHub releases (COLMAP, ...) | Version in the manifest | The project's latest release |
+
+Running the promoted image for apt and Homebrew means their own tools decide what's
+outdated, taps included, with no version-lookup code of ours. It costs an image pull
+per check, which hosted runners do quickly.
+
+State between runs: none in Actions. The registry is the state. The promoted image
+carries its manifest as an OCI label, read with `crane config` without pulling, so the
+check is stateless and can't drift from what's actually deployed.
+
+### Rebuild when anything moved
+
+Any difference starts a build. Layer caching (`--cache-from` the registry) keeps it to
+the changed layer and the ones after it: minutes for Claude, longer for an apt
+change. At most one build an hour per image, by the schedule; a `concurrency` group
+per image stops overlap. Expect roughly one or two a day: Claude most weekdays, apt
+security updates a few times a week, Homebrew less.
+
+Every build follows the `-next` pattern from `build-image.sh`:
+
+1. Push `us-central1-docker.pkg.dev/<project>/agent-images/<image>:<date>-<sha>`.
+2. Point `agent-<type>-next` at that digest and run one smoke execution:
    `claude --version`, `nvidia-smi`, a CUDA device probe, `eglinfo` against Xvfb.
-3. Only if that passes does it point `agent-<type>` at the same digest. Cloud Run
-   resolves the image when the job is updated, so running sessions never see a
-   half-built image, and rollback is pointing the job back at the old digest.
+3. Only if it passes, point `agent-<type>` at the same digest. Cloud Run resolves the
+   image when the job is updated, so running sessions never see a half-built image.
+
+### Nightly: 04:00 Pacific, Tuesday through Saturday
+
+A no-cache build with `--pull`, promoted the same way. It catches anything the watch
+can't see (a curl installer, a changed package list in the repo) and keeps the
+"track latest" promise even if a check is wrong. Pushes to `main` that touch
+`images/cloud` or `images/shared` build too.
+
+### Standbys
+
+Only the CPU type keeps one (`--min-idle 1`), and it runs with `--exit-if-unused-min 60`,
+so a standby is never more than an hour older than the newest image. GPU types keep
+none. No recycling job needed.
+
+### Keep one image, keep the logs
+
+- **One image per type.** An Artifact Registry cleanup policy keeps the most recent
+  version and deletes the rest, untagged layers included. Rollback is then a rebuild;
+  keeping two would make it a job update.
+- **Logs on GitHub.** Each build's run log, plus the manifest as an artifact and in the
+  job summary: base digest, `dpkg-query -W`, `brew list --versions` and
+  `--cask --versions`, `claude --version`, type tool versions, pins. Logs and
+  artifacts keep 90 days (a public repo's maximum), and they're public, which is fine:
+  builds hold no secrets. The same manifest is inside the image and on its label.
 
 Make targets in the same vocabulary as the rest: `make cloud-build TYPE=gpu` (local
-`docker build`), `make cloud-publish`, `make cloud-promote`, `make cloud-status`.
+`docker build`), `make cloud-check` (the watch, locally), `make cloud-publish`,
+`make cloud-promote`, `make cloud-status`.
+
+## Pinning a dependency
+
+Same rule as [design.md](design.md#track-the-latest-pin-only-on-breakage): pin only the
+thing that broke, with a comment naming the upstream issue, and remove the pin once
+it's fixed. How, per source:
+
+| Dependency | Pin | Notes |
+| --- | --- | --- |
+| Base image | `FROM ubuntu:24.04@sha256:...` | The watch reports it as pinned instead of rebuilding |
+| apt package | `name=version` in `packages.txt` | Ubuntu's `-updates` and `-security` pockets keep only the newest version, so an older one may vanish. To hold everything still, build with `apt-get --snapshot <timestamp>` against snapshot.ubuntu.com (apt 2.7+, in 24.04) |
+| Homebrew formula | A versioned formula if one exists (`python@3.12`), else `brew extract --version=X <formula> lolay/tap` and name `lolay/tap/<formula>@X` in the Brewfile | `brew pin` doesn't help a fresh build. An extracted formula has no bottle, so it builds from source |
+| `lolay/tap` formula | Revert in the tap, or add a versioned formula there | It's ours |
+| Claude Code | `CLAUDE_VERSION=2.1.317` (a version) or `stable` (the channel) | The watch then skips Claude; set the runner's `CLAUDE_UPGRADE=false` so it doesn't update itself past the pin |
+| Type tool from a release | Its version in the Dockerfile | |
+
+Pins live where the dependency is declared, each with `# pinned: <issue URL>`. The
+watch lists every pin in the job summary next to upstream's current version and the
+issue's state, so a pin whose issue closed stands out instead of rotting.
 
 ## The hook
 
@@ -145,6 +239,22 @@ Vulkan ICD) or only compute. The docs only describe the compute path. That's the
 spike, because it decides between Cloud Run and the fallback below. Software rendering
 (llvmpipe) on 20 vCPUs works for screenshots in the meantime, slowly.
 
+## Platforms
+
+What each GCP service can run, for runner types beyond Linux x86:
+
+| Platform | Cloud Run | GKE | Compute Engine |
+| --- | --- | --- | --- |
+| Linux x86_64 | Yes | Yes | Yes |
+| Linux Arm64 | No: Cloud Run expects amd64 images | Yes (Axion C4A, Tau T2A nodes) | Yes (C4A, T2A) |
+| Windows | No | Windows Server node pools | Windows Server images |
+| macOS | No | No | No |
+| Android emulator | No (no `/dev/kvm`) | Nested virtualization node pools | Yes, with nested virtualization: Intel series and AMD N4D; not E2 or Arm |
+| NVIDIA GPU | L4, RTX PRO 6000 | L4, RTX PRO 6000, A100, H100, Blackwell B200/GB200 | Same as GKE |
+
+macOS stays on agent-images' own Macs: no cloud here offers it, and AWS's Mac hosts
+are dedicated machines with a 24-hour minimum, the opposite of per-session.
+
 ## Fallback: a Compute Engine VM per session
 
 If Cloud Run can't render, or a type needs Docker in the session, a full GPU desktop,
@@ -159,9 +269,9 @@ or nested virtualization:
   `--instance-termination-action=DELETE` as the backstop, and the guest deletes its
   own VM when the runner exits.
 - **Warm starts:** a managed instance group standby pool of stopped or suspended VMs.
-- **Android:** Compute Engine supports nested virtualization on Intel VMs, and with a
-  VM per session the emulator is one level deep, not the two that ruled cloud VMs out
-  in [linux.md](linux.md). Worth a test before buying the NUC.
+- **Android:** Compute Engine supports nested virtualization on Intel VMs (and AMD
+  N4D), and with a VM per session the emulator is one level deep, not the two that
+  ruled cloud VMs out in [linux.md](linux.md). Worth a test before buying the NUC.
 
 That's more to own (driver, OS image), which is why it's the fallback, not the start.
 
@@ -186,8 +296,8 @@ session from claude.ai lands on a fresh execution and the execution ends with it
 
 ### m4 - Image pipeline
 
-GitHub Actions build, smoke, promote; nightly schedule; `make cloud-*` targets;
-README version table rows.
+GitHub Actions build, smoke and promote; the hourly watch and nightly rebuild;
+cleanup policy; manifest artifacts; `make cloud-*` targets; README version table rows.
 
 ### m5 - Fallback, only if m2 says so
 
