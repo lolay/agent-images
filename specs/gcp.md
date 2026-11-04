@@ -100,10 +100,23 @@ one layer.
 
 ## Image pipeline
 
-Everything runs on GitHub-hosted runners. These are plain container builds, so no
-self-hosted Actions runner and none of the public-repo risk that comes with one. Pushes
-go to Artifact Registry through workload identity federation pinned to the repo's
-numeric id. Fork pull requests get no OIDC token, so they can't push.
+GitHub Actions schedules and reports; Cloud Build does the work, in `us-central1` next
+to the registry.
+
+| Where the bytes go | GitHub builds | Cloud Build builds |
+| --- | --- | --- |
+| Push to Artifact Registry | Free (ingress) | Free (same region) |
+| Pull the live image for the check, pull layer cache | GCP egress at $0.12/GB: a 3 GB image checked 15 times a day is about 1.35 TB, roughly $160 a month, more for a GPU image | Free (same region) |
+| Compute | Free for a public repo | 2,500 free build-minutes a month on `e2-standard-2`, then $0.006/min |
+| Disk | About 14 GB free on a standard runner: tight for a CUDA image | Set per build (`diskSizeGb`) |
+
+So the Actions workflow is a thin job: authenticate through workload identity
+federation (pinned to the repo's numeric id; fork pull requests get no OIDC token),
+`gcloud builds submit` the check or the build, stream Cloud Build's log into the run
+log, and write the manifest to the job summary. Logs stay on GitHub, bytes stay in
+GCP. Expected use (a two-minute check 15 times a day, one or two builds) fits inside
+the free build-minutes on `e2-standard-2`; GPU images may want a bigger machine type,
+billed from the first minute.
 
 ### Watch: hourly, 08:00 to 22:00 Pacific
 
@@ -121,7 +134,7 @@ would produce now:
 
 Running the promoted image for apt and Homebrew means their own tools decide what's
 outdated, taps included, with no version-lookup code of ours. It costs an image pull
-per check, which hosted runners do quickly.
+per check, which is free inside Cloud Build and why the check doesn't run on GitHub.
 
 State between runs: none in Actions. The registry is the state. The promoted image
 carries its manifest as an OCI label, read with `crane config` without pulling, so the
@@ -252,8 +265,13 @@ What each GCP service can run, for runner types beyond Linux x86:
 | Android emulator | No (no `/dev/kvm`) | Nested virtualization node pools | Yes, with nested virtualization: Intel series and AMD N4D; not E2 or Arm |
 | NVIDIA GPU | L4, RTX PRO 6000 | L4, RTX PRO 6000, A100, H100, Blackwell B200/GB200 | Same as GKE |
 
-macOS stays on agent-images' own Macs: no cloud here offers it, and AWS's Mac hosts
-are dedicated machines with a 24-hour minimum, the opposite of per-session.
+macOS stays on Macs. The one cloud option is AWS: EC2 Mac instances are bare-metal
+Mac minis (M2, M2 Pro, M4, M4 Pro) on Dedicated Hosts with a 24-hour minimum. Tart
+runs on them (Cirrus publishes Tart AMIs for EC2 Mac), so an EC2 Mac can be an
+agent-images run host unchanged: the host stays up, and the per-session VMs live
+inside it, which makes the 24-hour minimum irrelevant. Same two-VM license limit,
+and guests can't be newer than the host, so it needs AWS's macOS 27 AMI. One open
+Tart issue reports VMs failing to start on a headless `mac2.metal`.
 
 ## Fallback: a Compute Engine VM per session
 
@@ -315,5 +333,7 @@ The Compute Engine path above.
 ## References
 
 - [Claude Code on-demand runners](https://code.claude.com/docs/en/self-hosted-environments-configuration)
+- [Cloud Build pricing](https://cloud.google.com/build/pricing), [network egress pricing](https://cloud.google.com/vpc/network-pricing)
+- [EC2 Mac instances](https://aws.amazon.com/ec2/instance-types/mac/), [Tart on AWS Marketplace](https://tart.run/blog/2023/10/06/tart-is-now-available-on-aws-marketplace/), [Tart issue on headless mac2.metal](https://github.com/cirruslabs/tart/issues/1146)
 - [Cloud Run GPU jobs](https://docs.cloud.google.com/run/docs/configuring/jobs/gpu), [execute jobs with overrides](https://docs.cloud.google.com/run/docs/execute/jobs), [worker pools](https://docs.cloud.google.com/run/docs/configuring/workerpools/gpu), [release notes](https://docs.cloud.google.com/run/docs/release-notes)
 - [MIG standby pools](https://docs.cloud.google.com/compute/docs/instance-groups/suspended-and-stopped-vms-in-mig)
