@@ -87,7 +87,7 @@ Layer order, slowest-moving first, so a rebuild only redoes what changed:
 
 ```
 FROM <base>@<digest>      ubuntu:24.04, or nvidia/cuda 13.0 runtime for gpu
-apt packages              packages.txt
+apt packages              packages.txt, at the locked snapshot
 Homebrew + Brewfile       incl. lolay/tap
 type tools                gis, 3d, ...
 images/shared files
@@ -100,66 +100,78 @@ one layer.
 
 ## Image pipeline
 
-GitHub Actions schedules and reports; Cloud Build does the work, in `us-central1` next
-to the registry.
+Everything runs in GitHub Actions on hosted runners, free for a public repo. Images go
+one way: built on GitHub, pushed into Artifact Registry (ingress, free), never pulled
+back out. Workload identity federation, pinned to the repo's numeric id, signs the
+pushes; fork pull requests get no OIDC token, so they can't push.
 
-| Where the bytes go | GitHub builds | Cloud Build builds |
+### The lock
+
+Each image type has a lock in git, `images/cloud/<type>/versions.lock`: every
+dependency resolved to an exact version. It's the record of what the live image was
+built from, and the check compares upstream against it, so nothing ever reads the
+image.
+
+| Dependency | Locked as | Resolved by (on the hosted runner, from upstream only) |
 | --- | --- | --- |
-| Push to Artifact Registry | Free (ingress) | Free (same region) |
-| Pull the live image for the check, pull layer cache | GCP egress at $0.12/GB: a 3 GB image checked 15 times a day is about 1.35 TB, roughly $160 a month, more for a GPU image | Free (same region) |
-| Compute | Free for a public repo | 2,500 free build-minutes a month on `e2-standard-2`, then $0.006/min |
-| Disk | About 14 GB free on a standard runner: tight for a CUDA image | Set per build (`diskSizeGb`) |
+| Base image | Digest | `crane digest ubuntu:24.04` (or the CUDA tag): a registry HEAD, no pull |
+| apt packages, dependencies included | An Ubuntu snapshot timestamp, plus the full resolved list | `apt-get install --simulate` of `packages.txt` in a stock `ubuntu:24.04` container at the locked base digest, once with `--snapshot <locked>` and once against today's archive. Any difference in the resolved set means apt moved |
+| Homebrew, dependencies and `lolay/tap` included | Each formula and cask with its version and revision | `brew info --json=v2` on the runner's own Homebrew (preinstalled on Ubuntu runners), after `brew tap lolay/tap` |
+| Claude Code | Version | `https://downloads.claude.ai/claude-code-releases/latest` |
+| Type tools (COLMAP, ...) | Version | The project's latest GitHub release |
 
-So the Actions workflow is a thin job: authenticate through workload identity
-federation (pinned to the repo's numeric id; fork pull requests get no OIDC token),
-`gcloud builds submit` the check or the build, stream Cloud Build's log into the run
-log, and write the manifest to the job summary. Logs stay on GitHub, bytes stay in
-GCP. Expected use (a two-minute check 15 times a day, one or two builds) fits inside
-the free build-minutes on `e2-standard-2`; GPU images may want a bigger machine type,
-billed from the first minute.
+The build consumes the lock: `FROM` the locked digest, `apt-get --snapshot` at the
+locked timestamp, `CLAUDE_VERSION` from the lock. apt's snapshot makes the apt layer
+reproducible, old versions included, which plain `pkg=version` can't promise because
+Ubuntu's update pockets keep only the newest. Homebrew is the exception: it only
+installs current versions, so its lock entries are a record and a change detector,
+not a pin.
+
+The watch never touches GCP, so there's no egress. The stock Ubuntu image it starts
+is about 30 MB, from a public registry.
 
 ### Watch: hourly, 08:00 to 22:00 Pacific
 
 `cron: '17 8-22 * * *'` with `timezone: America/Los_Angeles` (schedules take a time
-zone since March 2026). For each image, it compares what's promoted with what a build
-would produce now:
+zone since March 2026). One job per type, in a `concurrency` group so runs never
+overlap:
 
-| Dependency | What's promoted | What's current |
-| --- | --- | --- |
-| Base image | Digest in the manifest | `crane digest ubuntu:24.04` (or the CUDA tag) |
-| Claude Code | `CLAUDE_VERSION` in the manifest | `https://downloads.claude.ai/claude-code-releases/latest` |
-| apt packages | Run the promoted image: `apt-get update`, `apt list --upgradable` | Same command; Ubuntu's own answer |
-| Homebrew, including `lolay/tap` | Run the promoted image: `brew update`, `brew outdated --json=v2` | Same command; Homebrew's own answer |
-| Type tools from GitHub releases (COLMAP, ...) | Version in the manifest | The project's latest release |
+1. Resolve everything as above into a candidate lock.
+2. Same as the committed lock: done, a minute or two of runner time.
+3. Different: build from the candidate, push, smoke-test, promote (below), and only
+   then commit the candidate lock to `main` with a message naming what moved
+   (`lock(gpu): claude 2.1.318, apt 3 packages`). The lock in git always matches the
+   live image, because it's written after promotion.
 
-Running the promoted image for apt and Homebrew means their own tools decide what's
-outdated, taps included, with no version-lookup code of ours. It costs an image pull
-per check, which is free inside Cloud Build and why the check doesn't run on GitHub.
+Two GitHub details: a push made with `GITHUB_TOKEN` doesn't start other workflows,
+which is what we want here (the build already ran); and if `main` has a ruleset
+requiring pull requests, the workflow needs a bypass for these commits, or the lock
+goes through an auto-merged pull request instead.
 
-State between runs: none in Actions. The registry is the state. The promoted image
-carries its manifest as an OCI label, read with `crane config` without pulling, so the
-check is stateless and can't drift from what's actually deployed.
+Expect one or two builds a day: Claude most weekdays, apt security updates a few
+times a week, Homebrew less.
 
-### Rebuild when anything moved
+### Build, smoke, promote
 
-Any difference starts a build. Layer caching (`--cache-from` the registry) keeps it to
-the changed layer and the ones after it: minutes for Claude, longer for an apt
-change. At most one build an hour per image, by the schedule; a `concurrency` group
-per image stops overlap. Expect roughly one or two a day: Claude most weekdays, apt
-security updates a few times a week, Homebrew less.
+Layer caching through the Actions cache (`cache-to type=gha`), not the registry, so a
+build reads nothing back from GCP. The cache holds 10 GB per repo, so a CUDA image may
+miss and rebuild in full; that costs time, not money. Hosted runners have about 14 GB
+of free disk, so GPU builds clear the runner's preinstalled toolchains first, the
+usual step for large images.
 
 Every build follows the `-next` pattern from `build-image.sh`:
 
 1. Push `us-central1-docker.pkg.dev/<project>/agent-images/<image>:<date>-<sha>`.
-2. Point `agent-<type>-next` at that digest and run one smoke execution:
-   `claude --version`, `nvidia-smi`, a CUDA device probe, `eglinfo` against Xvfb.
+2. Point `agent-<type>-next` at that digest and run one smoke execution in Cloud Run:
+   `claude --version`, `nvidia-smi`, a CUDA device probe, `eglinfo` against Xvfb. It
+   runs in GCP, next to the registry, so the pull is free.
 3. Only if it passes, point `agent-<type>` at the same digest. Cloud Run resolves the
    image when the job is updated, so running sessions never see a half-built image.
 
 ### Nightly: 04:00 Pacific, Tuesday through Saturday
 
-A no-cache build with `--pull`, promoted the same way. It catches anything the watch
-can't see (a curl installer, a changed package list in the repo) and keeps the
+A no-cache build with `--pull` from a freshly resolved lock, promoted the same way. It
+catches anything the lock can't see (a curl installer, a script change) and keeps the
 "track latest" promise even if a check is wrong. Pushes to `main` that touch
 `images/cloud` or `images/shared` build too.
 
@@ -169,20 +181,27 @@ Only the CPU type keeps one (`--min-idle 1`), and it runs with `--exit-if-unused
 so a standby is never more than an hour older than the newest image. GPU types keep
 none. No recycling job needed.
 
-### Keep one image, keep the logs
+### Keep one image, keep the history
 
 - **One image per type.** An Artifact Registry cleanup policy keeps the most recent
-  version and deletes the rest, untagged layers included. Rollback is then a rebuild;
-  keeping two would make it a job update.
-- **Logs on GitHub.** Each build's run log, plus the manifest as an artifact and in the
-  job summary: base digest, `dpkg-query -W`, `brew list --versions` and
-  `--cask --versions`, `claude --version`, type tool versions, pins. Logs and
-  artifacts keep 90 days (a public repo's maximum), and they're public, which is fine:
-  builds hold no secrets. The same manifest is inside the image and on its label.
+  version and deletes the rest, untagged layers included. Rollback is a `git revert`
+  of the lock and a rebuild: apt and the base come back exactly (snapshot and digest),
+  Homebrew comes back current.
+- **History in git, logs on GitHub.** The lock's history is the permanent record of
+  what every image contained, and `git log -p images/cloud/gpu/versions.lock` shows
+  what changed and when. Build logs, with the full `dpkg-query -W` and
+  `brew list --versions` output, keep 90 days in Actions (a public repo's maximum) and
+  are public, which is fine: builds hold no secrets.
 
-Make targets in the same vocabulary as the rest: `make cloud-build TYPE=gpu` (local
-`docker build`), `make cloud-check` (the watch, locally), `make cloud-publish`,
-`make cloud-promote`, `make cloud-status`.
+Make targets in the same vocabulary as the rest: `make cloud-lock TYPE=gpu` (resolve
+locally, show the diff), `make cloud-build`, `make cloud-publish`, `make cloud-promote`,
+`make cloud-status`.
+
+Off the shelf instead: Renovate (as a GitHub Action) handles the base digest, GitHub
+releases and a custom source for Claude, with a pull request per change. It doesn't
+resolve an apt dependency closure or Homebrew on Linux, and a pull request per bump
+is a lot of churn for "track latest". One small resolver script and one lock commit
+fit better. Dependabot still suits the pinned GitHub Actions versions.
 
 ## Pinning a dependency
 
@@ -193,15 +212,16 @@ it's fixed. How, per source:
 | Dependency | Pin | Notes |
 | --- | --- | --- |
 | Base image | `FROM ubuntu:24.04@sha256:...` | The watch reports it as pinned instead of rebuilding |
-| apt package | `name=version` in `packages.txt` | Ubuntu's `-updates` and `-security` pockets keep only the newest version, so an older one may vanish. To hold everything still, build with `apt-get --snapshot <timestamp>` against snapshot.ubuntu.com (apt 2.7+, in 24.04) |
+| apt package | `name=version` in `packages.txt`, resolved against the locked snapshot | The snapshot keeps old versions installable. To hold all of apt still, freeze the snapshot timestamp in the lock |
 | Homebrew formula | A versioned formula if one exists (`python@3.12`), else `brew extract --version=X <formula> lolay/tap` and name `lolay/tap/<formula>@X` in the Brewfile | `brew pin` doesn't help a fresh build. An extracted formula has no bottle, so it builds from source |
 | `lolay/tap` formula | Revert in the tap, or add a versioned formula there | It's ours |
 | Claude Code | `CLAUDE_VERSION=2.1.317` (a version) or `stable` (the channel) | The watch then skips Claude; set the runner's `CLAUDE_UPGRADE=false` so it doesn't update itself past the pin |
 | Type tool from a release | Its version in the Dockerfile | |
 
-Pins live where the dependency is declared, each with `# pinned: <issue URL>`. The
-watch lists every pin in the job summary next to upstream's current version and the
-issue's state, so a pin whose issue closed stands out instead of rotting.
+Pins live where the dependency is declared, each with `# pinned: <issue URL>`, and the
+lock marks them pinned. The watch lists every pin in the job summary next to
+upstream's current version and the issue's state, so a pin whose issue closed stands
+out instead of rotting.
 
 ## The hook
 
@@ -333,7 +353,7 @@ The Compute Engine path above.
 ## References
 
 - [Claude Code on-demand runners](https://code.claude.com/docs/en/self-hosted-environments-configuration)
-- [Cloud Build pricing](https://cloud.google.com/build/pricing), [network egress pricing](https://cloud.google.com/vpc/network-pricing)
+- [GCP network egress pricing](https://cloud.google.com/vpc/network-pricing)
 - [EC2 Mac instances](https://aws.amazon.com/ec2/instance-types/mac/), [Tart on AWS Marketplace](https://tart.run/blog/2023/10/06/tart-is-now-available-on-aws-marketplace/), [Tart issue on headless mac2.metal](https://github.com/cirruslabs/tart/issues/1146)
 - [Cloud Run GPU jobs](https://docs.cloud.google.com/run/docs/configuring/jobs/gpu), [execute jobs with overrides](https://docs.cloud.google.com/run/docs/execute/jobs), [worker pools](https://docs.cloud.google.com/run/docs/configuring/workerpools/gpu), [release notes](https://docs.cloud.google.com/run/docs/release-notes)
 - [MIG standby pools](https://docs.cloud.google.com/compute/docs/instance-groups/suspended-and-stopped-vms-in-mig)
