@@ -96,32 +96,10 @@ The first deploy shows these:
 
 ## Pending
 
-Gary's step, s13. Before it, whether to open the pull request:
-
-> s1 to s12 are done and pushed. Open the PR now (draft description below)? Then
-> create `production` (commands below) before merging it.
-
-### Draft PR description
-
-Title: `m1: run the linux runner type on Cloud Run`
-
-Tier: **study** (a new deploy path with credentials; secrets in the hook and
-supervisor). Blast radius: GCP only. The Mac and Linux runners get two settings they
-leave empty, the watchdog's base dir, and `build-essential`. About 20 minutes to
-review.
-
-- **[study]** `hooks/gcp/spawn-runner`, `hooks/gcp/lib.sh`: the order marker, the
-  work order kept out of argv and stderr, exit codes.
-- **[study]** `images/cloud/orchestrator/supervisor.sh`: signals, restarts, secrets.
-- **[study]** `.github/workflows/cloud-deploy.yml`: the token rule and the
-  diff-from-last-success base.
-- **[check]** `images/cloud/entrypoint.sh`, the SessionStart hook,
-  `scripts/cloud/*.sh`, `infra/gcp/*.env`.
-- **[check]** `specs/gcp.md` and `specs/gcp-infrastructure.md`, against the Terraform.
-- **[skim]** The Dockerfiles, the bake file, the Makefile and docs,
-  `tests/sessions/linux.md`.
-- **[skip]** `tests/unit/` (66 tests, passing) and `specs/handoffs/`, which comes out
-  before merge.
+[lolay/agent-images#13](https://github.com/lolay/agent-images/pull/13) is open, and
+this session watches it: it fixes CI failures and answers review comments. Next is
+Gary's s13: create `production`, review, merge. The PR description is the review
+guide (the draft was removed from the branch before opening).
 
 ## Steps that need Gary
 
