@@ -21,7 +21,10 @@ looks like a credential (`*KEY*`, `*TOKEN*`, `*SECRET*`, `*PASSWORD*`), except
 ## 2. Storage
 
 Record `$AGENT_SCRATCH`, `$AGENT_OUTPUTS` and `$AGENT_DATASETS`, what's mounted at
-each (`findmnt`), and the free space on each. Then:
+each (`findmnt`), and the free space on each. Pass if `$AGENT_OUTPUTS` ends in this
+session's id, and if what you were told about storage at the start of the session
+(the image's `CLAUDE.md` and the start-of-session facts) matches what you find.
+Then:
 
 - Write a 4 GiB file to scratch with `dd` (`oflag=direct`), read it back, and record
   MB/s both ways. Check that memory use (`free -m`) didn't grow by 4 GiB: that would
