@@ -109,14 +109,35 @@ a lock update from the watch, a change to `images/cloud` or `images/shared`, or 
 revert. A push to `main` runs the deploy workflow; nothing else pushes images or
 updates jobs. Enforced in three places, so one mistake doesn't open it up:
 
-- The deploy workflow triggers on `push` to `main` (paths `images/cloud/**`,
-  `images/shared/**`) and `workflow_dispatch`, and its job runs in a GitHub
-  environment, `production`, whose deployment branch policy allows only `main`.
+- The deploy workflow triggers on `push` to `main` and `workflow_dispatch`, and its
+  jobs run in a GitHub environment, `production`, whose deployment branch policy
+  allows only `main`.
 - The workload identity provider's attribute condition accepts only this repo's
   numeric id with `ref` `refs/heads/main` and that environment, so a token from any
   other branch, pull request or fork can't get GCP credentials at all.
 - Pull requests that touch the images run a build-only check: build, no push, no GCP
   credentials.
+
+### What a push to `main` deploys
+
+Any push to `main` that changes what a GCP runtime runs redeploys that runtime, and
+only that one. The workflow's first job diffs the push (`github.event.before` to
+`github.sha`) against this map and hands the affected targets to the deploy job as a
+matrix:
+
+| Path changed | Redeploys |
+| --- | --- |
+| `images/shared/**`, `images/linux/packages.txt`, `images/linux/Brewfile`, `images/cloud/base/**`, `images/cloud/entrypoint.sh` | Every runner type |
+| `images/cloud/gpu/**` | `gpu` and every type built `FROM` it |
+| `images/cloud/<type>/**`, including its `versions.lock` | That type |
+| `hooks/gcp/**`, `images/cloud/orchestrator/**` | The orchestrator worker pools (new image, then `gcloud run worker-pools update`) |
+| `infra/gcp/<type>.env` (CPU, memory, GPU, timeout, `--min-idle`) | That type's job and orchestrator settings, no image build |
+| Anything else (`specs/`, the macOS and Linux images, README) | Nothing |
+
+The `FROM` chain comes from the Dockerfiles themselves, so adding a type doesn't mean
+editing the map. When the diff can't be computed (a first push, or `before` is all
+zeros after a force push), it deploys everything. A manual dispatch takes a list of
+targets, or `all`.
 
 ### The lock
 
