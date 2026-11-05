@@ -60,20 +60,28 @@ brew_env() {
 install_brewfile() {
 	local brewfile="$1" tap formulae
 	ensure_brew
+	# brew update and tap report routine progress on stderr (downloading the API
+	# data, tapping), which a green build doesn't allow, so they go to stdout, as
+	# in the macOS image. The update also refreshes the API data, which the last
+	# toolset's cleanup deleted, so brew bundle doesn't fetch it on stderr.
+	# brew bundle keeps stderr, so a real error still stands out.
+	brew update --quiet 2>&1
 	# Homebrew refuses to load formulae from untrusted third-party taps, so trust
 	# each tap before the bundle loads them.
 	sed -n 's/^tap "\([^"]*\)".*/\1/p' "$brewfile" | while read -r tap; do
-		brew tap "$tap"
+		brew tap "$tap" 2>&1
 		brew trust --tap "$tap"
 	done
 	log "installing $brewfile"
 	brew bundle --file="$brewfile"
-	# The bottles Homebrew downloaded aren't needed once poured, and on the cloud
-	# images each toolset is its own layer, so clean up in it.
-	brew cleanup --prune=all -s
-	rm -rf "$(brew --cache)"
 	mapfile -t formulae < <(sed -n 's/^brew "\([^"]*\)".*/\1/p' "$brewfile")
 	log "$(brew list --versions "${formulae[@]}" | tr '\n' ';')"
+	# The bottles Homebrew downloaded and its API and bootsnap caches aren't
+	# needed once poured. On the cloud images each toolset is its own layer, so
+	# clean up last, in the same layer; any brew command after this refills the
+	# cache.
+	brew cleanup --prune=all -s
+	rm -rf "$(brew --cache)"
 }
 
 for name in "$@"; do
@@ -86,5 +94,7 @@ for name in "$@"; do
 		# A toolset's own steps can use any formula installed so far.
 		[[ ! -x "$brew" ]] || brew_env
 		bash "$dir/install.sh"
+		# Any brew command it ran refilled Homebrew's cache.
+		[[ ! -x "$brew" ]] || rm -rf "$("$brew" --cache)"
 	fi
 done
