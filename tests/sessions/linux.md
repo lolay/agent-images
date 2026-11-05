@@ -86,8 +86,10 @@ Clone `https://github.com/BurntSushi/ripgrep` (shallow) and run
 
 ## 7. Browser
 
-Install Playwright's Chromium (`npx playwright install --with-deps chromium`), then
-screenshot `https://example.com` headless to `browser.png`. Pass if the PNG exists and
+Install Playwright's Chromium (`npx playwright install chromium`, or `pnpm exec` in a
+project `pnpm init` made: npm's `npx` refuses pnpm's `devEngines` field). Not
+`--with-deps`: it installs system libraries with apt, which needs root, and the image
+already carries Chromium's libraries. Then screenshot `https://example.com` headless to `browser.png`. Pass if the PNG exists and
 isn't blank (more than one distinct pixel color). If `$DISPLAY` is set, also launch
 Chromium headed on it and screenshot the display (`import -window root` or `xwd`) to
 `display.png`.

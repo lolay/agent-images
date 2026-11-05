@@ -105,7 +105,7 @@ message="$(printf '%s\n' "${notice[@]}" "${warnings[@]/#/⚠ agent-images: }")"
 message="${message%$'\n'}"
 context="$facts"
 if ((${#notice[@]} > 0)); then
-	context+=$'\n'"Session notice (start your first reply with these lines):"$'\n'"$(printf '%s\n' "${notice[@]}")"
+	context+=$'\n'"Session notice (already shown to the user):"$'\n'"$(printf '%s\n' "${notice[@]}")"
 fi
 
 jq -cn --arg message "$message" --arg context "$context" '

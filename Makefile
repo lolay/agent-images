@@ -135,7 +135,11 @@ init: ## Install Packer plugins (build hosts) and create .env if missing
 	else printf 'packer not found; skipping plugin install (fine on a run host).\n'; fi
 
 doctor: ## Check this host with triage (read-only). MODE=run|build (macOS); Linux has one profile
-ifeq ($(HOST_OS),Linux)
+ifneq ($(AGENT_TYPE),)
+	@# A Cloud Run runner session (AGENT_TYPE is set) isn't a host: the Linux
+	@# profile's checks (VT-x, LXD, vms/runner.env) would all fail there.
+	@printf 'doctor: inside a %s runner session; the host checks do not apply\n' "$(AGENT_TYPE)"
+else ifeq ($(HOST_OS),Linux)
 	@command -v triage >/dev/null 2>&1 || { printf 'triage not found; see https://github.com/lolay/triage\n' >&2; exit 1; }
 	triage --profile linux --var image_ref=$(IMAGE_REF)
 else
