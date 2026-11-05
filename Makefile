@@ -10,6 +10,8 @@
 # A Linux host (x86_64, KVM) is both, for the Linux runner image: build,
 # doctor, runner-*, and secret-set run scripts/linux/ there, and make
 # host-setup prepares it (LXD, nesting, claude). See specs/linux.md.
+# The cloud-* targets build and check the GCP runner images on Linux with Docker
+# (specs/gcp.md); they never deploy, which only a push to main does.
 #
 # Conventions:
 #   - `.DEFAULT_GOAL := help`; bare `make` prints grouped targets.
@@ -31,7 +33,8 @@ export
         host-runner-run host-runner-install host-runner-uninstall host-runner-status \
         image-pull image-prune vm-create vm-start vm-configure vm-up vm-stop vm-status vm-logs \
         vm-versions vm-list vm-delete secret-set \
-        gh-runs-list gh-runs-watch gh-runs-status bump publish
+        gh-runs-list gh-runs-watch gh-runs-status bump publish \
+        cloud-build cloud-smoke cloud-lint cloud-test cloud-ci cloud-status
 
 MODE ?= run
 HOST_OS := $(shell uname -s)
@@ -90,10 +93,22 @@ MACOS_CODENAME_27 := golden-gate
 MACOS_CODENAME ?= $(MACOS_CODENAME_$(HOST_MACOS_MAJOR))
 PKR_VAR_base_image ?= ghcr.io/cirruslabs/macos-$(MACOS_CODENAME)-xcode:latest
 
+# The GCP runners (specs/gcp.md): the Cloud Run images, the orchestrator
+# container, the hook and the deploy scripts. Built and tested on Linux with
+# Docker; the deploy itself runs only from main, in GitHub Actions.
+CLOUD_SCRIPTS := $(wildcard images/cloud/*.sh images/cloud/base/*.sh images/cloud/base/claude/hooks/*.sh \
+                   images/cloud/orchestrator/*.sh scripts/cloud/*.sh hooks/gcp/*.sh) hooks/gcp/spawn-runner
+CLOUD_BAKE := docker buildx bake -f images/cloud/docker-bake.hcl
+# TYPE=all builds every type and the orchestrator (the bake file's default group).
+TYPE ?= linux
+# An exact version (what the deploy passes) or a channel.
+CLAUDE_VERSION ?= latest
+
 SHELL_SCRIPTS := $(wildcard $(MACOS_DIR)/scripts/*.sh $(MACOS_DIR)/files/*.sh \
                    $(SHARED_DIR)/*.sh $(SHARED_DIR)/runners/*.sh $(SHARED_DIR)/claude/hooks/*.sh \
                    $(LINUX_DIR)/scripts/*.sh $(LINUX_DIR)/files/*.sh \
-                   scripts/*.sh scripts/linux/*.sh hooks/spawn-runner hooks/linux/spawn-runner)
+                   scripts/*.sh scripts/linux/*.sh hooks/spawn-runner hooks/linux/spawn-runner) \
+                 $(CLOUD_SCRIPTS)
 
 confirm = @if [ -z "$($(1))" ]; then \
   printf 'Refusing to run "make %s": %s\nRe-run with %s=1.\n' "$@" "$(2)" "$(1)"; \
@@ -277,6 +292,32 @@ secret-set: ## Store a runner secret (prompts, or pipe it in): NAME=claude-envir
 	@if [[ " $(SECRET_NAMES) " != *" $(NAME) "* ]]; then \
 	  printf 'NAME must be one of: %s\n' "$(SECRET_NAMES)" >&2; exit 1; fi
 	@$(HOST_SCRIPTS)/secret-set.sh "$(NAME)" "$(or $(VM),default)"
+
+##@ Cloud (GCP runners; specs/gcp.md. Deploys run only from main, in GitHub Actions)
+
+cloud-build: ## Build a cloud image locally as agent-<TYPE>:local: TYPE=linux|orchestrator|all [CLAUDE_VERSION=latest]
+	CLAUDE_VERSION=$(CLAUDE_VERSION) $(CLOUD_BAKE) --load $(if $(filter all,$(TYPE)),,$(TYPE))
+
+# Anonymous volumes stand in for the job's mounts (a disk for scratch, writable
+# outputs, read-only datasets); --rm removes them.
+cloud-smoke: ## Run a built image's smoke checks against stand-in volumes: TYPE=linux
+	docker run --rm -v /scratch -v /mnt/outputs \
+	  --mount type=volume,target=/mnt/datasets,readonly agent-$(TYPE):local smoke
+
+cloud-lint: ## Lint the cloud scripts and settings (no writes)
+	shellcheck -x $(CLOUD_SCRIPTS)
+	shfmt -d $(CLOUD_SCRIPTS)
+	@jq empty images/cloud/base/claude/settings.json && printf '%s: OK\n' images/cloud/base/claude/settings.json
+
+cloud-test: ## Run the cloud unit tests (Linux: they use /proc and GNU tools)
+	@[ "$(HOST_OS)" = "Linux" ] || { printf 'make cloud-test needs Linux (/proc, GNU date); CI runs it\n' >&2; exit 1; }
+	python3 -m unittest discover -s tests/unit
+
+cloud-ci: cloud-lint cloud-test ## Lint, unit tests and a build of every cloud image, no push (the pull request check)
+	CLAUDE_VERSION=$(CLAUDE_VERSION) $(CLOUD_BAKE)
+
+cloud-status: ## Read-only: each job's image, commit and last run, and the orchestrator's image (your gcloud login)
+	@scripts/cloud/deploy.sh status
 
 ##@ GitHub
 

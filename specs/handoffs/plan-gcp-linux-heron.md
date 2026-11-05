@@ -367,7 +367,7 @@ schema's field names (the discovery document).
 Done: both files pass `actionlint` (if it installs here) or a YAML parse plus a
 read-through; no job without `environment: production` has `id-token: write`.
 
-#### s11 - [exec] Make targets and docs
+#### s11 - [exec] Make targets and docs (done)
 
 - `Makefile`: `##@ Cloud` with `cloud-build` (bake, `--load`, `TYPE=` optional),
   `cloud-smoke` (run `smoke` locally against temp dirs), `cloud-test` (the unit tests),

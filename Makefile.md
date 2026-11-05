@@ -183,12 +183,45 @@ For a debug VM: `lxc launch agent-linux debug-1 --vm`, then
 `scripts/linux/vm-configure.sh debug-1` (settings from `vms/debug-1.env`), and
 `lxc exec debug-1 -- bash` to look around.
 
+## Cloud (GCP)
+
+The GCP runners ([specs/gcp.md](specs/gcp.md)) are containers: a Cloud Run job per
+runner type (`agent-linux` first) and the orchestrator container on one `e2-micro`.
+These targets build and check them locally, on Linux with Docker. Nothing here pushes
+or deploys: only a push to `main` does, through `.github/workflows/cloud-deploy.yml`.
+
+| Target | What it does |
+| --- | --- |
+| `cloud-build` | `docker buildx bake -f images/cloud/docker-bake.hcl --load <TYPE>`: `agent-<TYPE>:local`. `TYPE=linux` (default), `orchestrator`, or `all`. `agent-base` comes along as `linux`'s build context and isn't loaded on its own |
+| `cloud-smoke` | Runs `agent-<TYPE>:local smoke` (the entrypoint's checks, what the deploy runs on `agent-<type>-next`) with anonymous volumes standing in for scratch, outputs and the read-only datasets |
+| `cloud-lint` | `shellcheck` and `shfmt -d` on the cloud scripts, and the cloud settings JSON |
+| `cloud-test` | `python3 -m unittest discover -s tests/unit`: the entrypoint, SessionStart hook, spawn hook, supervisor, job spec, path map and deploy script, against fakes (`tests/unit/fake_gcp.py` for the GCP APIs). Linux only |
+| `cloud-ci` | `cloud-lint`, `cloud-test`, then a build of every cloud image with no output: the pull request check (`cloud-build.yml`) |
+| `cloud-status` | `scripts/cloud/deploy.sh status`, with your gcloud login: each job's image, deployed commit and last execution, and the orchestrator VM's `orchestrator-image` |
+
+| Variable | Default | Used by |
+| --- | --- | --- |
+| `TYPE` | `linux` | `cloud-build`, `cloud-smoke` |
+| `CLAUDE_VERSION` | `latest` | `cloud-build`, `cloud-ci`: an exact version (the deploy resolves one per run, so the layer cache can't keep an old one) or a channel |
+
+Where things live:
+
+| Path | What |
+| --- | --- |
+| `infra/gcp/project.env` | Terraform's outputs (`lolay/infrastructure`), committed as a copy |
+| `infra/gcp/<type>.env` | One runner type: job resources, scratch size, timeouts, orchestrator settings |
+| `images/cloud/` | `base`, `linux`, `orchestrator` Dockerfiles, `entrypoint.sh`, the cloud `CLAUDE.md` and SessionStart hook |
+| `hooks/gcp/` | `spawn-runner` and `lib.sh` (REST with curl and a metadata-server token) |
+| `scripts/cloud/` | `job-spec.sh` (the v2 Job), `changed-targets.sh` (what a push redeploys), `deploy.sh` |
+
 ## CI alignment
 
 | Workflow | Target |
 | --- | --- |
 | `.github/workflows/ci.yml` | `make init`, `make ci` on `macos-latest` |
 | `.github/workflows/linux-image-smoke.yml` | Manual only: runs `images/linux/scripts` on `ubuntu-24.04` (which has KVM) and boots the emulator |
+| `.github/workflows/cloud-build.yml` | `make cloud-ci` on `ubuntu-24.04`, for pull requests touching the cloud paths; no GCP credentials |
+| `.github/workflows/cloud-deploy.yml` | Push to `main` or dispatch: builds, pushes, smoke-tests and promotes what changed, in environment `production` |
 
 Image builds don't run in hosted CI: GitHub's macOS runners can't nest Tart VMs, and
 the Linux image builds on its host like the macOS one. The Linux smoke test covers

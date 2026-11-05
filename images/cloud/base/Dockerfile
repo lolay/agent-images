@@ -49,7 +49,10 @@ jq -s '.[0] * .[1]' "$shared/claude/settings.json" "$cloud/base/claude/settings.
 install -m 644 "$cloud/base/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
 sudo install -m 644 "$cloud/base/profile.sh" /etc/profile.d/agent-images.sh
 sudo install -m 755 "$cloud/entrypoint.sh" /usr/local/bin/agent-cloud-entrypoint
-sudo install -d -m 755 /scratch /mnt/outputs /mnt/datasets
+# Mount points: Cloud Run mounts over them; a local docker volume (make
+# cloud-smoke) takes their owner, so the session user can write scratch and outputs.
+sudo install -d -m 755 -o ubuntu -g ubuntu /scratch /mnt/outputs
+sudo install -d -m 755 /mnt/datasets
 SCRIPT
 
 ENV PATH=/home/ubuntu/bin:/home/ubuntu/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin
