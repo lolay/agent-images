@@ -210,7 +210,7 @@ Done: `docker buildx bake -f images/cloud/docker-bake.hcl linux --load` builds h
 `docker run --rm --entrypoint bash agent-linux -lc 'claude --version; brew --version; sudo -n true'`
 passes.
 
-#### s5 - [exec] The entrypoint, with a smoke mode
+#### s5 - [exec] The entrypoint, with a smoke mode (done)
 
 `images/cloud/entrypoint.sh` (installed as `agent-cloud-entrypoint`):
 
