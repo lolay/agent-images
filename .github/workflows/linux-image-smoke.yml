@@ -61,7 +61,9 @@ jobs:
             go version && cargo --version && protoc --version && buf --version
             terraform version && tflint --version
             claude --version
-            ls ~/.claude ~/.claude/skills'
+            ls ~/.claude ~/.claude/skills
+            ! grep -qxF "<!-- toolsets -->" ~/.claude/CLAUDE.md
+            sed -n "/^## Tools/,/^## Android/p" ~/.claude/CLAUDE.md'
       - name: Green (no stderr from the image scripts)
         run: |
           if [ -s "$STDERR_LOG" ]; then

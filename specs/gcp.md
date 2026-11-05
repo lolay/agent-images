@@ -242,7 +242,8 @@ matrix. A failed deploy makes the next one redeploy more, never less:
 
 | Path changed | Redeploys |
 | --- | --- |
-| `images/shared/**`, `images/toolsets/**`, `images/cloud/base/**`, `images/cloud/entrypoint.sh`, `images/cloud/docker-bake.hcl`, `.dockerignore` | Every runner type |
+| `images/shared/**`, `images/toolsets/install-toolset.sh`, `images/toolsets/write-claude-md.sh`, `images/cloud/base/**`, `images/cloud/entrypoint.sh`, `images/cloud/docker-bake.hcl`, `.dockerignore` | Every runner type |
+| `images/toolsets/<toolset>/**` | The types whose Dockerfiles (or build parents') install that toolset |
 | `images/cloud/base-gpu/**` | Every `-gpu` type (each is built `FROM` it) |
 | `images/cloud/<type>/**`, including its `versions.lock` | That type |
 | `hooks/gcp/**`, `images/cloud/orchestrator/**` | The orchestrator host (new image, then the host restarts its container) |

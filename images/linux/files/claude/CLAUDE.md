@@ -9,18 +9,7 @@ user, with passwordless sudo: `sudo apt-get install` whatever a project needs.
 Installed at their latest release when the image was built, so check a repo's
 `make doctor` before installing anything:
 
-- Node with pnpm (Node no longer bundles corepack), Python (Homebrew's, ahead of
-  Ubuntu's on PATH) with uv, Go, and Rust (rustup's stable, with clippy and rustfmt).
-- A C toolchain, cmake, ninja and pkg-config, with the headers native builds most
-  often need (OpenSSL, zlib, libffi, SQLite, libpq, bzip2, xz, readline), and the
-  sqlite3 and psql clients. You have sudo, so `sudo apt-get install` adds others.
-- protoc, buf and grpcurl. Language plugins (protoc-gen-go, grpcio-tools,
-  protoc-gen-es, tonic-build) come from the project.
-- Terraform through tenv, which switches to a repo's `.terraform-version` and
-  downloads it if it isn't here, and tflint.
-- gh, git, jq, ripgrep, tmux, actionlint, shellcheck, mandoc, age, sops, triage and
-  nowline.
-- Chromium's system libraries for Playwright.
+<!-- toolsets -->
 
 There's no gcloud and no cloud credentials, and none should be added. Terraform
 work here is offline: `terraform fmt`, `terraform validate` after

@@ -1,0 +1,1 @@
+- Python (Homebrew's, ahead of Ubuntu's on PATH) with uv.

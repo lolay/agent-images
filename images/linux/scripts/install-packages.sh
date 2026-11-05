@@ -13,6 +13,8 @@ log() { printf '==> install-packages: %s\n' "$*"; }
 mapfile -t toolsets < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$STAGING_DIR/toolsets.txt")
 log "installing toolsets: ${toolsets[*]}"
 bash "$STAGING_DIR/toolsets/install-toolset.sh" "${toolsets[@]}"
+# setup-user.sh installed CLAUDE.md as the template; fill in the toolsets.
+bash "$STAGING_DIR/toolsets/write-claude-md.sh" "$STAGING_DIR/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
 
 readonly claude="$HOME/.local/bin/claude"
 if [[ ! -x "$claude" ]]; then

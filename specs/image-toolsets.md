@@ -171,10 +171,17 @@ tooling as PyO3 extensions, or Rust splatting like Brush). If that becomes true,
   `googlecompute` build run `install-toolset.sh` over the same list.
 - **macOS:** `install-packages.sh` runs `brew bundle` on `core/Brewfile`, then the
   Mac's own.
-- **`changed-targets.sh`** reads each Dockerfile's `install-toolset` lines instead of
-  the fixed `every_type` list, so a change to `android` rebuilds only `android`.
-- **The cloud `CLAUDE.md`** is written per type from its toolsets (a short fragment per
-  toolset), so it can't claim a tool that isn't there or miss one that is.
+- **`changed-targets.sh`** reads each Dockerfile's `install-toolset.sh <name>` lines,
+  up the build-parent chain, so a change to a toolset rebuilds only the types that
+  install it, and a change to `android` deploys nothing on Cloud Run. The two
+  scripts beside the toolsets still rebuild every type.
+- **The session `CLAUDE.md`** is written from what's installed: each toolset has a
+  `CLAUDE.md` with its bullets, `install-toolset.sh` records each toolset it
+  installs (and those bullets) under `/etc/agent-images/toolsets`, and
+  `write-claude-md.sh` replaces the template's `<!-- toolsets -->` line with them.
+  The cloud and Android templates hold only what's about the machine (sudo or not,
+  storage, the emulator), so the list can't claim a tool that isn't there or miss
+  one that is.
 
 ## Renames
 

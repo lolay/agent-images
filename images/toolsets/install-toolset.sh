@@ -2,7 +2,9 @@
 # Installs toolsets (specs/image-toolsets.md) into a Linux image, in the order
 # given. For each: its packages.txt from Ubuntu's archive, then its Brewfile
 # (installing Homebrew first if it isn't there yet), then its install.sh. A
-# toolset has any of the three. Runs as the image's user, who has sudo, from
+# toolset has any of the three, and optionally a CLAUDE.md: its lines for the
+# session's CLAUDE.md. Each installed toolset is recorded in record_dir, with its
+# CLAUDE.md, for write-claude-md.sh. Runs as the image's user, who has sudo, from
 # the cloud Dockerfiles and the Android image's install-packages.sh.
 #
 # Usage: install-toolset.sh <name>...
@@ -19,6 +21,7 @@ set -euo pipefail
 toolsets_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly toolsets_dir
 readonly brew=/home/linuxbrew/.linuxbrew/bin/brew
+readonly record_dir=/etc/agent-images/toolsets
 
 log() { printf '==> install-toolset: %s\n' "$*"; }
 die() {
@@ -40,6 +43,16 @@ install_apt() {
 	if [[ "${APT_DROP_LISTS:-false}" == "true" ]]; then
 		sudo rm -rf /var/lib/apt/lists/*
 	fi
+}
+
+# Records an installed toolset: its name once in toolsets.txt, in install order,
+# and its CLAUDE.md as <name>.md.
+record() {
+	local name="$1" dir="$2"
+	sudo install -d -m 755 "$record_dir"
+	sudo touch "$record_dir/toolsets.txt"
+	grep -qxF "$name" "$record_dir/toolsets.txt" || printf '%s\n' "$name" | sudo tee -a "$record_dir/toolsets.txt" >/dev/null
+	[[ ! -f "$dir/CLAUDE.md" ]] || sudo install -m 644 "$dir/CLAUDE.md" "$record_dir/$name.md"
 }
 
 # Homebrew installs to /home/linuxbrew/.linuxbrew and must not run as root; the
@@ -99,4 +112,5 @@ for name in "$@"; do
 		# Any brew command it ran refilled Homebrew's cache.
 		[[ ! -x "$brew" ]] || rm -rf "$("$brew" --cache)"
 	fi
+	record "$name" "$dir"
 done

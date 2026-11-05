@@ -1,0 +1,1 @@
+- Rust (rustup's stable, with clippy and rustfmt).

@@ -1,0 +1,1 @@
+- OpenJDK 21 (`$JAVA_HOME`), for Kotlin and Gradle builds and the Firebase emulators.

@@ -75,7 +75,8 @@ for hook in "$shared"/claude/hooks/*.sh "$cloud"/base/claude/hooks/*.sh; do
 	install -m 755 "$hook" "$HOME/.claude/hooks/$(basename "$hook")"
 done
 jq -s '.[0] * .[1]' "$shared/claude/settings.json" "$cloud/base/claude/settings.json" >"$HOME/.claude/settings.json"
-install -m 644 "$cloud/base/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
+# The cloud CLAUDE.md, with a line per toolset installed above.
+bash /tmp/images/toolsets/write-claude-md.sh "$cloud/base/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
 sudo install -m 644 "$cloud/base/profile.sh" /etc/profile.d/agent-images.sh
 sudo install -m 755 "$cloud/entrypoint.sh" /usr/local/bin/agent-cloud-entrypoint
 # Mount points: Cloud Run mounts over them; a local docker volume (make

@@ -52,19 +52,31 @@ parent_of() {
 	sed -n -E 's/^FROM[[:space:]]+agent-([a-z0-9-]+).*/\1/p' "images/cloud/$1/Dockerfile" 2>/dev/null | head -n 1
 }
 
-# image_paths <type>: the type's directory and every build parent's, up the chain.
+# The toolsets a Dockerfile installs (its `install-toolset.sh <name>` lines).
+toolsets_of() {
+	sed -n -E 's/.*install-toolset\.sh[[:space:]]+([a-z0-9-]+)[[:space:]]*$/\1/p' "images/cloud/$1/Dockerfile" 2>/dev/null
+}
+
+# image_paths <type>: the type's directory and every build parent's, up the
+# chain, and the toolsets each of them installs.
 image_paths() {
-	local dir="$1" seen=" "
+	local dir="$1" seen=" " toolset
 	while [[ -n "$dir" && "$seen" != *" $dir "* ]]; do
 		printf 'images/cloud/%s/*\n' "$dir"
+		while read -r toolset; do
+			printf 'images/toolsets/%s/*\n' "$toolset"
+		done < <(toolsets_of "$dir")
 		seen+="$dir "
 		dir="$(parent_of "$dir")"
 	done
 }
 
-# What every type is built from.
+# What every type is built from. A toolset's own directory rebuilds only the
+# types that install it (image_paths); the two scripts beside them, every type.
+# (A * in these patterns also matches /, so the scripts are named outright.)
 readonly every_type=(
-	"images/shared/*" "images/toolsets/*" "images/cloud/entrypoint.sh"
+	"images/shared/*" "images/toolsets/install-toolset.sh" "images/toolsets/write-claude-md.sh"
+	"images/cloud/entrypoint.sh"
 	"images/cloud/docker-bake.hcl" ".dockerignore" "infra/gcp/project.env"
 )
 

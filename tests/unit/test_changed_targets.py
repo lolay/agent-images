@@ -21,14 +21,24 @@ class ChangedTargetsTests(unittest.TestCase):
             "infra/gcp/project.env": "PROJECT_ID=p\n",
             "infra/gcp/linux.env": "CPU=4\n",
             "infra/gcp/linux-gpu.env": "CPU=20\n",
-            "images/cloud/base/Dockerfile": "FROM ubuntu:24.04\n",
-            "images/cloud/base-gpu/Dockerfile": "ARG BASE\nFROM agent-base\n",
+            "images/cloud/base/Dockerfile": (
+                "FROM ubuntu:24.04\n"
+                "RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/t/install-toolset.sh \\\n"
+                "\tbash /t/install-toolset.sh core\n"
+                "RUN bash /t/install-toolset.sh node\n"
+            ),
+            "images/cloud/base-gpu/Dockerfile": "ARG BASE\nFROM agent-base\nRUN bash /t/install-toolset.sh display\n",
             "images/cloud/linux/Dockerfile": "FROM agent-base\n",
             "images/cloud/linux-gpu/Dockerfile": "FROM agent-base-gpu\n",
             "images/cloud/orchestrator/Dockerfile": "FROM ubuntu:24.04\n",
             "images/cloud/entrypoint.sh": "#!/bin/bash\n",
             "images/shared/agent-runner.sh": "#!/bin/bash\n",
             "images/toolsets/core/packages.txt": "git\n",
+            "images/toolsets/node/Brewfile": 'brew "node"\n',
+            "images/toolsets/display/packages.txt": "xvfb\n",
+            "images/toolsets/android/packages.txt": "cpu-checker\n",
+            "images/toolsets/install-toolset.sh": "#!/bin/bash\n",
+            "images/toolsets/write-claude-md.sh": "#!/bin/bash\n",
             "images/linux/toolsets.txt": "core\n",
             "hooks/gcp/spawn-runner": "#!/bin/bash\n",
             "scripts/cloud/job-spec.sh": "#!/bin/bash\n",
@@ -87,11 +97,28 @@ class ChangedTargetsTests(unittest.TestCase):
         )
         self.assertFalse(result["orchestrator"])
 
-    def test_a_toolset_rebuilds_every_type(self):
+    def test_a_toolset_rebuilds_the_types_that_install_it(self):
+        both = [{"type": "linux", "build": True}, {"type": "linux-gpu", "build": True}]
+        self.assertEqual(self.change("images/toolsets/core/packages.txt")["types"], both)
+        self.base = self.head()
+        self.assertEqual(self.change("images/toolsets/node/Brewfile")["types"], both)
+        self.base = self.head()
         self.assertEqual(
-            self.change("images/toolsets/core/packages.txt")["types"],
-            [{"type": "linux", "build": True}, {"type": "linux-gpu", "build": True}],
+            self.change("images/toolsets/display/packages.txt")["types"],
+            [{"type": "linux-gpu", "build": True}],
         )
+
+    def test_a_toolset_no_cloud_type_installs_deploys_nothing(self):
+        self.assertEqual(
+            self.change("images/toolsets/android/packages.txt"),
+            {"types": [], "orchestrator": False, "prune": False},
+        )
+
+    def test_the_toolset_scripts_rebuild_every_type(self):
+        both = [{"type": "linux", "build": True}, {"type": "linux-gpu", "build": True}]
+        self.assertEqual(self.change("images/toolsets/install-toolset.sh")["types"], both)
+        self.base = self.head()
+        self.assertEqual(self.change("images/toolsets/write-claude-md.sh")["types"], both)
 
     def test_the_android_images_toolset_list_deploys_nothing(self):
         self.assertEqual(
