@@ -197,11 +197,14 @@ Steps for [gcp.md](gcp.md) m2, ahead of `gis` and `android`:
   5.37 GB against 5.46 GB, once each layer drops apt's lists and Homebrew's caches
   (otherwise they're kept once per layer). The Android image's scripts ran green on
   a hosted runner, with the emulator up from its snapshot in 9 s.
-- s3: add `native`; drop `android` from `linux` and move the SDK into the toolset's
+- s3 (done): add `native`; drop `android` from `linux` and move the SDK into the toolset's
   `install.sh`; move session tools to the `core` Brewfile on Linux and the Mac. On
   Linux, git and jq stay in apt: Homebrew's installer needs git, and the hooks call
   jq before Homebrew is on PATH. The Mac gains actionlint and shellcheck from the
-  shared list.
+  shared list. `browser` now carries Playwright's whole Chromium list: it had
+  left out what `android` also installs, so dropping `android` from `linux` dropped
+  libnss3 and seven others. Checked by a headless Chromium screenshot in the image.
+  The macOS half is untested until a Mac host runs `make build`.
 - s4: per-toolset `CLAUDE.md` fragments, and `changed-targets.sh` reading toolsets.
 - s5: rename `images/linux` to `images/android` and the alias to `agent-android`.
 - s6: `gis` on toolsets, as in the m2 plan.
