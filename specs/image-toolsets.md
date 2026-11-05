@@ -191,8 +191,12 @@ Steps for [gcp.md](gcp.md) m2, ahead of `gis` and `android`:
   `terraform`, `jvm`, `browser` and `android`, with no change in what any image
   contains. Until s3 the `android` toolset is only its apt libraries, since
   `agent-linux` still installs them; the SDK stays in `ensure-android-sdk.sh`.
-- s2: rebuild `agent-linux` and the LXD image from toolsets; diff the installed
-  package lists against the current images (should be identical).
+- s2 (done): rebuild `agent-linux` and the LXD image from toolsets; diff the installed
+  package lists against the current images (should be identical). The same apt
+  packages, formulae, Rust toolchain and Terraform as the pre-toolsets image, and
+  5.37 GB against 5.46 GB, once each layer drops apt's lists and Homebrew's caches
+  (otherwise they're kept once per layer). The Android image's scripts ran green on
+  a hosted runner, with the emulator up from its snapshot in 9 s.
 - s3: add `native`; drop `android` from `linux` and move the SDK into the toolset's
   `install.sh`; move session tools to the `core` Brewfile on Linux and the Mac.
 - s4: per-toolset `CLAUDE.md` fragments, and `changed-targets.sh` reading toolsets.
