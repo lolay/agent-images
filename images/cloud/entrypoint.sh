@@ -70,7 +70,7 @@ smoke() {
 			failed=1
 		fi
 	}
-	# shellcheck disable=SC2329 # called through check
+	# shellcheck disable=SC2317,SC2329 # called through check
 	scratch_disk() {
 		local fstype
 		mountpoint -q "$AGENT_SCRATCH" || {
@@ -87,7 +87,7 @@ smoke() {
 		rm -f "$TMPDIR/smoke"
 		printf '%s, %s free' "$fstype" "$(df -h --output=avail "$AGENT_SCRATCH" | tail -n 1 | tr -d ' ')"
 	}
-	# shellcheck disable=SC2329 # called through check
+	# shellcheck disable=SC2317,SC2329 # called through check
 	outputs_round_trip() {
 		local dir="$AGENT_OUTPUTS_ROOT/_smoke" file
 		file="$dir/${CLOUD_RUN_EXECUTION:-local}-$$"
@@ -97,7 +97,7 @@ smoke() {
 		rm -f "$file"
 		echo "wrote, read and deleted $file"
 	}
-	# shellcheck disable=SC2329 # called through check
+	# shellcheck disable=SC2317,SC2329 # called through check
 	datasets_read_only() {
 		ls "$AGENT_DATASETS" >/dev/null
 		if touch "$AGENT_DATASETS/.smoke-write" 2>/dev/null; then
