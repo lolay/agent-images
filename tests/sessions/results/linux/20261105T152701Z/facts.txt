@@ -1,0 +1,30 @@
+Linux localhost 6.9.12 #1 SMP Wed Nov 4 05:11:59 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+
+PRETTY_NAME="Ubuntu 24.04.5 LTS"
+NAME="Ubuntu"
+VERSION_ID="24.04"
+VERSION="24.04.5 LTS (Noble Numbat)"
+VERSION_CODENAME=noble
+ID=ubuntu
+ID_LIKE=debian
+HOME_URL="https://www.ubuntu.com/"
+SUPPORT_URL="https://help.ubuntu.com/"
+BUG_REPORT_URL="https://bugs.launchpad.net/ubuntu/"
+PRIVACY_POLICY_URL="https://www.ubuntu.com/legal/terms-and-policies/privacy-policy"
+UBUNTU_CODENAME=noble
+LOGO=ubuntu-logo
+
+nproc=5
+               total        used        free      shared  buff/cache   available
+Mem:            15Gi       683Mi        14Gi       1.7Mi       312Mi        14Gi
+Swap:             0B          0B          0B
+Filesystem       Size  Used Avail Use% Mounted on
+none              16G  1.7M   16G   1% /
+/dev/mapper/md0  9.8G   51M  9.2G   1% /scratch
+user=uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu)
+sudo: The "no new privileges" flag is set, which prevents sudo from running as root.
+sudo: If sudo is running in a container, you may need to adjust the container configuration to disable the flag.
+sudo_exit=1
+2.1.318 (Claude Code)
+latest=2.1.318
+DISPLAY=<unset>

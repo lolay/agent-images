@@ -1,0 +1,12 @@
+== /scratch
+TARGET   SOURCE          FSTYPE OPTIONS
+/scratch /dev/mapper/md0 ext4   rw,relatime,stripe=512
+/dev/mapper/md0  9.8G   51M  9.2G   1% /scratch
+== /mnt/outputs/linux/2026-11-05/cse_01BNKwNXiTXuGGS2RujaUTiD
+TARGET       SOURCE               FSTYPE       OPTIONS
+/mnt/outputs lolay-agents-outputs fuse.gcsfuse rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+lolay-agents-outputs  1.0P     0  1.0P   0% /mnt/outputs
+== /mnt/datasets
+TARGET        SOURCE                FSTYPE       OPTIONS
+/mnt/datasets lolay-agents-datasets fuse.gcsfuse ro,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+lolay-agents-datasets  1.0P     0  1.0P   0% /mnt/datasets

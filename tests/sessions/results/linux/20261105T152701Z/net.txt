@@ -1,0 +1,8 @@
+https://pypi.org/simple/ 200 0.530188s
+https://registry.npmjs.org/ 200 0.067352s
+https://index.crates.io/config.json 200 0.064901s
+https://proxy.golang.org/ 200 0.016332s
+https://ghcr.io/v2/ 401 0.097716s
+https://formulae.brew.sh/api/formula.json 200 0.341484s (HEAD)
+http://archive.ubuntu.com/ubuntu/dists/noble/InRelease 200 0.228842s
+http://security.ubuntu.com/ubuntu/dists/noble-security/InRelease 200 0.560221s
