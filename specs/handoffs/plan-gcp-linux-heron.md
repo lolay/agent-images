@@ -188,7 +188,7 @@ Done: both files source cleanly in bash.
 Done: `shellcheck -x` and `shfmt -d` clean; `--help` of the installed Claude still
 lists both flags.
 
-#### s4 - [exec] The base and `linux` images
+#### s4 - [exec] The base and `linux` images (done)
 
 - `.dockerignore`: everything out except `images/shared`, `images/linux/packages.txt`,
   `images/linux/Brewfile`, `images/linux/scripts`, `images/cloud`, `hooks/gcp`,

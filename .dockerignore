@@ -1,0 +1,10 @@
+# The cloud images build with the repo root as context (images/cloud/docker-bake.hcl).
+# Send only what they read.
+*
+!images/shared/
+!images/linux/packages.txt
+!images/linux/Brewfile
+!images/linux/scripts/
+!images/cloud/
+!hooks/gcp/
+!infra/gcp/
