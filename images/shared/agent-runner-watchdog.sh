@@ -13,14 +13,17 @@
 # EPHEMERAL=true, powers this VM off).
 #
 # Relies on runner internals from that issue: <base-dir>/_sessions/<id>.gitconfig
-# holding http.https://github.com/.proxy. If those change, it finds nothing and
-# does nothing.
+# holding http.https://github.com/.proxy, where <base-dir> is runner.env's
+# CLAUDE_BASE_DIR (default ~/workspace, as in claude.sh). If those change, it
+# finds nothing and does nothing.
 set -euo pipefail
 
 readonly runner_env="$HOME/.config/agent-runner/runner.env"
 # Nothing to watch until the VM is configured.
 [[ -f "$runner_env" ]] || exit 0
-readonly sessions_dir="$HOME/workspace/_sessions"
+# shellcheck source=/dev/null
+base_dir="$(set -a && source "$runner_env" >/dev/null 2>&1 && printf '%s' "${CLAUDE_BASE_DIR:-}")" || base_dir=""
+readonly sessions_dir="${base_dir:-$HOME/workspace}/_sessions"
 if [[ "$(uname -s)" == "Darwin" ]]; then
 	readonly state_dir="$HOME/Library/Caches/agent-runner-watchdog"
 else

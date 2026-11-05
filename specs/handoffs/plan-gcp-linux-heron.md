@@ -173,7 +173,7 @@ Done: both specs read true against the Terraform; nothing else changes.
 
 Done: both files source cleanly in bash.
 
-#### s3 - [exec] Two settings in the shared runner files
+#### s3 - [exec] Two settings in the shared runner files (done)
 
 - `images/shared/runners/claude.sh`: `CLAUDE_RETIRE_AT` (epoch seconds, passed as
   `--retire-at`) and `CLAUDE_EXIT_IF_UNUSED_MIN` (`--exit-if-unused-min`), both off

@@ -3,12 +3,15 @@
 # lolay/tap formulae), then Claude Code with its native installer
 # (~/.local/bin/claude, which `claude update` upgrades; the runner does that at
 # every start). Runs in the guest as the guest user, after setup-user.sh.
+# INSTALL_CLAUDE=false skips Claude Code: the cloud images install it in a later
+# layer of their own (images/cloud/base/Dockerfile), since it changes most often.
 #
 # No apt-get upgrade: each build starts from a fresh ubuntu:24.04, the way the
 # macOS image doesn't run softwareupdate. needrestart stays out of the build.
 set -euo pipefail
 
 : "${STAGING_DIR:?}"
+: "${INSTALL_CLAUDE:=true}"
 
 log() { printf '==> install-packages: %s\n' "$*"; }
 apt() { sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get -q "$@"; }
@@ -40,6 +43,7 @@ log "installing the Brewfile"
 brew bundle --file="$brewfile"
 log "$(brew list --versions nowline triage | tr '\n' ';')"
 
+[[ "$INSTALL_CLAUDE" == "true" ]] || exit 0
 readonly claude="$HOME/.local/bin/claude"
 if [[ ! -x "$claude" ]]; then
 	log "installing Claude Code"

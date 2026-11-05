@@ -22,6 +22,13 @@
 #                           resumes on a fresh VM at the next message. Empty = never.
 #   CLAUDE_KILL_SESSION_AFTER_MIN
 #                           480 (default) = cap a session's life. Empty = never.
+#   CLAUDE_EXIT_IF_UNUSED_MIN
+#                           Empty (default) = wait for work indefinitely. N = exit
+#                           if never assigned a session for N minutes (a Cloud Run
+#                           runner, so a spare doesn't hold an execution forever).
+#   CLAUDE_RETIRE_AT        Empty (default) = no deadline. Epoch seconds = release
+#                           sessions cleanly and exit by then (a Cloud Run runner,
+#                           ahead of the job's hard task timeout).
 #   CLAUDE_CONFINE_REPO_SETTINGS
 #                           enforce (default), warn, or off: refuse repos whose
 #                           committed settings grant writes outside the workspace.
@@ -49,6 +56,8 @@ readonly secret_file="$HOME/.claude-runner/environment-secret"
 # No colon: set-but-empty means "never" rather than the default.
 : "${CLAUDE_RELEASE_IDLE_SESSION_MIN=60}"
 : "${CLAUDE_KILL_SESSION_AFTER_MIN=480}"
+: "${CLAUDE_EXIT_IF_UNUSED_MIN:=}"
+: "${CLAUDE_RETIRE_AT:=}"
 
 log() { printf '%s claude-runner: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 warn() { log "$@" >&2; }
@@ -132,6 +141,12 @@ if [[ -n "$CLAUDE_RELEASE_IDLE_SESSION_MIN" ]]; then
 fi
 if [[ -n "$CLAUDE_KILL_SESSION_AFTER_MIN" ]]; then
 	args+=(--kill-session-after-min "$CLAUDE_KILL_SESSION_AFTER_MIN")
+fi
+if [[ -n "$CLAUDE_EXIT_IF_UNUSED_MIN" ]]; then
+	args+=(--exit-if-unused-min "$CLAUDE_EXIT_IF_UNUSED_MIN")
+fi
+if [[ -n "$CLAUDE_RETIRE_AT" ]]; then
+	args+=(--retire-at "$CLAUDE_RETIRE_AT")
 fi
 
 exec claude "${args[@]}"
