@@ -7,6 +7,11 @@
 #
 # Usage: install-toolset.sh <name>...
 #
+# APT_DROP_LISTS=true deletes apt's package lists after each toolset's install.
+# The cloud Dockerfiles set it: every toolset is its own layer, so each kept
+# copy of the lists (about 50 MB) would stay in the image, and sessions there
+# can't run apt anyway. The VM images keep them, for sessions' own apt installs.
+#
 # No apt-get upgrade: each build starts from a fresh ubuntu:24.04, the way the
 # macOS image doesn't run softwareupdate. needrestart stays out of the build.
 set -euo pipefail
@@ -32,6 +37,9 @@ install_apt() {
 	apt update
 	apt install -y --no-install-recommends "${packages[@]}"
 	apt clean
+	if [[ "${APT_DROP_LISTS:-false}" == "true" ]]; then
+		sudo rm -rf /var/lib/apt/lists/*
+	fi
 }
 
 # Homebrew installs to /home/linuxbrew/.linuxbrew and must not run as root; the

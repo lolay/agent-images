@@ -24,6 +24,7 @@ WORKDIR /home/ubuntu
 # toolset rebuilds its layer and those after it, not the ones before. The same
 # list as the Android image's images/linux/toolsets.txt for now; it narrows to
 # what this image needs in s3. apt toolsets first: they move slowest.
+ARG APT_DROP_LISTS=true
 RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
 	--mount=type=bind,source=images/toolsets/core,target=/tmp/toolsets/core \
 	bash /tmp/toolsets/install-toolset.sh core
