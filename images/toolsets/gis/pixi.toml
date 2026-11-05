@@ -32,3 +32,11 @@ python-duckdb = "*"
 scipy = "*"
 matplotlib = "*"
 requests = "*"
+
+# Pinned on breakage (specs/gcp.md, "Pinning a dependency"), 2026-11-05: the
+# TileDB plugins (libpdal-tiledb, libgdal-tiledb, through tiledb 2.30.1) link
+# libaws-c-s3.so.1.1, but aws-crt-cpp's and hdf5 2.2's newest builds hold
+# aws-c-s3 below 1.1, so the solver picked 1.0 and `import pdal` printed load
+# errors for the TileDB reader. The floor makes it pick builds that agree (and
+# hdf5 1.14.6). Remove it when an unpinned solve imports pdal cleanly.
+aws-c-s3 = ">=1.1"
