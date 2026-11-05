@@ -142,9 +142,9 @@ images/cloud/
   base-gpu/Dockerfile  ARG BASE (CUDA 13.0 runtime on ubuntu:24.04), then the base
                        layers; Xvfb, VirtualGL, mesa-utils, vulkan-tools; optional noVNC
   <type>/Dockerfile    FROM agent-base or agent-base-gpu, adds the type's tools
-  entrypoint.sh        set AGENT_SCRATCH, AGENT_OUTPUTS (with the session id) and
-                       AGENT_DATASETS, point CLAUDE_BASE_DIR at /scratch/workspace,
-                       start Xvfb when DISPLAY is wanted, then exec agent-runner
+  entrypoint.sh        set AGENT_SCRATCH and AGENT_DATASETS, point CLAUDE_BASE_DIR at
+                       /scratch/workspace, start Xvfb when DISPLAY is wanted, then
+                       exec agent-runner (AGENT_OUTPUTS comes per session, below)
 ```
 
 Choices, carried over from [design.md](design.md):
@@ -369,6 +369,26 @@ lock marks them pinned. The watch lists every pin in the job summary next to
 upstream's current version and the issue's state, so a pin whose issue closed stands
 out instead of rotting.
 
+## Keys
+
+Each runner type's Claude environment key reaches only the orchestrator. A runner
+gets a single-use work order instead, and a session gets nothing.
+
+| Step | Who | What |
+| --- | --- | --- |
+| 1 | You, once per type | Create the environment in claude.ai, copy its key, `gcloud secrets create claude-env-<type>` and `versions add` it. It never touches git, Terraform state or an image |
+| 2 | The orchestrator host, at container start | Its service account (`agent-orchestrator`, allowed only `claude-env-*`) reads each type's secret from Secret Manager and writes it to a file per type on tmpfs, mode 600 |
+| 3 | Each type's orchestrator | Starts with `--environment-secret-file` pointing at its own file only, and polls Anthropic with it |
+| 4 | Anthropic, per queued session | Sends that orchestrator a spawn request carrying a work order: a signed, single-use token for one runner |
+| 5 | The hook | Unsets the environment key from its own environment, then starts a Cloud Run execution (or an `android` VM) with the work order as `SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET` |
+| 6 | The runner | Registers with the work order, which is spent at that moment, then claims the session |
+
+So a session that reads its environment or the execution's metadata finds a spent
+token. The runner's service account (`agent-runner`) has no Secret Manager access at
+all. Rotating a key is a new secret version in claude.ai and Secret Manager, then a
+container restart on the host (set the `orchestrator-image` metadata to the same
+digest, or reset the VM).
+
 ## The hook
 
 `hooks/gcp/spawn-runner`, the counterpart of `hooks/linux/spawn-runner`, same contract
@@ -459,7 +479,7 @@ don't care which type they're on:
 | Path | What it is | Lives | Size |
 | --- | --- | --- | --- |
 | `$AGENT_SCRATCH` (`/scratch`) | Cloud Run ephemeral disk: block storage dedicated to the instance | Until the execution ends | Per type, above |
-| `$AGENT_OUTPUTS` (`/mnt/outputs/<session id>`) | Cloud Storage bucket `lolay-agents-outputs`, mounted read-write with Cloud Storage FUSE | 30 days, then the bucket's lifecycle rule deletes it | Unbounded |
+| `$AGENT_OUTPUTS` (`/mnt/outputs/<type>/<date>/<session id>`) | Cloud Storage bucket `lolay-agents-outputs`, mounted read-write with Cloud Storage FUSE | 30 days, then the bucket's lifecycle rule deletes it | Unbounded |
 | `$AGENT_DATASETS` (`/mnt/datasets`) | Cloud Storage bucket `lolay-agents-datasets`, mounted read-only with Cloud Storage FUSE and a file cache on `/scratch` | Until removed by hand | Unbounded |
 
 - **Scratch** is where work happens: the repo checkout (Claude's `--base-dir` is
@@ -470,10 +490,11 @@ don't care which type they're on:
   per region, so the GPU and GIS sizes above need a quota increase
   (`lolay/infrastructure`).
 - **Outputs** is for anything worth keeping that's too big for git: dense point
-  clouds, trained models, renders, rasters. A session writes under its own session
-  id; you read results with `gcloud storage` or the console. Cloud Storage FUSE isn't
-  a full POSIX filesystem (no locking, slow small random writes), so a session works
-  on scratch and copies finished files to outputs, rather than working in place.
+  clouds, trained models, renders, rasters. Each session writes under
+  `<type>/<UTC date>/<session id>/`, so a listing reads by type and day; you read
+  results with `gcloud storage` or the console. Cloud Storage FUSE isn't a full POSIX
+  filesystem (no locking, slow small random writes), so a session works on scratch
+  and copies finished files to outputs, rather than working in place.
 - **Datasets** holds inputs worth reusing between sessions: a cached Sentinel-2 or
   3DEP subset, a photogrammetry image set, model weights. Read-only to sessions; you
   add to it with `gcloud storage cp`. The FUSE file cache on scratch makes a second
@@ -484,6 +505,47 @@ don't care which type they're on:
   least 80 GiB, so a working set of a few GiB in `/dev/shm` costs nothing extra.
 - **Not proposed:** Filestore (NFS). It's fully POSIX and shared, but the smallest
   instance is a fixed monthly cost far above everything else here combined.
+
+**Per session already.** Scratch needs no naming convention: every instance serves
+exactly one session (`--capacity 1`, then it exits), and its ephemeral disk is
+created with it and deleted with it, so `/scratch` is that session's and nobody
+else's. Only the shared bucket needs the `<type>/<date>/<session id>` prefix. A
+standby starts before it has a session, so the entrypoint can't know the id; a
+`SessionStart` hook in the image's `~/.claude/settings.json` creates the session's
+folder under `/mnt/outputs` and exports `AGENT_OUTPUTS` through `$CLAUDE_ENV_FILE`.
+The session id comes from the session's own environment
+(`CLAUDE_CODE_REMOTE_SESSION_ID` in Anthropic's cloud sessions; m1 confirms the
+runner sets the same).
+
+**How the agent knows.** Two ways, both baked into the image, like the Linux image's
+`~/.claude/CLAUDE.md` describing the emulator today:
+
+- A "This machine" `CLAUDE.md` for the cloud images, read at the start of every
+  session:
+
+  ```
+  ## Storage
+  - Work in $AGENT_SCRATCH (/scratch): a dedicated disk, deleted when this session
+    ends. Your repo is checked out there. Don't write large files elsewhere: the
+    rest of the filesystem is in memory.
+  - Keep anything over 10 MB worth keeping in $AGENT_OUTPUTS (a Cloud Storage
+    bucket, kept 30 days). Finish files on scratch, then copy them there; tell the
+    user the gs:// path.
+  - Read shared inputs from $AGENT_DATASETS (read-only).
+  - Code still goes to git: commit and push before the session ends.
+  ```
+- The same `SessionStart` hook prints one line of facts into the session's context:
+  free space on scratch, the outputs path as `gs://...`, and what's at the top of
+  datasets.
+
+**Idle cost.** Close to nothing:
+
+| Storage | Billed for | Cost with no sessions |
+| --- | --- | --- |
+| Scratch (ephemeral disk) | Provisioned size, only while an instance runs | $0 for every type at `--min-idle 0`. The `linux` standby holds 10 GiB while it waits: billed at Cloud Run's disk rate, which Google's pricing page lists but I couldn't load; small at that size |
+| Outputs bucket | Bytes stored, about $0.02 per GB a month (Standard, `us-central1`) | Whatever the last 30 days left behind; $0 once the lifecycle rule empties it |
+| Datasets bucket | Bytes stored, same rate | What you put there: 100 GB is about $2 a month |
+| Reads and writes | Operations, and FUSE's listing calls | Fractions of a cent per session; reads in the same region transfer free |
 
 This changes one earlier decision: sessions now have GCP access, limited to these two
 buckets. Each execution's service account, `agent-runner`, can write
