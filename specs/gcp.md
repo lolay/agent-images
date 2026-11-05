@@ -534,20 +534,27 @@ runner sets the same).
   - Read shared inputs from $AGENT_DATASETS (read-only).
   - Code still goes to git: commit and push before the session ends.
 
-  ## Cost
+  ## Cost and time limit
   - This runtime costs about $AGENT_COST_USD_PER_HOUR an hour while the session
-    runs (the start-of-session facts give the figure and its breakdown). Start
-    your first reply with the cost line from those facts. Before starting work you
-    expect to take over an hour, say what it will roughly cost.
+    runs, and the session ends at a set time (the start-of-session facts give both).
+    Start your first reply with the notice line from those facts. Before starting
+    work you expect to take over an hour, say what it will roughly cost and whether
+    it fits before the end time. Commit and push well before the end.
   ```
 - The same `SessionStart` hook prints one line of facts into the session's context:
   free space on scratch, the outputs path as `gs://...`, and what's at the top of
   datasets.
 
-**Cost notice.** Every session opens by saying what its runtime costs, for example
-"⚠ This runtime costs approximately $8.99/hour" on a `3d-gpu` session. A `CLAUDE.md`
-can't print anything on its own (it's instructions to Claude, not output), so the
-same `SessionStart` hook does it two ways:
+**Session notice: cost and time limit.** Every session opens by saying what its
+runtime costs and when it will end, for example:
+
+```
+⚠ This runtime costs approximately $8.99/hour. It ends by 6:42 PM PST (in 7 h 52 min),
+or after 60 min with no messages; push your work before then.
+```
+
+A `CLAUDE.md` can't print anything on its own (it's instructions to Claude, not
+output), so the same `SessionStart` hook does it two ways:
 
 - `systemMessage` in its JSON output, which Claude Code shows to the user as a
   warning line;
@@ -555,6 +562,23 @@ same `SessionStart` hook does it two ways:
   ("start your first reply with the cost line"), in case a surface doesn't show
   hook messages. m1 checks what claude.ai actually shows and drops whichever is
   redundant.
+
+The end time is worked out at session start, by the hook, because it depends on when
+the runner started, not only on settings. The session ends at the earliest of:
+
+- the session's own limit, `--kill-session-after-min` (480 by default, set per type);
+- the runner's deadline, which the entrypoint sets as `--retire-at` from the job's
+  task timeout (12 hours for GPU jobs) minus a margin, and exports as
+  `AGENT_RETIRE_AT`. A standby that waited an hour for its session has an hour less,
+  which is why the hook reads the real deadline instead of assuming the full limit;
+- the idle release, `--release-idle-session-min` (60): not an end so much as a
+  pause, since the session resumes on a fresh runner at the next message, but
+  unpushed work is gone.
+
+The time shows in `AGENT_NOTICE_TZ` (in `infra/gcp/project.env`,
+`America/Los_Angeles`), with the time remaining beside it. Near the end, the runner's
+own `--retire-at` handling releases the session cleanly after its current turn; the
+Stop hook that already asks Claude to push covers the rest.
 
 The figure is worked out at deploy, not baked into the image, because it depends on
 the job's resources (CPU, memory, GPU, scratch disk), which change in
