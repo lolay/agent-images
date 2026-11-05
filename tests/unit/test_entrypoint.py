@@ -72,6 +72,9 @@ class EntrypointCase(unittest.TestCase):
             "AGENT_TYPE": "linux",
             "FAKE_OUT": str(self.out),
             "FAKE_BREW_PREFIX": str(self.brew_prefix),
+            # profile.sh puts Homebrew ahead of the fakes; a real one on the host
+            # (GitHub's runners have one) would shadow them.
+            "HOMEBREW_PREFIX": str(self.brew_prefix),
             "SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET": "work-order-jwt",
             "RUNNER_LABEL": "linux-abc123",
         }
@@ -104,6 +107,12 @@ class RunTests(EntrypointCase):
         self.assertEqual(env["HOMEBREW_CACHE"], f"{self.scratch}/cache/Homebrew")
         self.assertEqual(env["CARGO_HOME"], f"{self.scratch}/cache/cargo")
         self.assertEqual(env["pnpm_config_store_dir"], f"{self.scratch}/cache/pnpm-store")
+        path = env["PATH"].split(":")
+        self.assertLess(path.index(f"{self.brew_prefix}/bin"), path.index("/usr/bin"))
+        self.assertLess(
+            path.index(f"{self.brew_prefix}/opt/rustup/bin"), path.index(f"{self.brew_prefix}/bin")
+        )
+        self.assertEqual(path[-1], f"{self.scratch}/cache/cargo/bin")
         self.assertEqual(env["CLAUDE_BASE_DIR"], f"{self.scratch}/workspace")
         self.assertEqual(env["AGENT_SCRATCH"], str(self.scratch))
         self.assertEqual(env["AGENT_DATASETS"], str(self.datasets))

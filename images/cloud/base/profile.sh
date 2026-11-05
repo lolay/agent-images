@@ -21,10 +21,13 @@ export pnpm_config_store_dir="$XDG_CACHE_HOME/pnpm-store"
 export TENV_AUTO_INSTALL=true
 # Homebrew ahead of the system, as `brew shellenv` puts it, so python3 is
 # Homebrew's current release rather than Ubuntu's; rustup's bin holds the cargo
-# and rustc proxies. The Dockerfile sets the same PATH.
+# and rustc proxies. The Dockerfile sets the same PATH. HOMEBREW_PREFIX is
+# brew shellenv's name for the prefix; the tests point it at a fake one.
+HOMEBREW_PREFIX="${HOMEBREW_PREFIX:-/home/linuxbrew/.linuxbrew}"
+export HOMEBREW_PREFIX
 case ":$PATH:" in
 *":$HOME/bin:"*) ;;
-*) PATH="$HOME/bin:$HOME/.local/bin:/home/linuxbrew/.linuxbrew/opt/rustup/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH" ;;
+*) PATH="$HOME/bin:$HOME/.local/bin:$HOMEBREW_PREFIX/opt/rustup/bin:$HOMEBREW_PREFIX/bin:$HOMEBREW_PREFIX/sbin:$PATH" ;;
 esac
 case ":$PATH:" in
 *":$CARGO_HOME/bin:"*) ;;
