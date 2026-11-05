@@ -1,0 +1,22 @@
+## outputs round trip 1GiB
+1073741824 bytes (1.1 GB, 1.0 GiB) copied, 3.72928 s, 288 MB/s
+src sha256=6aed0ae84b3b0e2e1216bf4570134a060a9079711a7f947607a81437ecf8a7e5
+/bin/bash: line 21: bc: command not found
+/bin/bash: line 21: bc: command not found
+copy rc=0 took  s =>  MB/s
+/bin/bash: line 23: bc: command not found
+/bin/bash: line 23: bc: command not found
+read-back took  s =>  MB/s
+readback sha256=6aed0ae84b3b0e2e1216bf4570134a060a9079711a7f947607a81437ecf8a7e5
+CHECKSUM MATCH
+deleted probe from outputs: gone
+## datasets
+total 0
+entries: 0
+## datasets write attempt
+touch: cannot touch '/mnt/datasets/runner-test-probe': Read-only file system
+touch rc=1
+/bin/bash: line 27: /mnt/datasets/runner-test-probe: Read-only file system
+write rc=1
+mkdir: cannot create directory '/mnt/datasets/rt-dir': Read-only file system
+mkdir rc=1

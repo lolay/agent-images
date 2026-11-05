@@ -1,0 +1,33 @@
+## Node probe, attempt 1 (no types field)
+
+up to date in 957ms
+node
+{
+  "name": "runner-test-ts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/test/"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  }
+}
+> runner-test-ts@0.1.0 build
+> tsc -p tsconfig.json
+
+✔ add (2.301993ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 136.647504
+npm test rc=0
+node-probe-retry ms=1618
+tsc version: Version 7.0.2

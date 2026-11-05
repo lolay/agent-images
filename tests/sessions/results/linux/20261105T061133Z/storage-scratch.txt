@@ -1,0 +1,24 @@
+## storage identity
+AGENT_SCRATCH=/scratch
+AGENT_OUTPUTS=/mnt/outputs/linux/2026-11-05/cse_01BNKwNabKkmdBmz9vJa7zka
+AGENT_DATASETS=/mnt/datasets
+AGENT_COST_USD_PER_HOUR=unset
+AGENT_COST_DETAIL=unset
+AGENT_RETIRE_AT=1793892369 -> 2026-11-05T15:26:09Z
+retire margin: 900 s; idle=3600000 ms; max lifetime=28800000 ms
+## memory before
+               total        used        free      shared  buff/cache   available
+Mem:           15993         681       15270           0         297       15312
+Swap:              0           0           0
+## dd write 4GiB
+4294967296 bytes (4.3 GB, 4.0 GiB) copied, 20.4779 s, 210 MB/s
+## memory after write
+               total        used        free      shared  buff/cache   available
+Mem:           15993         688       15263           0         297       15305
+Swap:              0           0           0
+## drop caches not possible unprivileged; read back with iflag=direct
+4294967296 bytes (4.3 GB, 4.0 GiB) copied, 20.4952 s, 210 MB/s
+## memory after read
+               total        used        free      shared  buff/cache   available
+Mem:           15993         680       15270           0         297       15313
+Swap:              0           0           0

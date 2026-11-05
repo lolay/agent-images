@@ -1,0 +1,23 @@
+## attempt B: browser only
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                |  60% of 120 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                        |  70% of 120 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                |  80% of 120 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■        |  90% of 120 MiB
+|■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■| 100% of 120 MiB
+Chrome Headless Shell 156.0.8078.4 (playwright chromium-headless-shell v1248) downloaded to /scratch/cache/ms-playwright/chromium_headless_shell-1248
+rc=0 ms=17811
+chrome binary: /scratch/../scratch/cache/ms-playwright/chromium-1248/chrome-linux64/chrome
+## missing shared libs
+	libglib-2.0.so.0 => not found
+	libgobject-2.0.so.0 => not found
+	libgio-2.0.so.0 => not found
+	libatk-1.0.so.0 => not found
+	libatk-bridge-2.0.so.0 => not found
+	libcups.so.2 => not found
+	libcairo.so.2 => not found
+	libpango-1.0.so.0 => not found
+	libatspi.so.0 => not found
+==> Caveats
+Bash completion has been installed to:
+  /home/linuxbrew/.linuxbrew/etc/bash_completion.d
+brew libs rc=0 ms=9689

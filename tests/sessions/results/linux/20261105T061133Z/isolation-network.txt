@@ -1,0 +1,13 @@
+## isolation
+marker absent: pass
+runner-test linux marker
+created_utc=2026-11-05T06:13:44Z
+hostname=localhost
+session=cse_01BNKwNabKkmdBmz9vJa7zka
+## network (status, total seconds)
+https://pypi.org/simple/ -> 200 0.574606
+https://registry.npmjs.org/ -> 200 0.078814
+https://index.crates.io/config.json -> 200 0.069760
+https://proxy.golang.org/ -> 200 0.049450
+https://ghcr.io/v2/ -> 401 0.097835
+https://formulae.brew.sh/api/formula.json (HEAD) -> 200 0.057584

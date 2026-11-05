@@ -1,0 +1,22 @@
+Hit:1 http://security.ubuntu.com/ubuntu noble-security InRelease
+Hit:2 http://archive.ubuntu.com/ubuntu noble InRelease
+Hit:3 http://archive.ubuntu.com/ubuntu noble-updates InRelease
+Hit:4 http://archive.ubuntu.com/ubuntu noble-backports InRelease
+Reading package lists...
+W: Problem unlinking the file /var/lib/apt/lists/partial/security.ubuntu.com_ubuntu_dists_noble-security_InRelease - PrepareFiles (13: Permission denied)
+W: chmod 0600 of file /var/lib/apt/lists/security.ubuntu.com_ubuntu_dists_noble-security_InRelease failed - Item::QueueURI (1: Operation not permitted)
+W: Problem unlinking the file /var/lib/apt/lists/partial/archive.ubuntu.com_ubuntu_dists_noble_InRelease - PrepareFiles (13: Permission denied)
+W: chmod 0644 of file /var/lib/apt/lists/security.ubuntu.com_ubuntu_dists_noble-security_InRelease failed - 201::URIDone (1: Operation not permitted)
+W: chmod 0600 of file /var/lib/apt/lists/archive.ubuntu.com_ubuntu_dists_noble_InRelease failed - Item::QueueURI (1: Operation not permitted)
+W: Problem unlinking the file /var/lib/apt/lists/partial/archive.ubuntu.com_ubuntu_dists_noble-updates_InRelease - PrepareFiles (13: Permission denied)
+W: chmod 0644 of file /var/lib/apt/lists/archive.ubuntu.com_ubuntu_dists_noble_InRelease failed - 201::URIDone (1: Operation not permitted)
+W: chmod 0600 of file /var/lib/apt/lists/archive.ubuntu.com_ubuntu_dists_noble-updates_InRelease failed - Item::QueueURI (1: Operation not permitted)
+W: chmod 0644 of file /var/lib/apt/lists/archive.ubuntu.com_ubuntu_dists_noble-updates_InRelease failed - 201::URIDone (1: Operation not permitted)
+W: Problem unlinking the file /var/lib/apt/lists/partial/archive.ubuntu.com_ubuntu_dists_noble-backports_InRelease - PrepareFiles (13: Permission denied)
+W: chmod 0600 of file /var/lib/apt/lists/archive.ubuntu.com_ubuntu_dists_noble-backports_InRelease failed - Item::QueueURI (1: Operation not permitted)
+W: chmod 0644 of file /var/lib/apt/lists/archive.ubuntu.com_ubuntu_dists_noble-backports_InRelease failed - 201::URIDone (1: Operation not permitted)
+E: Unable to read /var/lib/apt/lists/partial/ - open (13: Permission denied)
+
+real	0m2.286s
+user	0m1.104s
+sys	0m0.179s

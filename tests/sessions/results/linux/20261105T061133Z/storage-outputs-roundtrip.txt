@@ -1,0 +1,6 @@
+write to outputs rc=0 ms=18142 MB/s=56.4
+read from outputs ms=621 MB/s=1646.5
+src=467adaba636acb89b3bca74399f77bed911802cec0dab086a955ba7357bb681b
+dst=467adaba636acb89b3bca74399f77bed911802cec0dab086a955ba7357bb681b
+CHECKSUM MATCH
+probe removed from outputs: yes
