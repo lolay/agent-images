@@ -102,7 +102,7 @@ no-new-privileges flag blocks. The CI identity can't read logs, so Gary pulled t
 log by hand.
 
 On this branch (restarted from `main`, with the old tip merged in `-s ours`, not
-force-pushed), not in PRs yet:
+force-pushed):
 - `c25541e`: the deploy prints a failed smoke execution's log. Needs
   `roles/logging.viewer` for `agent-images-ci`: `lolay/infrastructure` `16109d4` on
   its branch of the same name, `make ci` passing.
@@ -111,10 +111,11 @@ force-pushed), not in PRs yet:
   its uid/gid options (Cloud Run gave them uid 2000). Verified under Docker
   `--security-opt no-new-privileges`.
 
-Open question for Gary, verbatim: "The mac runs as root with no issue. so why not
-linux? Don't start until i give a go ahead." The alternative is running the linux
-image as root (apt works; Homebrew through a `runuser` wrapper; Claude Code as root
-untested). Don't start it, or open either PR, until Gary says go.
+Gary chose the no-root path (2026-11-05): sessions run as `ubuntu`, like the Linux
+host image. Open: [lolay/agent-images#14](https://github.com/lolay/agent-images/pull/14)
+(these commits) and [lolay/infrastructure#6](https://github.com/lolay/infrastructure/pull/6)
+(the log grant), both watched by this session. Merging #14 redeploys `linux` and the
+orchestrator; merging #6 first lets that deploy print a smoke failure's log.
 
 ## Steps that need Gary
 
