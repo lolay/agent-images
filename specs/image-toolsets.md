@@ -309,7 +309,7 @@ Steps for [gcp.md](gcp.md) m2, ahead of `gis` and `android`:
   (checked in the cloud build and on the hosted Android run).
 - s5 (done): rename `images/linux` to `images/android` and the alias to
   `agent-android` (Renames, above).
-- s6: `gis` on toolsets, as in the m2 plan, and the cloud images restructured
+- s6 (done): `gis` on toolsets, as in the m2 plan, and the cloud images restructured
   around it (Build wiring, above). The `gis` environment's activation is recorded as
   static exports from `pixi shell-hook --json`: the hook's own script sources
   completion files that fail under the entrypoint's `set -u`. No pins: when
