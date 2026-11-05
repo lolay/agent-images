@@ -18,12 +18,13 @@ List environment variable names only, never values, and fail the check if any na
 looks like a credential (`*KEY*`, `*TOKEN*`, `*SECRET*`, `*PASSWORD*`), except
 `SELF_HOSTED_RUNNER_*` and Claude's own session variables; note those separately.
 
-Check the session notice: the session should have opened with a line like "⚠ This
-runtime costs approximately $X/hour. It ends by <time> (in <duration>), or after 60
-min with no messages". Record the line as shown, `AGENT_COST_USD_PER_HOUR`,
-`AGENT_COST_DETAIL` and `AGENT_RETIRE_AT`. Pass if the line appeared, its cost
-matches the variable, and its end time is the earlier of the session limit from
-session start and `AGENT_RETIRE_AT`. Note whether it came from the hook's message or
+Check the session notice: the session should have opened with "⚠ This runtime costs
+approximately $X/hour" and "⚠ This session will time out after N minutes of
+inactivity, and ends by <time> at the latest (in <duration>)". Record the lines as
+shown, `AGENT_COST_USD_PER_HOUR`, `AGENT_COST_DETAIL`, `AGENT_RETIRE_AT` and the
+runner's idle and session limits. Pass if both lines appeared, the cost matches the
+variable, N matches the idle limit, and the end time is the earlier of the session
+limit from session start and `AGENT_RETIRE_AT`. Note whether it came from the hook's message or
 from Claude's first reply.
 
 ## 2. Storage

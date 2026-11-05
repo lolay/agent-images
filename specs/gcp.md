@@ -549,8 +549,9 @@ runner sets the same).
 runtime costs and when it will end, for example:
 
 ```
-⚠ This runtime costs approximately $8.99/hour. It ends by 6:42 PM PST (in 7 h 52 min),
-or after 60 min with no messages; push your work before then.
+⚠ This runtime costs approximately $8.99/hour.
+⚠ This session will time out after 60 minutes of inactivity, and ends by 6:42 PM PST
+at the latest (in 7 h 52 min). Push your work before then.
 ```
 
 A `CLAUDE.md` can't print anything on its own (it's instructions to Claude, not
@@ -571,9 +572,10 @@ the runner started, not only on settings. The session ends at the earliest of:
   task timeout (12 hours for GPU jobs) minus a margin, and exports as
   `AGENT_RETIRE_AT`. A standby that waited an hour for its session has an hour less,
   which is why the hook reads the real deadline instead of assuming the full limit;
-- the idle release, `--release-idle-session-min` (60): not an end so much as a
-  pause, since the session resumes on a fresh runner at the next message, but
-  unpushed work is gone.
+- the inactivity timeout, `--release-idle-session-min` (60): after that long with
+  no messages, the runner lets the session go. It resumes on a fresh runner at the
+  next message, but anything unpushed is gone, so the notice leads with it. The
+  minutes come from the type's settings, never hardcoded.
 
 The time shows in `AGENT_NOTICE_TZ` (in `infra/gcp/project.env`,
 `America/Los_Angeles`), with the time remaining beside it. Near the end, the runner's
