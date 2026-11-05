@@ -25,7 +25,7 @@ Cloud Run worker pool  (one instance, no GPU)
         │ spawn-runner: gcloud run jobs execute <type> --update-env-vars ...
         ▼
 Cloud Run job execution  (one per session)
-  agent-cloud-entrypoint → Xvfb (GPU types) → images/shared/runners/claude.sh
+  agent-cloud-entrypoint → Xvfb (`-gpu` types) → images/shared/runners/claude.sh
   registers with the work order, serves one session, exits → execution ends
 ```
 
@@ -41,7 +41,7 @@ Cloud Run job execution  (one per session)
 ## Runner types
 
 A runner type is one Claude environment. The environment is what you pick when
-starting a session, so it's the selector: "GPU", "GIS", "iOS", "Android" each show
+starting a session, so it's the selector: "Linux GPU", "GIS", "Mac", "Android" each show
 up in the session picker by name, and a session runs on whatever backs that
 environment. Types never share capacity, images or secrets.
 
@@ -50,22 +50,34 @@ Each type is four things, declared in `infra/gcp/<type>.env`:
 | Part | Per type |
 | --- | --- |
 | Claude environment and its secret | Created in claude.ai; the secret goes in Secret Manager as `claude-env-<type>` |
-| Image | `agent-<type>`, built `FROM` `agent-base` or `agent-gpu` plus the type's tools |
+| Image | `agent-<type>`, built `FROM` `agent-base` or `agent-base-gpu` plus the type's tools |
 | Backend | A Cloud Run job (`agent-<type>`) with its resources, or a Compute Engine template |
 | Orchestrator settings | `--min-idle`, `--expected-spawn-seconds`, runner flags |
 
 | Type | Image | Backend and resources | Standby |
 | --- | --- | --- | --- |
-| `cpu` | `agent-base` | Cloud Run job, 4 vCPU, 16 GiB | 1 (cheap, instant starts) |
-| `gpu` | `agent-gpu` | Cloud Run job, RTX PRO 6000, 20 vCPU, 80 GiB (that GPU's minimum); L4 for cheap tests | 0: a standby GPU bills the whole time |
+| `linux` | `agent-linux` (`agent-base` as is) | Cloud Run job, 4 vCPU, 16 GiB | 1 (cheap, instant starts) |
+| `linux-gpu` | `agent-linux-gpu` (`agent-base-gpu` as is) | Cloud Run job, RTX PRO 6000, 20 vCPU, 80 GiB (that GPU's minimum); L4 for cheap tests | 0: a standby GPU bills the whole time |
 | `gis` | `agent-gis` (from `agent-base`: GDAL, QGIS, PDAL) | Cloud Run job, CPU | 0 or 1 |
-| `3d` | `agent-3d` (from `agent-gpu`: COLMAP built for Blackwell, Blender) | Cloud Run job, RTX PRO 6000 | 0 |
+| `3d-gpu` | `agent-3d-gpu` (from `agent-base-gpu`: COLMAP built for Blackwell, Blender) | Cloud Run job, RTX PRO 6000 | 0 |
 | `android` | Compute Engine image | Compute Engine VM per session with nested virtualization (the fallback below); Cloud Run has no KVM | 0 |
-| `ios` | Not on GCP | agent-images' Macs (Tart), as today | Per host |
+| `mac` | Not on GCP | agent-images' Macs (Tart), as today: Mac development, iOS included | Per host |
 
-Mobile splits by platform: iOS needs macOS, which no GCP service runs, so it stays on
-the Macs; Android needs KVM, which Cloud Run doesn't give, so it's a VM. Both still
+Mobile splits by platform: iOS needs macOS, which no GCP service runs, so it's part of
+`mac`, on the Macs; Android needs KVM, which Cloud Run doesn't give, so it's a VM. Both still
 appear in the same session picker, because the picker lists environments, not clouds.
+
+**Naming.** A type is named for what the session is for, plus `-gpu` when it has
+one: `linux`, `linux-gpu`, `gis`, `3d-gpu`, `android`, `mac`. CPU is the default,
+so it isn't spelled out, and the suffix sits last so names sort by purpose and a GPU
+variant lands next to its CPU sibling (`gis`, later `gis-gpu`). The suffix matters in
+the picker, because a `-gpu` session costs an order of magnitude more. Other variants
+compose the same way if they come (`linux-arm64`). Every resource takes the type's
+name: environment "Agent: 3D (GPU)" in claude.ai, `infra/gcp/3d-gpu.env`, secret
+`claude-env-3d-gpu`, image and job `agent-3d-gpu`, `images/cloud/3d-gpu/`. The two
+build parents, `agent-base` and `agent-base-gpu`, aren't types and never deploy on
+their own. (`agent-linux` here is a Cloud Run image; the Linux host's LXD alias of
+the same name is the Android image, and would be clearer renamed `agent-android`.)
 
 **One worker pool for all orchestrators.** An orchestrator serves one environment,
 but it's a small stateless process. Instead of a worker pool per type, one pool (one
@@ -92,9 +104,9 @@ images/cloud/
   base/Dockerfile      ubuntu:24.04; images/linux/packages.txt; Homebrew + Brewfile
                        as the runner user; Claude Code native installer;
                        images/shared (runner, watchdog, Stop hook, ~/.claude seed)
-  gpu/Dockerfile       ARG BASE (CUDA 13.0 runtime on ubuntu:24.04), then the base
+  base-gpu/Dockerfile  ARG BASE (CUDA 13.0 runtime on ubuntu:24.04), then the base
                        layers; Xvfb, VirtualGL, mesa-utils, vulkan-tools; optional noVNC
-  <type>/Dockerfile    FROM agent-base or agent-gpu, adds the type's tools
+  <type>/Dockerfile    FROM agent-base or agent-base-gpu, adds the type's tools
   entrypoint.sh        start Xvfb when DISPLAY is wanted, then exec agent-runner
 ```
 
@@ -106,7 +118,7 @@ Choices, carried over from [design.md](design.md):
 - **One unprivileged user with passwordless sudo**, like `admin` and `ubuntu`, not
   root: sessions can install what a repo needs, and nothing outlives the execution.
 - **CUDA matches the host driver.** Cloud Run mounts its driver (580.x, CUDA 13.0) at
-  `/usr/local/nvidia/lib64`, so `agent-gpu` uses a CUDA 13.0 userland. Newer CUDA
+  `/usr/local/nvidia/lib64`, so `agent-base-gpu` uses a CUDA 13.0 userland. Newer CUDA
   needs NVIDIA's forward-compatibility package. Anything compiled (COLMAP, PyTorch
   extensions) must target compute capability 12.0 or carry PTX, or it fails on
   Blackwell.
@@ -158,7 +170,7 @@ matrix:
 | Path changed | Redeploys |
 | --- | --- |
 | `images/shared/**`, `images/linux/packages.txt`, `images/linux/Brewfile`, `images/cloud/base/**`, `images/cloud/entrypoint.sh` | Every runner type |
-| `images/cloud/gpu/**` | `gpu` and every type built `FROM` it |
+| `images/cloud/base-gpu/**` | Every `-gpu` type (each is built `FROM` it) |
 | `images/cloud/<type>/**`, including its `versions.lock` | That type |
 | `hooks/gcp/**`, `images/cloud/orchestrator/**` | The orchestrator worker pools (new image, then `gcloud run worker-pools update`) |
 | `infra/gcp/<type>.env` (CPU, memory, GPU, timeout, `--min-idle`) | That type's job and orchestrator settings, no image build |
@@ -202,7 +214,7 @@ zone since March 2026). It never deploys; it only proposes a commit:
 1. Resolve everything as above into a candidate lock, per type.
 2. Same as the lock on `main`: done, a minute or two of runner time.
 3. Different: commit the candidate lock to `main` with a message naming what moved
-   (`lock(gpu): claude 2.1.318, apt 3 packages`). That push starts the deploy.
+   (`lock(3d-gpu): claude 2.1.318, apt 3 packages`). That push starts the deploy.
 
 The lock on `main` is the desired state, and the deploy makes Cloud Run match it. If
 a deploy fails, `main` is ahead of what's live until it's fixed: the failed run
@@ -272,8 +284,8 @@ deploy, and keeps the "track latest" promise even if a check is wrong.
 
 ### Standbys
 
-Only the CPU type keeps one (`--min-idle 1`), and it runs with `--exit-if-unused-min 60`,
-so a standby is never more than an hour older than the newest image. GPU types keep
+Only `linux` keeps one (`--min-idle 1`), and it runs with `--exit-if-unused-min 60`,
+so a standby is never more than an hour older than the newest image. `-gpu` types keep
 none. No recycling job needed.
 
 ### Keep one image, keep the history
@@ -285,12 +297,12 @@ none. No recycling job needed.
   lasts only until the next watch re-proposes the newer version, so pair it with a pin
   on whatever broke (below).
 - **History in git, logs on GitHub.** The lock's history is the permanent record of
-  what every image contained, and `git log -p images/cloud/gpu/versions.lock` shows
+  what every image contained, and `git log -p images/cloud/3d-gpu/versions.lock` shows
   what changed and when. Build logs, with the full `dpkg-query -W` and
   `brew list --versions` output, keep 90 days in Actions (a public repo's maximum) and
   are public, which is fine: builds hold no secrets.
 
-Make targets in the same vocabulary as the rest: `make cloud-lock TYPE=gpu` (resolve
+Make targets in the same vocabulary as the rest: `make cloud-lock TYPE=3d-gpu` (resolve
 locally, show the diff), `make cloud-build`, `make cloud-publish`, `make cloud-promote`,
 `make cloud-status`.
 
@@ -398,7 +410,7 @@ If Cloud Run can't render, or a type needs Docker in the session, a full GPU des
 or nested virtualization:
 
 - **Image:** Packer's `googlecompute` builder, provisioned by the same scripts as the
-  LXD image, plus NVIDIA's driver on GPU types. A Compute Engine image instead of a
+  LXD image, plus NVIDIA's driver on `-gpu` types. A Compute Engine image instead of a
   container; same `-next` promotion.
 - **Hook:** `gcloud compute instances create` from an instance template (G4 for
   RTX PRO 6000, fractional sizes available; N2/C3 for CPU), the work order in instance
@@ -416,13 +428,13 @@ That's more to own (driver, OS image), which is why it's the fallback, not the s
 
 ### m1 - CPU runner by hand
 
-`agent-base` image, a Cloud Run job, an environment secret, and `claude
+`agent-linux` image, a Cloud Run job, an environment secret, and `claude
 self-hosted-runner` started by a manual execution with the real secret. Proves the
 image, the Stop hook and the git proxy in Cloud Run.
 
 ### m2 - GPU spike
 
-`agent-gpu` on an L4 first (cheaper), then RTX PRO 6000: `nvidia-smi`, CUDA probe,
+`agent-linux-gpu` on an L4 first (cheaper), then RTX PRO 6000: `nvidia-smi`, CUDA probe,
 `eglinfo` and `vulkaninfo` against Xvfb, a Blender EEVEE render, a computer-use
 screenshot of a GL app. Measure cold start. Decides Cloud Run or the fallback.
 
