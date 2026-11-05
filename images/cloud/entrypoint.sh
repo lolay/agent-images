@@ -10,6 +10,7 @@
 #
 # From the job (scripts/cloud/job-spec.sh renders these from infra/gcp/<type>.env):
 #   AGENT_TYPE, AGENT_TASK_TIMEOUT_SEC, AGENT_RETIRE_MARGIN_SEC, AGENT_NOTICE_TZ,
+#   AGENT_OUTPUTS_BUCKET (for the gs:// path the SessionStart hook shows),
 #   CLAUDE_EXIT_IF_UNUSED_MIN, CLAUDE_RELEASE_IDLE_SESSION_MIN,
 #   CLAUDE_KILL_SESSION_AFTER_MIN
 # From the hook, per execution:

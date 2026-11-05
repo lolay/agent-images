@@ -24,13 +24,18 @@ inactivity, and ends by <time> at the latest (in <duration>)". Record the lines 
 shown, `AGENT_COST_USD_PER_HOUR`, `AGENT_COST_DETAIL`, `AGENT_RETIRE_AT` and the
 runner's idle and session limits. Pass if both lines appeared, the cost matches the
 variable, N matches the idle limit, and the end time is the earlier of the session
-limit from session start and `AGENT_RETIRE_AT`. Note whether it came from the hook's message or
-from Claude's first reply.
+limit from session start and `AGENT_RETIRE_AT`. If `AGENT_COST_USD_PER_HOUR` isn't
+set (the deploy doesn't look prices up yet), record the cost line as skipped and
+judge the check on the time line alone. Note whether it came from the hook's message
+or from Claude's first reply.
 
 ## 2. Storage
 
 Record `$AGENT_SCRATCH`, `$AGENT_OUTPUTS` and `$AGENT_DATASETS`, what's mounted at
-each (`findmnt`), and the free space on each. Pass if `$AGENT_OUTPUTS` ends in this
+each (`findmnt`), and the free space on each. Record which variable the session id
+came from (the start-of-session facts say) and the values of
+`CLAUDE_CODE_REMOTE_SESSION_ID` and `CLAUDE_CODE_SESSION_ID` if set (ids, not
+secrets). Pass if `$AGENT_OUTPUTS` ends in this
 session's id, and if what you were told about storage at the start of the session
 (the image's `CLAUDE.md` and the start-of-session facts) matches what you find.
 Then:

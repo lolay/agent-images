@@ -240,7 +240,7 @@ Done: unit tests pass; `docker run --rm -v <tmpdir>:/scratch agent-linux smoke`
 passes the checks that don't need the buckets (outputs and datasets mounted as local
 dirs, datasets read-only).
 
-#### s6 - [exec] Session storage: CLAUDE.md and the SessionStart hook
+#### s6 - [exec] Session storage: CLAUDE.md and the SessionStart hook (done)
 
 - `images/cloud/base/claude/CLAUDE.md`: "This machine" for Cloud Run (disposable
   container, `ubuntu` with sudo, no Android, no display), the spec's Storage and
