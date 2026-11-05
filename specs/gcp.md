@@ -142,7 +142,9 @@ images/cloud/
   base-gpu/Dockerfile  ARG BASE (CUDA 13.0 runtime on ubuntu:24.04), then the base
                        layers; Xvfb, VirtualGL, mesa-utils, vulkan-tools; optional noVNC
   <type>/Dockerfile    FROM agent-base or agent-base-gpu, adds the type's tools
-  entrypoint.sh        start Xvfb when DISPLAY is wanted, then exec agent-runner
+  entrypoint.sh        set AGENT_SCRATCH, AGENT_OUTPUTS (with the session id) and
+                       AGENT_DATASETS, point CLAUDE_BASE_DIR at /scratch/workspace,
+                       start Xvfb when DISPLAY is wanted, then exec agent-runner
 ```
 
 Choices, carried over from [design.md](design.md):
