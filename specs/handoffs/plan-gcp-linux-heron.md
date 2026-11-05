@@ -348,7 +348,7 @@ starts and stops cleanly within the budget.
 Done: unit tests pass; `job-spec.sh linux <digest>` output checked against the v2
 schema's field names (the discovery document).
 
-#### s10 - [exec] Workflows
+#### s10 - [exec] Workflows (done)
 
 - `.github/workflows/cloud-deploy.yml`: `push` to `main` and `workflow_dispatch`
   (targets, or `all`). Job `plan` (no `environment`, `contents: read`,

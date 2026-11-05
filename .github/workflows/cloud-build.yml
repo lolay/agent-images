@@ -1,0 +1,36 @@
+# Build-only check for pull requests that touch the GCP runners: lint, the unit
+# tests, and a build of every cloud image, with no push and no GCP credentials
+# (specs/gcp.md, "Only main deploys"). It has no id-token permission and no
+# environment, so it couldn't get a GCP token if it tried.
+name: cloud-build
+
+on:
+  pull_request:
+    paths:
+      - images/cloud/**
+      - images/shared/**
+      - images/linux/packages.txt
+      - images/linux/Brewfile
+      - images/linux/scripts/install-packages.sh
+      - hooks/gcp/**
+      - infra/gcp/**
+      - scripts/cloud/**
+      - tests/unit/**
+      - .dockerignore
+      - Makefile
+      - .github/workflows/cloud-*.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install tools
+        run: sudo apt-get install -y --no-install-recommends shellcheck shfmt
+      - uses: docker/setup-buildx-action@v4.4.1
+      - name: Gate
+        run: make cloud-ci CLAUDE_VERSION="$(curl -fsSL https://downloads.claude.ai/claude-code-releases/latest)"

@@ -4,9 +4,10 @@
 #   changed-targets.sh <base> <head>    the targets the diff touches
 #   changed-targets.sh --all            every target
 #
-# Prints {"types": [{"type": "linux", "build": true}, ...], "orchestrator": bool}.
-# build is false when only the type's env file changed: the deploy rewrites the
-# job and reuses the live image. A base that isn't a commit here (none yet, or
+# Prints {"types": [{"type": "linux", "build": true}, ...], "orchestrator": bool,
+# "prune": bool}. build is false when only the type's env file changed: the
+# deploy rewrites the job and reuses the live image. prune is true when a type's
+# env file was deleted, so its jobs go too. A base that isn't a commit here (none yet, or
 # gone after a force push) means everything. Run from the repo root.
 set -euo pipefail
 
@@ -29,7 +30,11 @@ AGENT_GCP_ENV_DIR=infra/gcp
 mapfile -t types < <(gcp_types)
 
 changed=()
-$all || mapfile -t changed < <(git diff --name-only "$base" "$head")
+deleted=()
+if ! $all; then
+	mapfile -t changed < <(git diff --name-only "$base" "$head")
+	mapfile -t deleted < <(git diff --name-only --diff-filter=D "$base" "$head" -- 'infra/gcp/*.env')
+fi
 
 touched() {
 	local pattern path
@@ -80,5 +85,10 @@ if $all || touched "hooks/gcp/*" "images/cloud/orchestrator/*" "infra/gcp/*.env"
 	orchestrator=true
 fi
 
-printf '%s\n' "${entries[@]}" | jq -cs --argjson orchestrator "$orchestrator" \
-	'{types: map(select(. != null)), orchestrator: $orchestrator}'
+prune=false
+if $all || ((${#deleted[@]} > 0)); then
+	prune=true
+fi
+
+printf '%s\n' "${entries[@]}" | jq -cs --argjson orchestrator "$orchestrator" --argjson prune "$prune" \
+	'{types: map(select(. != null)), orchestrator: $orchestrator, prune: $prune}'

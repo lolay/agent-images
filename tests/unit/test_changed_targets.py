@@ -75,7 +75,7 @@ class ChangedTargetsTests(unittest.TestCase):
         return self.targets()
 
     def test_docs_deploy_nothing(self):
-        self.assertEqual(self.change("specs/gcp.md"), {"types": [], "orchestrator": False})
+        self.assertEqual(self.change("specs/gcp.md"), {"types": [], "orchestrator": False, "prune": False})
 
     def test_shared_files_rebuild_every_type(self):
         result = self.change("images/shared/agent-runner.sh")
@@ -87,7 +87,9 @@ class ChangedTargetsTests(unittest.TestCase):
 
     def test_a_types_directory_rebuilds_only_it(self):
         result = self.change("images/cloud/linux/Dockerfile")
-        self.assertEqual(result, {"types": [{"type": "linux", "build": True}], "orchestrator": False})
+        self.assertEqual(
+            result, {"types": [{"type": "linux", "build": True}], "orchestrator": False, "prune": False}
+        )
 
     def test_a_build_parent_rebuilds_its_children_up_the_chain(self):
         self.assertEqual(
@@ -102,7 +104,9 @@ class ChangedTargetsTests(unittest.TestCase):
 
     def test_an_env_file_rewrites_the_job_and_the_orchestrator(self):
         result = self.change("infra/gcp/linux.env")
-        self.assertEqual(result, {"types": [{"type": "linux", "build": False}], "orchestrator": True})
+        self.assertEqual(
+            result, {"types": [{"type": "linux", "build": False}], "orchestrator": True, "prune": False}
+        )
 
     def test_project_env_redeploys_everything(self):
         result = self.change("infra/gcp/project.env")
@@ -111,7 +115,7 @@ class ChangedTargetsTests(unittest.TestCase):
         self.assertTrue(result["orchestrator"])
 
     def test_the_hook_redeploys_the_orchestrator_only(self):
-        self.assertEqual(self.change("hooks/gcp/spawn-runner"), {"types": [], "orchestrator": True})
+        self.assertEqual(self.change("hooks/gcp/spawn-runner"), {"types": [], "orchestrator": True, "prune": False})
 
     def test_the_job_spec_rewrites_every_job(self):
         result = self.change("scripts/cloud/job-spec.sh")
@@ -133,8 +137,17 @@ class ChangedTargetsTests(unittest.TestCase):
             {
                 "types": [{"type": "linux", "build": True}, {"type": "linux-gpu", "build": True}],
                 "orchestrator": True,
+                "prune": True,
             },
         )
+
+    def test_deleting_a_type_prunes_and_redeploys_the_orchestrator(self):
+        self.git("rm", "-q", "infra/gcp/linux-gpu.env")
+        self.commit("drop linux-gpu")
+        result = self.targets()
+        self.assertTrue(result["prune"])
+        self.assertTrue(result["orchestrator"])
+        self.assertEqual(result["types"], [])
 
 
 if __name__ == "__main__":

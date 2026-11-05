@@ -1,0 +1,229 @@
+# Deploys the GCP runners from main (specs/gcp.md, "Image pipeline"). Only main
+# deploys, enforced three ways: this workflow runs on a push to main or a manual
+# dispatch; the jobs that touch GCP run in the production environment, whose
+# branch policy allows main only; and the workload identity provider accepts
+# only this repo's id with ref refs/heads/main and environment production. A job
+# without `environment: production` gets no GCP token at all, so plan has no
+# id-token permission.
+name: cloud-deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: "What to deploy: all, or types and/or orchestrator, space-separated (linux orchestrator)"
+        required: true
+        default: all
+      no-cache:
+        description: "Build without the layer cache (picks up apt and Homebrew updates)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Queue, never cancel: a cancelled deploy would leave its push undeployed. plan
+# diffs against the last successful push deploy, so a run GitHub drops from the
+# queue is covered by the next one.
+concurrency:
+  group: cloud-deploy
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      types: ${{ steps.targets.outputs.types }}
+      has-types: ${{ steps.targets.outputs.has-types }}
+      orchestrator: ${{ steps.targets.outputs.orchestrator }}
+      prune: ${{ steps.targets.outputs.prune }}
+      claude-version: ${{ steps.claude.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Targets
+        id: targets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REQUESTED: ${{ inputs.targets }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT" == workflow_dispatch ]]; then
+            plan="$(scripts/cloud/changed-targets.sh --all)"
+            if [[ "$REQUESTED" != all ]]; then
+              plan="$(jq -c --arg requested "$REQUESTED" '
+                ($requested | split(" ") | map(select(. != ""))) as $names
+                | {types: [.types[] | select(.type as $type | $names | index($type))],
+                   orchestrator: ($names | index("orchestrator") != null),
+                   prune: false}' <<<"$plan")"
+            fi
+          else
+            base="$(gh run list --workflow cloud-deploy.yml --branch main --event push \
+              --status success --limit 1 --json headSha --jq '.[0].headSha // ""')"
+            echo "Diffing from the last successful push deploy: ${base:-none}"
+            plan="$(scripts/cloud/changed-targets.sh "$base" "$GITHUB_SHA")"
+          fi
+          echo "$plan" | jq .
+          {
+            echo "types=$(jq -c '{include: .types}' <<<"$plan")"
+            echo "has-types=$(jq '.types | length > 0' <<<"$plan")"
+            echo "orchestrator=$(jq '.orchestrator' <<<"$plan")"
+            echo "prune=$(jq '.prune' <<<"$plan")"
+          } >>"$GITHUB_OUTPUT"
+      # The layer cache would otherwise keep the first Claude Code it installed:
+      # the version is part of the build, so a new release rebuilds that layer.
+      - name: Claude Code version
+        id: claude
+        run: echo "version=$(curl -fsSL https://downloads.claude.ai/claude-code-releases/latest)" >>"$GITHUB_OUTPUT"
+
+  types:
+    needs: plan
+    if: needs.plan.outputs.has-types == 'true'
+    runs-on: ubuntu-24.04
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.types) }}
+    name: type (${{ matrix.type }})
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Project settings
+        run: grep -E '^[A-Z_]+=' infra/gcp/project.env >>"$GITHUB_ENV"
+      - uses: google-github-actions/auth@v3.0.0
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.CI_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3.0.1
+      - name: Registry login
+        if: matrix.build
+        run: gcloud auth configure-docker "${ARTIFACT_REGISTRY%%/*}" --quiet
+      - name: Tag
+        id: tag
+        run: echo "tag=$(date -u +%Y%m%d)-${GITHUB_SHA::12}" >>"$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v4.4.1
+        if: matrix.build
+      - name: Build and push
+        id: bake
+        if: matrix.build
+        uses: docker/bake-action@v7.5.0
+        env:
+          REGISTRY: ${{ env.ARTIFACT_REGISTRY }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          CLAUDE_VERSION: ${{ needs.plan.outputs.claude-version }}
+        with:
+          source: .
+          files: images/cloud/docker-bake.hcl
+          targets: ${{ matrix.type }}
+          push: true
+          # One image manifest, not an index with attestations: the digest is
+          # what Cloud Run runs and what the job records.
+          provenance: false
+          sbom: false
+          no-cache: ${{ inputs.no-cache == true }}
+          set: |
+            base.cache-from=type=gha,scope=base
+            base.cache-to=type=gha,mode=max,scope=base
+            ${{ matrix.type }}.cache-from=type=gha,scope=${{ matrix.type }}
+            ${{ matrix.type }}.cache-to=type=gha,mode=max,scope=${{ matrix.type }}
+      - name: Smoke and promote
+        env:
+          TYPE: ${{ matrix.type }}
+          BUILD: ${{ matrix.build }}
+          METADATA: ${{ steps.bake.outputs.metadata }}
+        run: |
+          set -euo pipefail
+          if [[ "$BUILD" == true ]]; then
+            digest="$(jq -er --arg target "$TYPE" '.[$target]["containerimage.digest"]' <<<"$METADATA")"
+            image="$ARTIFACT_REGISTRY/agent-$TYPE@$digest"
+          else
+            image=--live
+          fi
+          scripts/cloud/deploy.sh type "$TYPE" "$image" "$GITHUB_SHA"
+          echo "agent-$TYPE: $image" >>"$GITHUB_STEP_SUMMARY"
+
+  # After the types, so a first deploy creates the job before the orchestrator
+  # can spawn into it; skipped if a type failed, and the next push retries both.
+  orchestrator:
+    needs: [plan, types]
+    if: >-
+      always() && needs.plan.result == 'success' && needs.plan.outputs.orchestrator == 'true'
+      && (needs.types.result == 'success' || needs.types.result == 'skipped')
+    runs-on: ubuntu-24.04
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Project settings
+        run: grep -E '^[A-Z_]+=' infra/gcp/project.env >>"$GITHUB_ENV"
+      - uses: google-github-actions/auth@v3.0.0
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.CI_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3.0.1
+      - name: Registry login
+        run: gcloud auth configure-docker "${ARTIFACT_REGISTRY%%/*}" --quiet
+      - name: Tag
+        id: tag
+        run: echo "tag=$(date -u +%Y%m%d)-${GITHUB_SHA::12}" >>"$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v4.4.1
+      - name: Build and push
+        id: bake
+        uses: docker/bake-action@v7.5.0
+        env:
+          REGISTRY: ${{ env.ARTIFACT_REGISTRY }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          CLAUDE_VERSION: ${{ needs.plan.outputs.claude-version }}
+        with:
+          source: .
+          files: images/cloud/docker-bake.hcl
+          targets: orchestrator
+          push: true
+          provenance: false
+          sbom: false
+          no-cache: ${{ inputs.no-cache == true }}
+          set: |
+            orchestrator.cache-from=type=gha,scope=orchestrator
+            orchestrator.cache-to=type=gha,mode=max,scope=orchestrator
+      - name: Point the VM at it
+        env:
+          METADATA: ${{ steps.bake.outputs.metadata }}
+        run: |
+          set -euo pipefail
+          digest="$(jq -er '.orchestrator["containerimage.digest"]' <<<"$METADATA")"
+          scripts/cloud/deploy.sh orchestrator "$ARTIFACT_REGISTRY/agent-orchestrator@$digest"
+          echo "agent-orchestrator: $ARTIFACT_REGISTRY/agent-orchestrator@$digest" >>"$GITHUB_STEP_SUMMARY"
+
+  prune:
+    needs: [plan, types, orchestrator]
+    if: >-
+      always() && needs.plan.result == 'success' && needs.plan.outputs.prune == 'true'
+      && needs.types.result != 'failure' && needs.orchestrator.result != 'failure'
+    runs-on: ubuntu-24.04
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Project settings
+        run: grep -E '^[A-Z_]+=' infra/gcp/project.env >>"$GITHUB_ENV"
+      - uses: google-github-actions/auth@v3.0.0
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.CI_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3.0.1
+      - name: Delete jobs whose type is gone
+        run: scripts/cloud/deploy.sh prune
