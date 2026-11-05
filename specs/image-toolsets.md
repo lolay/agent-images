@@ -164,6 +164,64 @@ Left out, superseded: fiona (pyogrio is geopandas' default), rtree (shapely 2's
 STRtree), entwine's EPT (COPC through untwine). Code that still imports them can
 `pixi add` them.
 
+The Spirula decision waits on the `linux-gpu` test in m3, which checks Vulkan on
+Cloud Run's GPUs (`vulkaninfo` on the RTX PRO 6000). If Vulkan runs there, Spirula
+Studio goes in `3d-gpu`'s toolset; if not, it needs the Compute Engine GPU path.
+
+### `gis` on QGIS 4 or QGIS 3
+
+Measured 2026-11-05, solving `gis/pixi.toml` against conda-forge in the image. QGIS
+4 is the current line, on Qt 6; 3.44 is the newest 3.x conda-forge solved to. conda-forge's newest
+builds can't load everything at once: GDAL's and PDAL's TileDB plugins link
+`aws-c-s3` 1.1, while `hdf5` 2.2 and `aws-crt-cpp` hold it below 1.1, and QGIS 4's
+MDAL provider links `hdf5` 1.14. No pin fixes all of it on QGIS 4; the one that
+loads everything takes the whole stack back to QGIS 3.
+
+| | `gis` as built (newest) | QGIS 3 (`tiledb < 2.30.1`) |
+| --- | --- | --- |
+| QGIS | 4.2.3 (Qt 6, PyQt6) | 3.44.7 (Qt 5, PyQt5) |
+| GDAL | 3.13.3 | 3.12.2 |
+| PDAL | 2.10.2 | 2.10.0 |
+| HDF5 | 2.2 | 1.14.6 |
+| Python | 3.14 | 3.14 |
+| Plugins that don't load | 4, dropped at build: GDAL TileDB, PDAL TileDB reader and writer, QGIS MDAL (mesh layers) | none |
+| QGIS Python plugins | Only those ported to Qt 6 | The whole QGIS 3 plugin ecosystem |
+| Fixes itself | Yes: once conda-forge's builds agree, nothing is dropped | No: the pin stays until someone removes it |
+
+What the dropped plugins cost: TileDB arrays (rare in GIS work, more common in
+genomics and some point-cloud archives), and QGIS mesh layers (MDAL: UGRID, 2DM,
+NetCDF meshes from hydraulic and climate models). Rasters, vectors, LAS, LAZ, COPC,
+EPT and every format GDAL reads without TileDB are unaffected.
+
+`gis` stays on the newest. The case for QGIS 3 is a repo that needs one of those:
+a QGIS 3 Python plugin not yet ported to Qt 6, mesh layers, or TileDB.
+
+### Plan: `gis-qgis3`, if a repo needs it
+
+A variant type, named by the convention in [gcp.md](gcp.md) (purpose, then variant,
+so it sorts next to `gis`). Not built until a repo needs it.
+
+- s1: `images/toolsets/gis/pixi.qgis3.toml`, the same manifest plus
+  `tiledb = "<2.30.1"` (what was measured: it alone solves to QGIS 3.44.7) and
+  `qgis = "3.*"` (not measured: it keeps a later solve from drifting to QGIS 4),
+  with a comment saying why. `install.sh` takes
+  `GIS_MANIFEST` (default `pixi.toml`) so one toolset serves both, and the
+  dropped-plugins step stays: it should drop nothing here, and the smoke check
+  reports the count.
+- s2: `images/cloud/gis-qgis3/Dockerfile`, the `gis` Dockerfile with
+  `ARG GIS_MANIFEST=pixi.qgis3.toml` before the gis layer; bake targets
+  `gis-qgis3-tools` and `gis-qgis3`; `infra/gcp/gis-qgis3.env` copied from `gis.env`.
+- s3: in `check.txt`, a QGIS major check that reads the expected major from the
+  manifest, so `gis` asserts 4 and `gis-qgis3` asserts 3.
+- s4: build, smoke, and run [tests/sessions/gis.md](../tests/sessions/gis.md) on it;
+  in claude.ai, the "Agent: GIS (QGIS 3)" environment and its secret
+  `claude-env-gis-qgis3`.
+- Retire it when the repo that needed it moves to QGIS 4, or when conda-forge's
+  builds agree and the plugin it needed loads on `gis`.
+
+Expect it to drift: each build re-solves, and the `tiledb` pin was measured once. If a later solve breaks it, the smoke check's import test fails
+the build rather than shipping it.
+
 ### Rust in `gis` or `3d-gpu`
 
 Not in the image. rustup is user space and installs stable in well under a minute on
