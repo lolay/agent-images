@@ -1,0 +1,104 @@
+#!/bin/bash
+# Orchestrator hook for GCP; the counterpart of hooks/linux/spawn-runner
+# (specs/gcp.md, "The hook"). `claude self-hosted-runner orchestrator` runs it
+# once per queued session that needs a runner, and once per missing standby
+# (--min-idle). It starts one execution of the type's Cloud Run job, agent-<type>,
+# with the work order as an env override, and returns without waiting for it.
+#
+# The supervisor sets RUNNER_TYPE and runs one orchestrator per type, each with
+# this hooks directory. Calls go to the Storage and Cloud Run REST APIs with curl
+# and the VM's metadata-server token (hooks/gcp/lib.sh); no gcloud.
+#
+# Exit codes (the orchestrator's contract): 0 submitted or already submitted;
+# 1 retry later; 2 don't retry (this setup is broken: no job, no permission, no
+# env file). stderr's tail shows in the environment's Activity tab, so it never
+# carries the work order, the token or a request body.
+set -euo pipefail
+
+# The orchestrator's own credential; nothing downstream of this hook needs it.
+unset SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET
+
+hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly hook_dir
+# shellcheck source=hooks/gcp/lib.sh
+source "$hook_dir/lib.sh"
+
+log() { printf 'agent-images: %s\n' "$*"; }
+
+failed_on_purpose=false
+marker_url=""
+token=""
+
+fail() {
+	printf 'agent-images: %s\n' "$2" >&2
+	failed_on_purpose=true
+	exit "$1"
+}
+
+# 403 and 404 mean the job or a permission is missing, which a retry won't fix.
+fail_for_status() {
+	local what="$1"
+	case "$GCP_STATUS" in
+	403 | 404) fail 2 "$what: HTTP $GCP_STATUS: $(gcp_error)" ;;
+	*) fail 1 "$what: HTTP $GCP_STATUS: $(gcp_error)" ;;
+	esac
+}
+
+# Any failure after the marker exists deletes it, so a retry can submit again.
+# An unexpected error (set -e) could exit 2 or more, which the orchestrator
+# reads as "never retry", so it maps to 1.
+on_exit() {
+	local status=$?
+	((status == 0)) && return
+	if [[ -n "$marker_url" ]]; then
+		gcp_call "$token" DELETE "$marker_url"
+		[[ "$GCP_STATUS" == 2* || "$GCP_STATUS" == 404 ]] ||
+			printf 'agent-images: could not delete the order marker (HTTP %s)\n' "$GCP_STATUS" >&2
+	fi
+	if ! $failed_on_purpose; then
+		printf 'agent-images: spawn-runner failed (exit %s); see the orchestrator log\n' "$status" >&2
+		exit 1
+	fi
+}
+trap on_exit EXIT
+
+: "${CLAUDE_RUNNER_WORK_ORDER_FILE:?}" "${CLAUDE_RUNNER_ORDER_ID:?}"
+[[ -n "${RUNNER_TYPE:-}" ]] || fail 2 "RUNNER_TYPE is not set; the supervisor sets it"
+readonly order_id="$CLAUDE_RUNNER_ORDER_ID"
+gcp_load_env "$RUNNER_TYPE" || fail 2 "no infra/gcp/project.env or $RUNNER_TYPE.env in the image"
+: "${PROJECT_ID:?}" "${REGION:?}" "${ORDER_BUCKET:?}"
+[[ -s "$CLAUDE_RUNNER_WORK_ORDER_FILE" ]] || fail 1 "the work order file is empty"
+
+token="$(gcp_token)" || fail 1 "no access token from the metadata server"
+
+# 1. The marker: one execution per order, however often it's redelivered.
+readonly object="orders/$order_id"
+gcp_call "$token" POST \
+	"$GCP_STORAGE_URL/upload/storage/v1/b/$ORDER_BUCKET/o?uploadType=media&ifGenerationMatch=0&name=$(gcp_uri "$object")" - \
+	< <(jq -cn --arg type "$RUNNER_TYPE" --arg session "${CLAUDE_RUNNER_SESSION_ID:-}" \
+		'{type: $type, session: $session}')
+case "$GCP_STATUS" in
+2*) marker_url="$GCP_STORAGE_URL/storage/v1/b/$ORDER_BUCKET/o/$(gcp_uri "$object")" ;;
+412)
+	log "order $order_id already has an execution"
+	exit 0
+	;;
+*) fail_for_status "creating gs://$ORDER_BUCKET/$object" ;;
+esac
+
+# 2. One execution, the work order and label as container env overrides. The
+#    body goes in on stdin, built from the file, so the work order is in no
+#    command line.
+label="$RUNNER_TYPE-${order_id:0:8}"
+label="${label,,}"
+readonly job="agent-$RUNNER_TYPE"
+gcp_call "$token" POST "$GCP_RUN_URL/v2/projects/$PROJECT_ID/locations/$REGION/jobs/$job:run" - \
+	< <(jq -cn --rawfile order "$CLAUDE_RUNNER_WORK_ORDER_FILE" --arg label "$label" '
+		{overrides: {containerOverrides: [{name: "runner", env: [
+			{name: "SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET", value: ($order | rtrimstr("\n"))},
+			{name: "RUNNER_LABEL", value: $label}
+		]}]}}')
+[[ "$GCP_STATUS" == 2* ]] || fail_for_status "running $job"
+
+execution="$(jq -r '.metadata.name // .name // "?"' <<<"$GCP_BODY" 2>/dev/null || echo '?')"
+log "$label: started ${execution##*/} for order $order_id${CLAUDE_RUNNER_SESSION_ID:+ (session $CLAUDE_RUNNER_SESSION_ID)}"

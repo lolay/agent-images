@@ -266,7 +266,7 @@ the variable, outputs not mounted still exits 0.
 Done: unit tests pass; in the built image, the hook run by hand with a sample payload
 prints valid JSON.
 
-#### s7 - [exec] `hooks/gcp/spawn-runner`
+#### s7 - [exec] `hooks/gcp/spawn-runner` (done)
 
 - `hooks/gcp/lib.sh`: load `project.env` and the type's env; `gcp_token` from the
   metadata server; `gcp_call METHOD URL [body on stdin]` with the token passed as a
