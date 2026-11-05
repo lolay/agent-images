@@ -102,8 +102,21 @@ one layer.
 
 Everything runs in GitHub Actions on hosted runners, free for a public repo. Images go
 one way: built on GitHub, pushed into Artifact Registry (ingress, free), never pulled
-back out. Workload identity federation, pinned to the repo's numeric id, signs the
-pushes; fork pull requests get no OIDC token, so they can't push.
+back out.
+
+**Only `main` deploys.** Every change to what runs in Cloud Run is a commit on `main`:
+a lock update from the watch, a change to `images/cloud` or `images/shared`, or a
+revert. A push to `main` runs the deploy workflow; nothing else pushes images or
+updates jobs. Enforced in three places, so one mistake doesn't open it up:
+
+- The deploy workflow triggers on `push` to `main` (paths `images/cloud/**`,
+  `images/shared/**`) and `workflow_dispatch`, and its job runs in a GitHub
+  environment, `production`, whose deployment branch policy allows only `main`.
+- The workload identity provider's attribute condition accepts only this repo's
+  numeric id with `ref` `refs/heads/main` and that environment, so a token from any
+  other branch, pull request or fork can't get GCP credentials at all.
+- Pull requests that touch the images run a build-only check: build, no push, no GCP
+  credentials.
 
 ### The lock
 
@@ -133,25 +146,37 @@ is about 30 MB, from a public registry.
 ### Watch: hourly, 08:00 to 22:00 Pacific
 
 `cron: '17 8-22 * * *'` with `timezone: America/Los_Angeles` (schedules take a time
-zone since March 2026). One job per type, in a `concurrency` group so runs never
-overlap:
+zone since March 2026). It never deploys; it only proposes a commit:
 
-1. Resolve everything as above into a candidate lock.
-2. Same as the committed lock: done, a minute or two of runner time.
-3. Different: build from the candidate, push, smoke-test, promote (below), and only
-   then commit the candidate lock to `main` with a message naming what moved
-   (`lock(gpu): claude 2.1.318, apt 3 packages`). The lock in git always matches the
-   live image, because it's written after promotion.
+1. Resolve everything as above into a candidate lock, per type.
+2. Same as the lock on `main`: done, a minute or two of runner time.
+3. Different: commit the candidate lock to `main` with a message naming what moved
+   (`lock(gpu): claude 2.1.318, apt 3 packages`). That push starts the deploy.
 
-Two GitHub details: a push made with `GITHUB_TOKEN` doesn't start other workflows,
-which is what we want here (the build already ran); and if `main` has a ruleset
-requiring pull requests, the workflow needs a bypass for these commits, or the lock
-goes through an auto-merged pull request instead.
+The lock on `main` is the desired state, and the deploy makes Cloud Run match it. If
+a deploy fails, `main` is ahead of what's live until it's fixed: the failed run
+notifies, the watch doesn't re-propose a lock that's already on `main`, and the
+nightly build retries.
 
-Expect one or two builds a day: Claude most weekdays, apt security updates a few
+The commit needs a GitHub App token (`actions/create-github-app-token`), not
+`GITHUB_TOKEN`: a push made with `GITHUB_TOKEN` doesn't start other workflows, so the
+deploy would never run. Two ways in, given a ruleset that requires pull requests on
+`main`:
+
+- **Direct commit (recommended):** the App is the ruleset's only bypass actor, and it
+  can only change `versions.lock` files (the workflow checks the diff before pushing).
+  Deploys follow upstream within the hour.
+- **Pull request with auto-merge:** the App opens or updates one `lock` pull request;
+  the build-only check runs; auto-merge squashes it. A review point, at the cost of a
+  few more minutes per release and a PR on most weekdays.
+
+Expect one or two deploys a day: Claude most weekdays, apt security updates a few
 times a week, Homebrew less.
 
-### Build, smoke, promote
+### Deploy: build, smoke, promote
+
+Runs only for a push to `main` (or a manual dispatch on `main`), one type at a time
+in a `concurrency` group that queues rather than cancels.
 
 Layer caching through the Actions cache (`cache-to type=gha`), not the registry, so a
 build reads nothing back from GCP. The cache holds 10 GB per repo, so a CUDA image may
@@ -159,9 +184,10 @@ miss and rebuild in full; that costs time, not money. Hosted runners have about 
 of free disk, so GPU builds clear the runner's preinstalled toolchains first, the
 usual step for large images.
 
-Every build follows the `-next` pattern from `build-image.sh`:
+Every deploy follows the `-next` pattern from `build-image.sh`:
 
-1. Push `us-central1-docker.pkg.dev/<project>/agent-images/<image>:<date>-<sha>`.
+1. Push `us-central1-docker.pkg.dev/<project>/agent-images/<image>:<date>-<sha>`,
+   where `<sha>` is the `main` commit being deployed.
 2. Point `agent-<type>-next` at that digest and run one smoke execution in Cloud Run:
    `claude --version`, `nvidia-smi`, a CUDA device probe, `eglinfo` against Xvfb. It
    runs in GCP, next to the registry, so the pull is free.
@@ -170,10 +196,10 @@ Every build follows the `-next` pattern from `build-image.sh`:
 
 ### Nightly: 04:00 Pacific, Tuesday through Saturday
 
-A no-cache build with `--pull` from a freshly resolved lock, promoted the same way. It
-catches anything the lock can't see (a curl installer, a script change) and keeps the
-"track latest" promise even if a check is wrong. Pushes to `main` that touch
-`images/cloud` or `images/shared` build too.
+A scheduled run of the deploy workflow on `main` (scheduled workflows always run on
+the default branch): a no-cache build with `--pull` of the lock on `main`, promoted
+the same way. It catches what the lock can't see (a curl installer), retries a failed
+deploy, and keeps the "track latest" promise even if a check is wrong.
 
 ### Standbys
 
@@ -185,8 +211,10 @@ none. No recycling job needed.
 
 - **One image per type.** An Artifact Registry cleanup policy keeps the most recent
   version and deletes the rest, untagged layers included. Rollback is a `git revert`
-  of the lock and a rebuild: apt and the base come back exactly (snapshot and digest),
-  Homebrew comes back current.
+  of the lock on `main`, which deploys like any other commit: apt and the base come
+  back exactly (snapshot and digest), Homebrew comes back current. A revert alone
+  lasts only until the next watch re-proposes the newer version, so pair it with a pin
+  on whatever broke (below).
 - **History in git, logs on GitHub.** The lock's history is the permanent record of
   what every image contained, and `git log -p images/cloud/gpu/versions.lock` shows
   what changed and when. Build logs, with the full `dpkg-query -W` and
