@@ -1,7 +1,7 @@
 # Smoke checks (images/cloud/entrypoint.sh): label: command, which must exit 0;
 # its first line of output is the reported version.
 gdal: gdalinfo --version
-pdal: pdal --version
+pdal: pdal --version | grep -m1 '^pdal'
 qgis: qgis_process --version 2>/dev/null | grep -m1 QGIS
 python3: python3 --version
 bindings: python3 -c 'import osgeo.gdal, rasterio, geopandas, pdal, qgis.core, pystac_client, duckdb; print("osgeo, rasterio, geopandas, pdal, qgis.core, pystac_client, duckdb")'

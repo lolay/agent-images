@@ -61,7 +61,7 @@ Each type is four things, declared in `infra/gcp/<type>.env`:
 | --- | --- | --- | --- | --- |
 | `linux` | `agent-linux` (`agent-base` as is) | Cloud Run job, 4 vCPU, 16 GiB | 10 GiB | 0: a standby holds 4 vCPU and 16 GiB, about $270 a month; 1 later if cold starts hurt |
 | `linux-gpu` | `agent-linux-gpu` (`agent-base-gpu` as is) | Cloud Run job, RTX PRO 6000, 20 vCPU, 80 GiB (that GPU's minimum); L4 for cheap tests | 10 GiB now, 100 GiB later | 0: a standby GPU bills the whole time |
-| `gis` | `agent-gis` (from `agent-base`: GDAL, QGIS, PDAL) | Cloud Run job, CPU | 10 GiB now, 100 GiB later | 0 or 1 |
+| `gis` | `agent-gis` (toolsets core, native, node, gis: GDAL, PDAL, QGIS from conda-forge) | Cloud Run job, CPU | 10 GiB now, 100 GiB later | 0 or 1 |
 | `3d-gpu` | `agent-3d-gpu` (from `agent-base-gpu`: COLMAP built for Blackwell, Blender) | Cloud Run job, RTX PRO 6000 | 10 GiB now, 200 GiB (two volumes) later | 0 |
 | `android` | Compute Engine image | Compute Engine VM per session with nested virtualization ([below](#compute-engine-vm-per-session-android-and-the-gpu-fallback)); Cloud Run has no KVM | 100 GB boot disk | 0 |
 | `mac` | Not on GCP | agent-images' Macs (Tart), as today: Mac development, iOS included | The VM's disk | Per host |
@@ -146,22 +146,24 @@ Region: `us-central1`, the one with both L4 and RTX PRO 6000 on Cloud Run.
 
 ## Images
 
-Proposed change: [image-toolsets.md](image-toolsets.md) replaces the `agent-base` and
-`agent-base-gpu` build parents with per-type toolset lists, so no type inherits the
-Android image's packages, and makes `agent-base-gpu`'s CUDA image devel, not runtime.
-This section describes m1 as built.
+Each type's tools are a list of toolsets ([image-toolsets.md](image-toolsets.md)),
+so no type inherits another's. `agent-base-gpu` (m3) is still to come, on CUDA's devel
+image rather than runtime.
 
 We manage them, in this repo, next to the macOS and Linux images, and they share
 `images/shared` so sessions behave the same everywhere.
 
 ```
 images/cloud/
-  base/Dockerfile      ubuntu:24.04; the toolsets in images/toolsets, one layer each
-                       as the runner user; Claude Code native installer;
-                       images/shared (runner, watchdog, Stop hook, ~/.claude seed)
-  base-gpu/Dockerfile  ARG BASE (CUDA 13.0 runtime on ubuntu:24.04), then the base
-                       layers; Xvfb, VirtualGL, mesa-utils, vulkan-tools; optional noVNC
-  <type>/Dockerfile    FROM agent-base or agent-base-gpu, adds the type's tools
+  base/Dockerfile      ubuntu:24.04 through mirror.gcr.io, the runner user, and the
+                       core toolset; a build parent only
+  base-gpu/Dockerfile  (m3) the same on CUDA 13.0 devel; Xvfb, VirtualGL, mesa-utils,
+                       vulkan-tools; optional noVNC
+  <type>/Dockerfile    FROM agent-base or agent-base-gpu, adds the type's toolsets,
+                       one layer each (bake target <type>-tools)
+  runner/Dockerfile    FROM the type's tools: images/shared (runner, watchdog, Stop
+                       hook, ~/.claude seed), the session's CLAUDE.md from its
+                       toolsets, profile.sh, then Claude Code last (target <type>)
   entrypoint.sh        set AGENT_SCRATCH and AGENT_DATASETS, point CLAUDE_BASE_DIR at
                        /scratch/workspace, TMPDIR at /scratch/tmp and the caches
                        (XDG_CACHE_HOME, pip, Homebrew) at /scratch/cache, move the
@@ -203,10 +205,10 @@ Layer order, slowest-moving first, so a rebuild only redoes what changed:
 ```
 FROM <base>@<digest>      ubuntu:24.04, or nvidia/cuda 13.0 runtime for gpu,
                           both through mirror.gcr.io
-apt packages              packages.txt, at the locked snapshot
-Homebrew + Brewfile       incl. lolay/tap
-type tools                gis, 3d, ...
-images/shared files
+core toolset              apt, Homebrew, the shared session tools (agent-base)
+type toolsets             one layer each: apt at the locked snapshot, Brewfile,
+                          install.sh (images/cloud/<type>)
+images/shared files       and the session files (images/cloud/runner)
 Claude Code               ARG CLAUDE_VERSION; RUN install that exact version
 manifest                  /etc/agent-images/manifest.json, also an OCI label
 ```

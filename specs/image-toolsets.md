@@ -163,10 +163,15 @@ tooling as PyO3 extensions, or Rust splatting like Brush). If that becomes true,
 
 ## Build wiring
 
-- **Cloud images:** each type's Dockerfile is its base, then one `RUN
-  install-toolset <name>` per toolset (one layer each, slowest-moving first), then the
-  shared runner files and Claude Code, as now. There's no `agent-base` build parent;
-  the shared part is the `core` layer, which bake builds once per base image.
+- **Cloud images:** `agent-base` is Ubuntu, the user and `core`. Each type's
+  Dockerfile (bake target `<type>-tools`) adds one `RUN install-toolset.sh <name>`
+  layer per toolset, slowest-moving first, and the shared `images/cloud/runner`
+  stage (target `<type>`) adds the runner files, the session files and Claude Code
+  last, so a Claude release rebuilds one layer and never a type's toolsets. Toolsets
+  can also carry smoke checks (`check.txt`), environment (`profile.sh`) and PATH
+  entries (`path.txt`), which `install-toolset.sh` records: the smoke runs the
+  image's own checks, and the cloud profile puts toolset paths after `~/bin` and
+  ahead of Homebrew.
 - **LXD and Compute Engine `android`:** `build-image.sh` and the Packer
   `googlecompute` build run `install-toolset.sh` over the same list.
 - **macOS:** `install-packages.sh` runs `brew bundle` on `core/Brewfile`, then the
@@ -222,6 +227,9 @@ Steps for [gcp.md](gcp.md) m2, ahead of `gis` and `android`:
   (checked in the cloud build and on the hosted Android run).
 - s5 (done): rename `images/linux` to `images/android` and the alias to
   `agent-android` (Renames, above).
-- s6: `gis` on toolsets, as in the m2 plan.
+- s6: `gis` on toolsets, as in the m2 plan, and the cloud images restructured
+  around it (Build wiring, above). The `gis` environment's activation is recorded as
+  static exports from `pixi shell-hook --json`: the hook's own script sources
+  completion files that fail under the entrypoint's `set -u`.
 
 `linux-gpu` and `3d-gpu` follow in m3 on the same structure.

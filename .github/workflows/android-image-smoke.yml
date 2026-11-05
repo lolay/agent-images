@@ -9,9 +9,6 @@ name: android-image-smoke
 
 on:
   workflow_dispatch:
-  # Temporary: a renamed workflow can't be dispatched until it's on main.
-  push:
-    branches: [claude/gcp-tools-strategy-6kpqtl]
 
 permissions:
   contents: read

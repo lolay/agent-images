@@ -95,6 +95,7 @@ class EntrypointCase(unittest.TestCase):
         return subprocess.run(
             ["bash", str(ENTRYPOINT), *args],
             env=base_env(self.home, self.fake_bin, **settings),
+            stdin=subprocess.DEVNULL,  # see ProfileTests.path_after
             capture_output=True,
             text=True,
             timeout=30,
@@ -258,7 +259,12 @@ class ProfileTests(unittest.TestCase):
         if bash_env:
             env["BASH_ENV"] = str(PROFILE)
             command = ["/bin/bash", "-c", then]
-        result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+        # stdin from /dev/null: bash whose stdin is a socket (some test runners'
+        # is) takes itself for an sshd session and reads ~/.bashrc and
+        # /etc/bash.bashrc instead of BASH_ENV, so the result depends on the host.
+        result = subprocess.run(
+            command, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout.split(":")
 
