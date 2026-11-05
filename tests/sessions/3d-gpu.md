@@ -95,15 +95,38 @@ Mesh the fused point cloud (Poisson in Open3D), import it into Blender with the
 ground-truth scene, and render one image with the two side by side, the
 reconstruction in a single flat color, as `mesh_vs_gt.png`.
 
-## 7. Git and report
+## 7. Flythrough video (GPU)
+
+Make one camera path through the scene: 12 seconds at 30 frames per second, starting
+high over the end of the row, descending along one side at tree height, crossing the
+row between two trees, and climbing out over the other end. It should pass through
+places no capture camera was, so it shows what the reconstruction really learned.
+
+- **Ground truth:** render the path in Blender with Cycles on the GPU (OptiX if
+  available), 1920 by 1080, 64 samples, denoised.
+- **Reconstruction:** render the same path from the Gaussian splatting model on the
+  GPU. Record frames per second.
+- **Video:** encode `flythrough.mp4`: the two side by side (1920 by 540 per frame),
+  labelled "Ground truth (Cycles)" and "Gaussian splats", with the frame's PSNR in a
+  corner. Encode on the GPU with `h264_nvenc` if ffmpeg has it and the driver exposes
+  NVENC; otherwise `libx264`, and record which. Keep it under 20 MB.
+- **Preview:** a 480-pixel-wide, 10 frames per second `flythrough.gif` of the same
+  video, under 8 MB, so the report shows it inline on GitHub.
+
+Pass if both renders ran on the GPU (utilization above 50% during each), the video
+plays (`ffprobe` shows 360 frames), and the mean PSNR over the path is reported.
+
+## 8. Git and report
 
 Stop the logger. Commit the results directory on the session's branch and push; no
-pull request. Include the report, `gpu.csv`, `cameras_gt.json`, the PNGs, and three
-sample renders; leave out the image set, `fused.ply`, the splat model and anything
-over 10 MB. Write `report.md` in the format from [README.md](README.md), with a GPU
-column (peak utilization and memory per step) and a metrics table (registration,
-pose error, accuracy, completeness, PSNR, SSIM, LPIPS), and end the session with
-both tables.
+pull request. Include the report, `gpu.csv`, `cameras_gt.json`, the PNGs, three
+sample renders, `flythrough.mp4` and `flythrough.gif`; leave out the image set,
+`fused.ply`, the splat model and any other file over 10 MB. Write `report.md` in the
+format from [README.md](README.md), with a GPU column (peak utilization and memory
+per step) and a metrics table (registration, pose error, accuracy, completeness,
+PSNR, SSIM, LPIPS, splat rendering frames per second). Embed `flythrough.gif` at the
+top of the report, then `splat_vs_gt.png` and `mesh_vs_gt.png`. End the session with
+both tables and links to `flythrough.mp4` and the report on the branch.
 
 The pass thresholds are a first guess for this scene; if a run fails one but the
 outputs look right, say so, and the threshold gets tuned rather than ignored.

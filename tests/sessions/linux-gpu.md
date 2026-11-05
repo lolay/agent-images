@@ -70,9 +70,21 @@ toolkit (look up the right index URL; don't take the CPU wheel).
 - If `$DISPLAY` is set (Xvfb), run `vglrun glxinfo -B` and check the renderer is
   NVIDIA, then screenshot the display while the render runs to `display.png`.
 
-## 5. Git and report
+## 5. An image off the GPU
+
+Write a small path tracer in CUDA, compiled with `-arch=sm_120`: a few dozen spheres
+of diffuse, metal and glass materials on a checkered ground plane under a sky, with
+depth of field, 1920 by 1080, 256 samples per pixel, tone-mapped and written as
+`cuda_render.png`. Run the same code compiled for the CPU (OpenMP is fine) at 16
+samples per pixel and scale the time to 256. Record GPU and CPU seconds, rays per
+second, and the speedup. Pass if the PNG shows the scene (not blank, not noise) and
+the GPU's peak utilization during the render is above 90%.
+
+## 6. Git and report
 
 Stop the logger. Commit the results directory (report, `gpu.csv`, PNGs, `spin.mp4`)
 on the session's branch and push; no pull request. Write `report.md` in the format
 from [README.md](README.md), with a GPU column in the check table (peak utilization
-and memory per step), and end the session with that table.
+and memory per step). Embed `cuda_render.png` and `frame.png` at the top of the
+report (`![...](cuda_render.png)`), so the branch shows them on GitHub. End the
+session with the check table and a link to `cuda_render.png` on the branch.

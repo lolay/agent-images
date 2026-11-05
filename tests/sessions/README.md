@@ -9,8 +9,8 @@ any change to its image beyond a version bump, and whenever something feels off.
 | `linux` | [linux.md](linux.md) | The base: toolchains install and build, network reach, git push, isolation between sessions |
 | `android` | [android.md](android.md) | A Compose app builds, unit and instrumented tests pass on the emulator inside the session's VM |
 | `gis` | [gis.md](gis.md) | GDAL, PDAL and QGIS on public data: NDVI from Sentinel-2, a canopy height model from USGS 3DEP LiDAR |
-| `linux-gpu` | [linux-gpu.md](linux-gpu.md) | The GPU is the one the session gets: CUDA compiled for it, PyTorch on it, OpenGL and Vulkan on it rather than in software |
-| `3d-gpu` | [3d-gpu.md](3d-gpu.md) | 3D reconstruction end to end on the GPU: a synthetic scene rendered in Blender, COLMAP on CUDA, dense stereo, Gaussian splatting, all scored against ground truth |
+| `linux-gpu` | [linux-gpu.md](linux-gpu.md) | The GPU is the one the session gets: CUDA compiled for it, PyTorch on it, OpenGL and Vulkan on it rather than in software, and a path-traced image rendered on it |
+| `3d-gpu` | [3d-gpu.md](3d-gpu.md) | 3D reconstruction end to end on the GPU: a synthetic scene rendered in Blender, COLMAP on CUDA, dense stereo, Gaussian splatting, all scored against ground truth, and a flythrough video comparing the splats with the true scene |
 | `mac` | [mac.md](mac.md) | Mac development: a SwiftUI app built and tested on the iOS Simulator, a Swift package on macOS |
 
 ## Running one
