@@ -8,6 +8,7 @@ from simple in-memory state; a test can make any route fail with `fail`.
 import base64
 import json
 import threading
+import time
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -33,6 +34,7 @@ class State:
     secrets: dict = field(default_factory=dict)  # name -> value
     requests: list = field(default_factory=list)
     failures: dict = field(default_factory=dict)  # (method, path suffix) -> (status, body)
+    delays: dict = field(default_factory=dict)  # path suffix -> seconds before answering
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -56,6 +58,9 @@ class FakeGcp:
                     {key.lower(): value for key, value in self.headers.items()},
                     body,
                 )
+                for suffix, seconds in list(state.delays.items()):
+                    if request.path.endswith(suffix):
+                        time.sleep(seconds)
                 with state.lock:
                     state.requests.append(request)
                     status, payload = route(state, request)

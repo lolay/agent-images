@@ -287,7 +287,7 @@ prints valid JSON.
 
 Done: unit tests pass; `shellcheck -x` clean.
 
-#### s8 - [deep] The orchestrator container and supervisor
+#### s8 - [deep] The orchestrator container and supervisor (done)
 
 - `images/cloud/orchestrator/Dockerfile`: small Debian or Ubuntu base, curl, jq,
   ca-certificates, Claude Code native install, a non-root user; `hooks/gcp`, the

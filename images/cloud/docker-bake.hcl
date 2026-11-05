@@ -24,7 +24,7 @@ function "tags" {
 }
 
 group "default" {
-  targets = ["linux"]
+  targets = ["linux", "orchestrator"]
 }
 
 target "base" {
@@ -43,4 +43,13 @@ target "linux" {
     agent-base = "target:base"
   }
   tags = tags("linux")
+}
+
+target "orchestrator" {
+  context    = "."
+  dockerfile = "images/cloud/orchestrator/Dockerfile"
+  args = {
+    CLAUDE_VERSION = CLAUDE_VERSION
+  }
+  tags = tags("orchestrator")
 }
