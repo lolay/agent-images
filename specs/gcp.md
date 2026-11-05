@@ -143,6 +143,11 @@ Region: `us-central1`, the one with both L4 and RTX PRO 6000 on Cloud Run.
 
 ## Images
 
+Proposed change: [image-toolsets.md](image-toolsets.md) replaces the `agent-base` and
+`agent-base-gpu` build parents with per-type toolset lists, so no type inherits the
+Android image's packages, and makes `agent-base-gpu`'s CUDA image devel, not runtime.
+This section describes m1 as built.
+
 We manage them, in this repo, next to the macOS and Linux images, and they share
 `images/shared` so sessions behave the same everywhere.
 
@@ -769,6 +774,8 @@ The whole path for one type, end to end:
 
 ### m2 - `gis` and `android`
 
+- First, toolsets ([image-toolsets.md](image-toolsets.md), s1 to s5), so `gis`
+  and `android` each get their own tool list rather than the Android image's.
 - `gis`: `images/cloud/gis` (GDAL, PDAL, QGIS), its job and environment. Done when
   [tests/sessions/gis.md](../tests/sessions/gis.md) passes.
 - `android`: the Compute Engine path above: Packer image, the hook's Compute Engine
