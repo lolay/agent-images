@@ -1,6 +1,6 @@
 # Plan: m1 `linux` on GCP
 
-Status: **planned, awaiting Gary's approval.** Nothing below is built yet. Branch
+Status: **approved 2026-11-05; running s1 to s12 unattended, stopping at s13.** `MIN_IDLE=0` chosen. Branch
 `claude/eloquent-mayer-ivkml8` in `lolay/agent-images`; `lolay/infrastructure` needs
 no change for m1 (its branch of the same name stays untouched).
 
@@ -78,13 +78,10 @@ Each is written into the spec by s1 so the spec matches what gets built.
     a value equal to the running image, so the spec's "set the metadata to the same
     digest" does nothing.
 
-### Needs Gary
-
-- **Standby for `linux`.** The spec says `--min-idle 1` ("cheap"). A 4 vCPU, 16 GiB job
-  execution held all month is about $0.37/hour, roughly **$270/month**, at Cloud Run's
-  instance rates. Recommendation: `MIN_IDLE=0` in m1, which also measures the cold
-  start the test sees; standby is a one-line change to `linux.env` once that number is
-  known.
+15. **No standby for `linux` in m1 (`MIN_IDLE=0`, Gary 2026-11-05).** The spec's
+    `--min-idle 1` holds a 4 vCPU, 16 GiB execution all month, about $0.37/hour or
+    $270/month at Cloud Run's instance rates. Sessions wait for a cold start, which m1
+    measures; standby is a one-line change to `linux.env` later.
 
 ## Shape
 
@@ -133,7 +130,7 @@ Modifies:
 
 ### m1 - `linux`
 
-#### s1 - [exec] Bring the specs in line with what was built
+#### s1 - [exec] Bring the specs in line with what was built (done)
 
 `specs/gcp-infrastructure.md` and `specs/gcp.md`, checked against
 `lolay/infrastructure` `stacks/gcp/agents`:
@@ -156,10 +153,10 @@ Modifies:
   `--stop-timeout 85`, stdout to Cloud Logging, no SSH, and the exact
   `gcloud compute instances add-metadata` the deploy runs.
 - Status lines: infrastructure applied 2026-11-05; gcp.md "m1 in progress".
-- Decisions 1 to 14 above where they change the spec (job deploy through REST, no
+- Decisions 1 to 15 above where they change the spec (job deploy through REST, no
   gcloud on the host, `ifGenerationMatch`, the work-order file, `maxRetries: 0`, the
   deploy base, the make targets, Claude upgrade until m4, notice time zone, outputs
-  mount options, rotation by reset), and the standby setting Gary picks.
+  mount options, rotation by reset, no standby).
 
 Done: both specs read true against the Terraform; nothing else changes.
 
@@ -168,7 +165,7 @@ Done: both specs read true against the Terraform; nothing else changes.
 - `infra/gcp/project.env`: exactly the fifteen values Gary gave, nothing added.
 - `infra/gcp/linux.env`: `CPU=4`, `MEMORY=16Gi`, `SCRATCH_GIB=10`,
   `TASK_TIMEOUT_SEC=34200` (9 h 30 min: the 480 min session cap plus an hour of unused
-  standby plus margin), `RETIRE_MARGIN_SEC=900`, `MIN_IDLE` (Gary's pick),
+  standby plus margin), `RETIRE_MARGIN_SEC=900`, `MIN_IDLE=0`,
   `EXPECTED_SPAWN_SECONDS=180`, `EXIT_IF_UNUSED_MIN=60`,
   `RELEASE_IDLE_SESSION_MIN=60`, `KILL_SESSION_AFTER_MIN=480`,
   `AGENT_NOTICE_TZ=America/Los_Angeles`. Comment each, as `vms/example-linux.env`

@@ -1,7 +1,8 @@
 # GCP runners (proposal)
 
-Status: **proposed, not built.** Written 2026-11-04. Recheck anything marked preview
-before building on it.
+Status: **m1 (`linux`) in progress.** Written 2026-11-04; the foundation is applied
+(`lolay/infrastructure`, `stacks/gcp/agents`, 2026-11-05). Recheck anything marked
+preview before building on it.
 
 The same model as the Mac and Linux runners, with Google running the hardware: Claude's
 orchestrator calls a hook per queued session, the hook starts one throwaway workload,
@@ -22,7 +23,7 @@ claude.ai session queue
         ▼
 Compute Engine e2-micro  (free tier, always on, no GPU)
   one claude self-hosted-runner orchestrator per runner type, --hooks-dir hooks/gcp
-        │ spawn-runner: gcloud run jobs execute <type> --update-env-vars ...
+        │ spawn-runner: POST jobs/agent-<type>:run (curl), env overrides
         ▼
 Cloud Run job execution  (one per session)
   agent-cloud-entrypoint → Xvfb (`-gpu` types) → images/shared/runners/claude.sh
@@ -31,12 +32,12 @@ Cloud Run job execution  (one per session)
 
 | Today (Linux host) | GCP |
 | --- | --- |
-| `lxc launch agent-linux runner-N --ephemeral` | `gcloud run jobs execute agent-<type>`: one execution, gone when it exits |
+| `lxc launch agent-linux runner-N --ephemeral` | A run of job `agent-<type>` through the Cloud Run Admin API: one execution, gone when it exits |
 | `build-image.sh` → `lxc publish agent-linux-next`, move the alias | Build and push to Artifact Registry, smoke-test `agent-<type>-next`, then point the job at the new digest |
 | systemd user unit runs the orchestrator | One `e2-micro` running the orchestrator container |
 | `~/.config/agent-images` holds the environment secret | Secret Manager, read only by the orchestrator's service account |
 | `runner-once.sh` deletes the VM | Nothing to delete: the execution ends when the container exits |
-| Claim `runner-1..N` with `mkdir` | Idempotency marker in GCS, created with `--if-generation-match=0` |
+| Claim `runner-1..N` with `mkdir` | Idempotency marker in GCS, created with `ifGenerationMatch=0` |
 
 ## Runner types
 
@@ -56,10 +57,10 @@ Each type is four things, declared in `infra/gcp/<type>.env`:
 
 | Type | Image | Backend and resources | Scratch disk | Standby |
 | --- | --- | --- | --- | --- |
-| `linux` | `agent-linux` (`agent-base` as is) | Cloud Run job, 4 vCPU, 16 GiB | 10 GiB | 1 (cheap, instant starts) |
-| `linux-gpu` | `agent-linux-gpu` (`agent-base-gpu` as is) | Cloud Run job, RTX PRO 6000, 20 vCPU, 80 GiB (that GPU's minimum); L4 for cheap tests | 100 GiB | 0: a standby GPU bills the whole time |
-| `gis` | `agent-gis` (from `agent-base`: GDAL, QGIS, PDAL) | Cloud Run job, CPU | 100 GiB | 0 or 1 |
-| `3d-gpu` | `agent-3d-gpu` (from `agent-base-gpu`: COLMAP built for Blackwell, Blender) | Cloud Run job, RTX PRO 6000 | 200 GiB (two volumes) | 0 |
+| `linux` | `agent-linux` (`agent-base` as is) | Cloud Run job, 4 vCPU, 16 GiB | 10 GiB | 0: a standby holds 4 vCPU and 16 GiB, about $270 a month; 1 later if cold starts hurt |
+| `linux-gpu` | `agent-linux-gpu` (`agent-base-gpu` as is) | Cloud Run job, RTX PRO 6000, 20 vCPU, 80 GiB (that GPU's minimum); L4 for cheap tests | 10 GiB now, 100 GiB later | 0: a standby GPU bills the whole time |
+| `gis` | `agent-gis` (from `agent-base`: GDAL, QGIS, PDAL) | Cloud Run job, CPU | 10 GiB now, 100 GiB later | 0 or 1 |
+| `3d-gpu` | `agent-3d-gpu` (from `agent-base-gpu`: COLMAP built for Blackwell, Blender) | Cloud Run job, RTX PRO 6000 | 10 GiB now, 200 GiB (two volumes) later | 0 |
 | `android` | Compute Engine image | Compute Engine VM per session with nested virtualization ([below](#compute-engine-vm-per-session-android-and-the-gpu-fallback)); Cloud Run has no KVM | 100 GB boot disk | 0 |
 | `mac` | Not on GCP | agent-images' Macs (Tart), as today: Mac development, iOS included | The VM's disk | Per host |
 
@@ -99,7 +100,7 @@ calls in, so with none running, sessions sit in the queue.
 
 | Host | Memory | Monthly cost, always on |
 | --- | --- | --- |
-| `e2-micro` (start here) | 1 GB | $0 in GCP's free tier (one per billing account, `us-central1`, `us-west1` or `us-east1`), plus possibly a few dollars for its external IP; check the billing report |
+| `e2-micro` (start here) | 1 GB | $0 in GCP's free tier (one per billing account, `us-central1`, `us-west1` or `us-east1`). No external IP: egress goes through Cloud NAT, about a dollar a month plus $0.045 per GB through it |
 | `e2-small` (from the GPU milestone, or sooner if memory runs out) | 2 GB | About $12 |
 | Cloud Run worker pool, 1 vCPU, 512 MiB | | Roughly $45 to $50 at instance-based rates (unverified; Google's page didn't load) |
 
@@ -115,11 +116,22 @@ Container-Optimized OS and Docker; with the GPU types added, the host moves to
 Storage REST APIs with `curl` and a token from the metadata server instead: small,
 and a second faster per spawn. m1 measures it; moving to `e2-small` is one setting.
 
-The host runs Container-Optimized OS with no inbound access at all. A systemd unit
-starts the container and long-polls the metadata server
-(`?wait_for_change=true`) for an `orchestrator-image` key. A deploy sets that key to
-the new digest, and the unit pulls it and restarts the container, so deploys need no
-SSH.
+The host runs Container-Optimized OS with no inbound access and no external IP (it
+reaches Anthropic through Cloud NAT). Its contract, as built in `lolay/infrastructure`:
+
+- A systemd unit long-polls instance metadata key `orchestrator-image`
+  (`?wait_for_change=true`). When the value changes, it pulls that image and runs it
+  as container `agent-orchestrator` with `--restart=always` and `--stop-timeout 85`;
+  a failed pull keeps the running container.
+- It accepts only a digest under the registry,
+  `us-central1-docker.pkg.dev/lolay-agents/agent-images/<name>@sha256:...`; anything
+  else is logged and ignored. A value equal to the running image does nothing, so
+  restarting the same image means resetting the VM.
+- The deploy sets the key with
+  `gcloud compute instances add-metadata agent-orchestrator --zone us-central1-a --metadata orchestrator-image=<digest ref>`,
+  so deploys need no SSH, and there is none.
+- The container's stdout goes to Cloud Logging. The container gets no environment
+  from the host: everything it needs is baked into the image.
 
 **Choosing by repo instead (not proposed).** The hook gets
 `CLAUDE_RUNNER_PRIMARY_REPO_URL`, so one environment could pick the image from the
@@ -143,7 +155,9 @@ images/cloud/
                        layers; Xvfb, VirtualGL, mesa-utils, vulkan-tools; optional noVNC
   <type>/Dockerfile    FROM agent-base or agent-base-gpu, adds the type's tools
   entrypoint.sh        set AGENT_SCRATCH and AGENT_DATASETS, point CLAUDE_BASE_DIR at
-                       /scratch/workspace, start Xvfb when DISPLAY is wanted, then
+                       /scratch/workspace, TMPDIR at /scratch/tmp and the caches
+                       (XDG_CACHE_HOME, pip, Homebrew) at /scratch/cache, move the
+                       work order to a file, start Xvfb when DISPLAY is wanted, then
                        exec agent-runner (AGENT_OUTPUTS comes per session, below)
 ```
 
@@ -160,7 +174,11 @@ Choices, carried over from [design.md](design.md):
   extensions) must target compute capability 12.0 or carry PTX, or it fails on
   Blackwell.
 - **No secrets in images or sessions** ([secrets.md](secrets.md)). The runner's
-  service account gets logging only.
+  service account gets logging and the two buckets (below) only.
+- **Claude upgrades itself at start until m4.** The plan is no self-update: the watch
+  rebuilds within the hour of a release. Until the watch exists, an image is only as
+  fresh as the last push, so the runner keeps `CLAUDE_UPGRADE=true` (the shared
+  default) and m4 turns it off. The image still installs Claude in its own last layer.
 
 Layer order, slowest-moving first, so a rebuild only redoes what changed:
 
@@ -200,9 +218,11 @@ updates jobs. Enforced in three places, so one mistake doesn't open it up:
 ### What a push to `main` deploys
 
 Any push to `main` that changes what a GCP runtime runs redeploys that runtime, and
-only that one. The workflow's first job diffs the push (`github.event.before` to
-`github.sha`) against this map and hands the affected targets to the deploy job as a
-matrix:
+only that one. The workflow's first job diffs `github.sha` against the head of the
+last successful push deploy (not `github.event.before`: GitHub's concurrency queue
+keeps one pending run and cancels the others, so their pushes would never be
+deployed) against this map, and hands the affected targets to the deploy jobs as a
+matrix. A failed deploy makes the next one redeploy more, never less:
 
 | Path changed | Redeploys |
 | --- | --- |
@@ -214,9 +234,9 @@ matrix:
 | Anything else (`specs/`, the macOS and Linux images, README) | Nothing |
 
 The `FROM` chain comes from the Dockerfiles themselves, so adding a type doesn't mean
-editing the map. When the diff can't be computed (a first push, or `before` is all
-zeros after a force push), it deploys everything. A manual dispatch takes a list of
-targets, or `all`.
+editing the map. `infra/gcp/project.env` changes everything. When the diff can't be
+computed (no earlier successful deploy, or its commit is gone after a force push), it
+deploys everything. A manual dispatch takes a list of targets, or `all`.
 
 ### The lock
 
@@ -305,12 +325,22 @@ usual step for large images.
 Every deploy follows the `-next` pattern from `build-image.sh`:
 
 1. Push `us-central1-docker.pkg.dev/<project>/agent-images/<image>:<date>-<sha>`,
-   where `<sha>` is the `main` commit being deployed.
-2. Point `agent-<type>-next` at that digest and run one smoke execution in Cloud Run:
-   `claude --version`, `nvidia-smi`, a CUDA device probe, `eglinfo` against Xvfb. It
+   where `<sha>` is the `main` commit being deployed. A change to the type's env file
+   alone skips the build and reuses the live digest.
+2. Point `agent-<type>-next` at that digest and run one smoke execution in Cloud Run
+   (the entrypoint's `smoke` mode): `claude --version`, scratch is a real writable
+   disk, outputs round-trips a file, datasets refuses a write, `sudo`, Homebrew; for
+   `-gpu` types also `nvidia-smi`, a CUDA device probe, `eglinfo` against Xvfb. It
    runs in GCP, next to the registry, so the pull is free.
 3. Only if it passes, point `agent-<type>` at the same digest. Cloud Run resolves the
    image when the job is updated, so running sessions never see a half-built image.
+
+Jobs are written through the Cloud Run v2 REST API (`PATCH` with `allowMissing=true`,
+so the same call creates or updates), from a Job spec rendered from the env files by
+`scripts/cloud/job-spec.sh`. `gcloud run jobs deploy` can't: its `--add-volume` has no
+disk-backed type, while the API's `emptyDir` takes `medium: DISK`. Every job runs
+with `maxRetries: 0` and one task: a retried task would come back with a spent work
+order.
 
 ### Nightly: 04:00 Pacific, Tuesday through Saturday
 
@@ -321,14 +351,18 @@ deploy, and keeps the "track latest" promise even if a check is wrong.
 
 ### Standbys
 
-Only `linux` keeps one (`--min-idle 1`), and it runs with `--exit-if-unused-min 60`,
-so a standby is never more than an hour older than the newest image. `-gpu` types keep
-none. No recycling job needed.
+None in m1. A standby is a whole execution held while it waits: for `linux` that's
+4 vCPU and 16 GiB, about $0.37 an hour or $270 a month. If cold starts hurt, `linux`
+gets one (`MIN_IDLE=1`), and it runs with `--exit-if-unused-min 60` (set for every
+type already), so a standby is never more than an hour older than the newest image.
+`-gpu` types keep none. No recycling job needed.
 
 ### Keep one image, keep the history
 
-- **One image per type.** An Artifact Registry cleanup policy keeps the most recent
-  version and deletes the rest, untagged layers included. Rollback is a `git revert`
+- **Two images per type.** An Artifact Registry cleanup policy keeps the two most
+  recent versions and deletes the rest, untagged layers included (still a dry run).
+  Two, because after a push whose smoke test fails, the live digest is no longer the
+  newest. Rollback is a `git revert`
   of the lock on `main`, which deploys like any other commit: apt and the base come
   back exactly (snapshot and digest), Homebrew comes back current. A revert alone
   lasts only until the next watch re-proposes the newer version, so pair it with a pin
@@ -339,9 +373,13 @@ none. No recycling job needed.
   `brew list --versions` output, keep 90 days in Actions (a public repo's maximum) and
   are public, which is fine: builds hold no secrets.
 
-Make targets in the same vocabulary as the rest: `make cloud-lock TYPE=3d-gpu` (resolve
-locally, show the diff), `make cloud-build`, `make cloud-publish`, `make cloud-promote`,
-`make cloud-status`.
+Make targets in the same vocabulary as the rest: `make cloud-build` (build the
+images locally), `make cloud-smoke` (run the entrypoint's smoke mode against local
+directories), `make cloud-test` (the unit tests), `make cloud-ci` (what the pull
+request check runs), `make cloud-status` (read-only: what each job and the host run),
+and from m4 `make cloud-lock TYPE=3d-gpu` (resolve locally, show the diff). No
+publish or promote target: only `main` deploys, and a local one would be a second
+path around the federation condition.
 
 Off the shelf instead: Renovate (as a GitHub Action) handles the base digest, GitHub
 releases and a custom source for Claude, with a pull request per change. It doesn't
@@ -377,17 +415,19 @@ gets a single-use work order instead, and a session gets nothing.
 | Step | Who | What |
 | --- | --- | --- |
 | 1 | You, once per type | Create the environment in claude.ai, copy its key, `gcloud secrets create claude-env-<type>` and `versions add` it. It never touches git, Terraform state or an image |
-| 2 | The orchestrator host, at container start | Its service account (`agent-orchestrator`, allowed only `claude-env-*`) reads each type's secret from Secret Manager and writes it to a file per type on tmpfs, mode 600 |
+| 2 | The orchestrator host, at container start | Its service account (`agent-orchestrator`, allowed only `claude-env-*`) reads each type's secret from Secret Manager (REST, metadata-server token) and writes it to a file per type in `/dev/shm`, mode 600 |
 | 3 | Each type's orchestrator | Starts with `--environment-secret-file` pointing at its own file only, and polls Anthropic with it |
 | 4 | Anthropic, per queued session | Sends that orchestrator a spawn request carrying a work order: a signed, single-use token for one runner |
 | 5 | The hook | Unsets the environment key from its own environment, then starts a Cloud Run execution (or an `android` VM) with the work order as `SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET` |
-| 6 | The runner | Registers with the work order, which is spent at that moment, then claims the session |
+| 6 | The entrypoint | Moves the work order to `~/.claude-runner/environment-secret` (mode 600) and unsets the variable, so sessions don't inherit it |
+| 7 | The runner | Registers with the work order, which is spent at that moment, then claims the session |
 
 So a session that reads its environment or the execution's metadata finds a spent
 token. The runner's service account (`agent-runner`) has no Secret Manager access at
 all. Rotating a key is a new secret version in claude.ai and Secret Manager, then a
-container restart on the host (set the `orchestrator-image` metadata to the same
-digest, or reset the VM).
+reset of the host (`gcloud compute instances reset agent-orchestrator`), so the
+container starts again and reads it. Setting `orchestrator-image` to the digest
+already running does nothing.
 
 ## The hook
 
@@ -395,10 +435,10 @@ digest, or reset the VM).
 (0 submitted, 1 retry, 2 don't retry; nothing secret on stderr):
 
 1. `unset SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET`.
-2. Create `gs://<bucket>/orders/$CLAUDE_RUNNER_ORDER_ID` with
-   `x-goog-if-generation-match: 0` (the Storage JSON API through `curl`, like every
-   call the hook makes; no `gcloud` on the host). If it already exists, this order
-   has an execution: exit 0. A lifecycle rule deletes markers after a day.
+2. Create `gs://<bucket>/orders/$CLAUDE_RUNNER_ORDER_ID` with `ifGenerationMatch=0`
+   (the Storage JSON API through `curl` with a metadata-server token, like every call
+   the hook makes; no `gcloud` on the host). A 412 means this order already has an
+   execution: exit 0. A lifecycle rule deletes markers after a day.
 3. Run the job with overrides: `POST .../jobs/agent-$RUNNER_TYPE:run` on the Cloud
    Run Admin API, with `SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET=<work order>` and
    `RUNNER_LABEL=<type>-<order id prefix>` as container env overrides (what
@@ -408,15 +448,18 @@ digest, or reset the VM).
    that reads it gets nothing, the same reasoning as design.md. If that's not enough,
    write it to a GCS object only the runner's service account can read and pass the
    path instead.
-4. Any failure after the marker deletes the marker and exits 1.
+4. Any failure after the marker deletes the marker (the orchestrator has
+   `storage.objectUser` on the bucket for that) and exits 1, or 2 when the API says
+   403 or 404: no job, or no permission, which retrying won't fix.
 
 Orchestrator flags: `--expected-spawn-seconds` set from measured cold starts (multi-GB
-GPU images are minutes, not seconds), `--shutdown-drain-sec 70` with an 85 s stop
-budget. Runner flags, already in `claude.sh`: `--capacity 1`,
-`--release-idle-session-min`, `--kill-session-after-min` below the job's task timeout,
-plus `--retire-at` set at start to the task deadline minus a margin, so Cloud Run's
-hard stop releases sessions cleanly instead of losing them. GPU jobs run up to
-12 hours (preview since 2026-10-30).
+GPU images are minutes, not seconds), `--hook-timeout 60`, `--shutdown-drain-sec 70`
+with the host's 85 s stop budget (the orchestrator asks for drain + 15). Runner flags
+in `claude.sh`: `--capacity 1`, `--release-idle-session-min`,
+`--kill-session-after-min` below the job's task timeout, `--exit-if-unused-min`, and
+`--retire-at`, which the entrypoint sets at start to the task deadline minus a
+margin, so Cloud Run's hard stop releases sessions cleanly instead of losing them.
+GPU jobs run up to 12 hours (preview since 2026-10-30).
 
 ## The orchestrator container
 
@@ -424,19 +467,24 @@ One container image, `agent-orchestrator` (`images/cloud/orchestrator/`), runs e
 type's orchestrator. Claude's orchestrator takes one `--environment-secret-file`, so
 it's one process per type inside one container:
 
-- **Contents:** Claude Code, `gcloud`, `hooks/gcp`, and a supervisor script as the
-  entrypoint. Small, CPU only, and it never runs session code.
-- **Types:** the supervisor reads every `infra/gcp/*.env` baked into the image and
-  starts `claude self-hosted-runner orchestrator` for each, with `RUNNER_TYPE`, that
-  type's `--min-idle` and `--expected-spawn-seconds`, its own `--health-port`
-  (8080 upward), and `--shutdown-drain-sec 70`.
+- **Contents:** Claude Code, `curl`, `jq`, `hooks/gcp`, every `infra/gcp/*.env`, and a
+  supervisor script as the entrypoint. No `gcloud` (Python, around 100 MB a run): the
+  hook and the supervisor call REST APIs with a metadata-server token. Small, CPU
+  only, and it never runs session code.
+- **Types:** the supervisor reads every `infra/gcp/*.env` baked into the image except
+  `project.env` and starts `claude self-hosted-runner orchestrator` for each, with
+  `RUNNER_TYPE`, that type's `--min-idle` and `--expected-spawn-seconds`, its own
+  `--health-port` (8080 upward), and `--shutdown-drain-sec 70`.
 - **Secrets:** each type's `claude-env-<type>`, read from Secret Manager at start by
-  the host's service account and written to a file per type (mode 600, tmpfs). The
+  the host's service account and written to a file per type (mode 600, `/dev/shm`). The
   supervisor passes each orchestrator only its own, and the hook unsets it before
-  doing anything else.
+  doing anything else. A type whose secret can't be read is retried; the others
+  start anyway.
 - **Supervision:** restart any orchestrator that exits; forward `SIGTERM` to all of
-  them; prefix each one's log lines with its type. Healthy only when every
-  orchestrator's `/healthz` reports `connected`.
+  them; prefix each one's log lines with its type. Every 5 minutes it logs each
+  orchestrator's memory (`Pss` from `/proc/<pid>/smaps_rollup`, with its child
+  processes) and whether its `/healthz` reports `connected`, so the host's memory is
+  measured from Cloud Logging, with no SSH.
 - **Deploys:** a push to `main` that touches `hooks/gcp/**`, `images/cloud/orchestrator/**`
   or `infra/gcp/*.env` rebuilds it and restarts it on the host. Sessions in flight are
   unaffected: they belong to runners, not to the orchestrator.
@@ -456,16 +504,18 @@ environment key goes into Secret Manager by hand as `claude-env-<type>`; the
 orchestrator's access is granted by that name prefix. What Terraform needs, in full:
 [gcp-infrastructure.md](gcp-infrastructure.md).
 
-The jobs need no Terraform here: the deploy workflow runs `gcloud run jobs deploy`
-from each `infra/gcp/<type>.env`, which is idempotent, and deletes any `agent-*` job
-whose env file is gone. A second Terraform in this repo (its state next to
+The jobs need no Terraform here: the deploy workflow writes each job from its
+`infra/gcp/<type>.env` through the Cloud Run API, which is idempotent, and deletes any
+`agent-*` job labelled `managed-by=agent-images` whose env file is gone. A second Terraform in this repo (its state next to
 `lolay/infrastructure`'s, applied by the deploy workflow with the new digest as a
 variable) becomes worth it if the workloads grow past jobs: the Android type's
 Compute Engine templates and standby pools are the likely trigger.
 
 Terraform's outputs (project, registry path, federation provider, service accounts,
-bucket, VM) are committed here as a copy in one env file for the workflows, per the
-CI configuration rule: non-secret, reviewed, and Terraform stays the source.
+bucket, VM) are committed here as a copy in `infra/gcp/project.env` for the
+workflows, per the CI configuration rule: non-secret, reviewed, and Terraform stays
+the source. It holds those outputs only; per-type settings go in the type's env
+file.
 
 The GitHub side is set by hand: the lock-bot App, the `production` and `lock-bot`
 environments, and the `main` ruleset (see [The lock bot](#the-lock-bot)).
@@ -480,19 +530,23 @@ don't care which type they're on:
 | --- | --- | --- | --- |
 | `$AGENT_SCRATCH` (`/scratch`) | Cloud Run ephemeral disk: block storage dedicated to the instance | Until the execution ends | Per type, above |
 | `$AGENT_OUTPUTS` (`/mnt/outputs/<type>/<date>/<session id>`) | Cloud Storage bucket `lolay-agents-outputs`, mounted read-write with Cloud Storage FUSE | 30 days, then the bucket's lifecycle rule deletes it | Unbounded |
-| `$AGENT_DATASETS` (`/mnt/datasets`) | Cloud Storage bucket `lolay-agents-datasets`, mounted read-only with Cloud Storage FUSE and a file cache on `/scratch` | Until removed by hand | Unbounded |
+| `$AGENT_DATASETS` (`/mnt/datasets`) | Cloud Storage bucket `lolay-agents-datasets`, mounted read-only with Cloud Storage FUSE (a file cache on `/scratch` comes with `gis`, where it matters) | Until removed by hand | Unbounded |
 
 - **Scratch** is where work happens: the repo checkout (Claude's `--base-dir` is
   `/scratch/workspace`), downloads, intermediate files, builds. Without it, Cloud
   Run's filesystem is in memory, and every file written takes memory from the
   session. Each volume holds 1 to 100 GiB, up to ten per instance, and it's gone when
-  the execution ends, crash included. Quotas start at 10 GiB per instance and 100 GiB
-  per region, so the GPU and GIS sizes above need a quota increase
-  (`lolay/infrastructure`).
+  the execution ends, crash included. Every type gets 10 GiB for now, the default
+  quota per instance, which needs no approval; the region's 100 GiB is granted on
+  first use. The larger GIS and GPU sizes above need a quota increase
+  (`lolay/infrastructure`). `TMPDIR` and the caches (`XDG_CACHE_HOME`, pip, Homebrew)
+  point at scratch too.
 - **Outputs** is for anything worth keeping that's too big for git: dense point
   clouds, trained models, renders, rasters. Each session writes under
   `<type>/<UTC date>/<session id>/`, so a listing reads by type and day; you read
-  results with `gcloud storage` or the console. Cloud Storage FUSE isn't a full POSIX
+  results with `gcloud storage` or the console. It's mounted as the session's user
+  (`uid=1000`) with implicit directories, so a session sees folders other sessions
+  made. Cloud Storage FUSE isn't a full POSIX
   filesystem (no locking, slow small random writes), so a session works on scratch
   and copies finished files to outputs, rather than working in place.
 - **Datasets** holds inputs worth reusing between sessions: a cached Sentinel-2 or
@@ -564,6 +618,10 @@ output), so the same `SessionStart` hook does it two ways:
   hook messages. m1 checks what claude.ai actually shows and drops whichever is
   redundant.
 
+m1 prints the time-limit line only. The cost line needs the deploy's price lookup,
+which comes after m1; until `AGENT_COST_USD_PER_HOUR` is set, the hook leaves it out
+and the session test marks it skipped.
+
 The end time is worked out at session start, by the hook, because it depends on when
 the runner started, not only on settings. The session ends at the earliest of:
 
@@ -577,7 +635,7 @@ the runner started, not only on settings. The session ends at the earliest of:
   next message, but anything unpushed is gone, so the notice leads with it. The
   minutes come from the type's settings, never hardcoded.
 
-The time shows in `AGENT_NOTICE_TZ` (in `infra/gcp/project.env`,
+The time shows in `AGENT_NOTICE_TZ` (in each type's env file,
 `America/Los_Angeles`), with the time remaining beside it. Near the end, the runner's
 own `--retire-at` handling releases the session cleanly after its current turn; the
 Stop hook that already asks Claude to push covers the rest.
@@ -608,7 +666,7 @@ rather than failing.
 
 | Storage | Billed for | Cost with no sessions |
 | --- | --- | --- |
-| Scratch (ephemeral disk) | Provisioned size, only while an instance runs | $0 for every type at `--min-idle 0`. The `linux` standby holds 10 GiB while it waits: billed at Cloud Run's disk rate, which Google's pricing page lists but I couldn't load; small at that size |
+| Scratch (ephemeral disk) | Provisioned size, only while an instance runs | $0: every type runs at `--min-idle 0` |
 | Outputs bucket | Bytes stored, about $0.02 per GB a month (Standard, `us-central1`) | Whatever the last 30 days left behind; $0 once the lifecycle rule empties it |
 | Datasets bucket | Bytes stored, same rate | What you put there: 100 GB is about $2 a month |
 | Reads and writes | Operations, and FUSE's listing calls | Fractions of a cent per session; reads in the same region transfer free |
@@ -689,9 +747,12 @@ moves to `e2-small` with the GPU milestone.
 The whole path for one type, end to end:
 
 - `images/cloud/base`, `images/cloud/linux`, and the deploy workflow from `main`:
-  build, push, smoke through `agent-linux-next`, promote.
+  build, push, smoke through `agent-linux-next`, promote; the build-only check on pull
+  requests.
 - `hooks/gcp/spawn-runner` (Cloud Run), the orchestrator container with its
-  supervisor, and the `e2-micro` host from `lolay/infrastructure`.
+  supervisor, and the `e2-micro` host from `lolay/infrastructure` (applied).
+- No standby, no cost line, Claude upgrading itself at start (all above).
+- Plan: [handoffs/plan-gcp-linux-heron.md](handoffs/plan-gcp-linux-heron.md).
 - The "Agent: Linux" environment in claude.ai and `claude-env-linux` in Secret
   Manager.
 - Done when [tests/sessions/linux.md](../tests/sessions/linux.md) passes, run twice
@@ -703,7 +764,7 @@ The whole path for one type, end to end:
 - `gis`: `images/cloud/gis` (GDAL, PDAL, QGIS), its job and environment. Done when
   [tests/sessions/gis.md](../tests/sessions/gis.md) passes.
 - `android`: the Compute Engine path above: Packer image, the hook's Compute Engine
-  branch, the reaper, Cloud NAT. Done when
+  branch, the reaper (Cloud NAT is already there). Done when
   [tests/sessions/android.md](../tests/sessions/android.md) passes, with the emulator
   boot time compared against the Linux host's.
 
@@ -720,7 +781,9 @@ The whole path for one type, end to end:
 ### m4 - Dependency watch
 
 The lock files, the hourly watch, the lock bot, the nightly rebuild, the cleanup
-policy and manifests. Independent of the types; it can start any time after m1.
+policy out of dry run, and manifests; with the watch in place, turn off Claude's
+self-update at start (`CLAUDE_UPGRADE=false`). Independent of the types; it can start
+any time after m1.
 
 ## Open items
 

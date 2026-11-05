@@ -2,8 +2,9 @@
 
 What `lolay/infrastructure` sets up in the `lolay-agents` GCP project for the runners
 in [gcp.md](gcp.md), and what it leaves to this repo. Written 2026-11-05 as the brief
-for the Terraform; Terraform in `lolay/infrastructure` is the source of truth once it
-exists, and this page says what agent-images expects from it.
+for the Terraform, and updated the same day to match what was applied
+(`lolay/infrastructure`, `stacks/gcp/agents`). Terraform is the source of truth; this
+page says what agent-images expects from it.
 
 ## What this is for
 
@@ -52,18 +53,21 @@ no Terraform change and no key lands in state.
   and Cloud Run GPUs; the region is the constraint, not the zone).
 - APIs: `run`, `artifactregistry`, `secretmanager`, `iam`, `iamcredentials`, `sts`,
   `compute`, `storage`, `logging`, `monitoring`, `cloudquotas`,
-  `cloudresourcemanager`, `billingbudgets`, `cloudbilling` (agent-images' deploy
-  reads current prices from the Cloud Billing Catalog API for the cost notice).
-- A billing budget on the project with alerts at 50%, 90%, 100% of a monthly amount
-  Gary picks. GPU sessions are the cost risk.
+  `cloudresourcemanager`, `billingbudgets`, `cloudbilling` (enabled now for the cost
+  notice, which reads current prices from the Cloud Billing Catalog API; the notice
+  comes after m1, so nothing uses it yet).
+- A billing budget on the project with alerts at 50%, 90%, 100% of $100 a month. GPU
+  sessions are the cost risk.
 
 ### Artifact Registry
 
 - Docker repo `agent-images` in `us-central1`.
-- Cleanup policy: keep the most recent version per image, delete the rest and all
-  untagged. (`google_artifact_registry_repository` `cleanup_policies` with a
-  `most_recent_versions` keep of 1 and a delete on everything else; run with
-  `cleanup_policy_dry_run = true` first.)
+- Cleanup policy: keep the two most recent versions per image, delete the rest and
+  all untagged. (`google_artifact_registry_repository` `cleanup_policies` with a
+  `most_recent_versions` keep of 2 and a delete on everything else.) Two, not one:
+  after a push whose smoke test fails, the live digest is no longer the newest, and
+  keeping one would delete it. Still a dry run (`cleanup_policy_dry_run = true`) until
+  its log looks right.
 
 ### Storage
 
@@ -75,32 +79,42 @@ no Terraform change and no key lands in state.
   30 days, no versioning. Sessions mount it read-write with Cloud Storage FUSE.
 - Bucket `lolay-agents-datasets`: reusable inputs Gary adds by hand. Uniform access,
   no public access, no lifecycle rule. Sessions mount it read-only.
-- Cloud Run ephemeral disk quota: the defaults are 10 GiB per instance and 100 GiB per
-  region. Ask for 200 GiB per instance and 500 GiB in `us-central1` (quota
-  preferences, like the GPU quota). `linux` fits the defaults, so this can lag the
-  first step; `gis` needs it in the second.
+- Cloud Run ephemeral disk quota: 10 GiB per instance for every type for now, the
+  default grant, which needs no approval. The region's 100 GiB default is granted when
+  a job first uses scratch (until then the granted value reads 0, so Terraform doesn't
+  manage the regional preference). `gis`, `linux-gpu` and `3d-gpu` need more (100, 100
+  and 200 GiB per instance), asked for when those types arrive.
 
 ### Network and the orchestrator host
 
 - A custom VPC `agents`, one subnet in `us-central1`. No ingress firewall rules at all
   (the default network's open SSH rule is the reason not to use it). Optional: allow
   IAP's range `35.235.240.0/20` on 22 for break-glass SSH.
-- Cloud NAT on a Cloud Router in `us-central1` for outbound internet. No VM gets an
-  external IP: the orchestrator doesn't need one, and the `android` runner VMs come
-  and go, so NAT is simpler than an address each.
+- Cloud NAT on a Cloud Router in `us-central1` for outbound internet, built with the
+  foundation. No VM gets an external IP: the orchestrator reaches Anthropic through
+  NAT, and the `android` runner VMs come and go, so NAT is simpler than an address
+  each.
 - A firewall rule allowing IAP's range `35.235.240.0/20` on port 22 to instances
   tagged `packer` only: Packer reaches its build VM through IAP (`use_iap = true`),
   with no external IP.
 - VM `agent-orchestrator`: `e2-micro` to start (GCP free tier in `us-central1`), Container-
-  Optimized OS, service account `agent-orchestrator`, shielded VM, OS Login on.
-  Boot config: cloud-init that installs a systemd unit which
-  1. reads metadata key `orchestrator-image` (an Artifact Registry digest),
-  2. pulls and runs that container with `--restart=always`,
-  3. long-polls the metadata server (`?wait_for_change=true`) and restarts the
-     container when the key changes.
-  agent-images' deploy sets that key; Terraform must ignore changes to it
+  Optimized OS, service account `agent-orchestrator` (scope `cloud-platform`), shielded
+  VM, OS Login on, no external IP, `google-logging-enabled`. Boot config: cloud-init
+  that installs a systemd unit which
+  1. long-polls metadata key `orchestrator-image` (`?wait_for_change=true`);
+  2. accepts only a digest under the registry
+     (`us-central1-docker.pkg.dev/lolay-agents/agent-images/<name>@sha256:...`); any
+     other value is logged and ignored;
+  3. when the value changes, pulls that image and runs it as container
+     `agent-orchestrator` with `--restart=always` and `--stop-timeout 85`, keeping the
+     old container if the pull fails. A value equal to the running image does
+     nothing, so restarting the same image means resetting the VM.
+  agent-images' deploy sets the key with
+  `gcloud compute instances add-metadata agent-orchestrator --zone us-central1-a --metadata orchestrator-image=<digest ref>`;
+  Terraform ignores changes to it
   (`lifecycle { ignore_changes = [metadata["orchestrator-image"]] }`). Until the first
-  image exists, the unit should wait quietly.
+  image exists, the unit waits quietly. The container's stdout goes to Cloud Logging;
+  there is no SSH.
 - Machine type as a variable: `e2-micro` now, `e2-small` when the GPU types arrive.
 - Nested virtualization allowed: if the project sits under an organization, the
   `compute.disableNestedVirtualization` constraint must not be enforced for it. The
@@ -112,9 +126,9 @@ The project is dedicated to this, so project-level grants are an acceptable scop
 
 | Service account | Grants |
 | --- | --- |
-| `agent-orchestrator` (the VM's) | `secretmanager.secretAccessor` with an IAM condition `resource.name.startsWith("projects/<number>/secrets/claude-env-")`; `run.developer` (execute jobs with overrides); `iam.serviceAccountUser` on `agent-runner` (jobs and runner VMs run as it); `storage.objectCreator` and `objectViewer` on the marker bucket; `artifactregistry.reader`; `logging.logWriter`; `monitoring.metricWriter`; for `android`, `compute.instanceAdmin.v1` (create runner VMs, and its reaper deletes stopped ones) and `compute.imageUser` |
+| `agent-orchestrator` (the VM's) | `secretmanager.secretAccessor` with an IAM condition `resource.name.startsWith("projects/<number>/secrets/claude-env-")`; `run.developer` (execute jobs with overrides); `iam.serviceAccountUser` on `agent-runner` (jobs and runner VMs run as it); `storage.objectUser` on the marker bucket (create and read, and delete: the hook deletes its marker when a spawn fails); `artifactregistry.reader`; `logging.logWriter`; `monitoring.metricWriter`; for `android`, `compute.instanceAdmin.v1` (create runner VMs, and its reaper deletes stopped ones) and `compute.imageUser` |
 | `agent-runner` (what job executions and runner VMs run as) | `logging.logWriter`; `storage.objectAdmin` on `lolay-agents-outputs` only; `storage.objectViewer` on `lolay-agents-datasets` only. Sessions get no secrets and no other GCP access |
-| `agent-images-ci` (GitHub Actions, through federation) | `artifactregistry.writer` on the repo; `run.developer`; `iam.serviceAccountUser` on `agent-runner`; `compute.instances.setMetadata` on the orchestrator VM only (a custom role, or `compute.instanceAdmin.v1` scoped to that instance); for the `android` image, `compute.instanceAdmin.v1` and `compute.storageAdmin` (Packer's build VM and the image), `iap.tunnelResourceAccessor` (Packer's SSH) |
+| `agent-images-ci` (GitHub Actions, through federation) | `artifactregistry.writer` on the repo; `run.developer`; `iam.serviceAccountUser` on `agent-runner`; custom role `orchestratorDeployer` (`compute.instances.get`, `compute.instances.setMetadata`) on the orchestrator VM only; custom role `zoneOperationsReader` (`compute.zoneOperations.get`) at project level, since gcloud polls the operation `setMetadata` returns; `iam.serviceAccountUser` on `agent-orchestrator`, since `setMetadata` on a VM that runs as a service account needs actAs on it (it gives CI nothing new: CI already picks the image the orchestrator runs); for the `android` image, `compute.instanceAdmin.v1` and `compute.storageAdmin` (Packer's build VM and the image), `iap.tunnelResourceAccessor` (Packer's SSH) |
 
 ### Workload identity federation
 
@@ -139,8 +153,8 @@ The project is dedicated to this, so project-level grants are an acceptable scop
 
 ## Outputs
 
-agent-images keeps a committed copy of these in one file (its CI configuration rule:
-non-secret values are committed, Terraform stays the source):
+agent-images keeps a committed copy of these in `infra/gcp/project.env` (its CI
+configuration rule: non-secret values are committed, Terraform stays the source):
 
 `PROJECT_ID`, `PROJECT_NUMBER`, `REGION`, `ZONE`, `ARTIFACT_REGISTRY`
 (`us-central1-docker.pkg.dev/lolay-agents/agent-images`), `WIF_PROVIDER` (full
@@ -162,15 +176,14 @@ resource name), `CI_SERVICE_ACCOUNT`, `ORCHESTRATOR_SERVICE_ACCOUNT`,
   and its CI builds the image with Packer. Terraform supplies the network, NAT, IAP
   rule and permissions they use.
 
-## Open decisions for Gary
+## Decided
 
-1. Does lolay have a GCP organization or folder for the project, or is it standalone?
-2. Where Terraform state lives: a GCS bucket in a separate admin project (the usual
-   answer, and where `lolay/infrastructure`'s own CI identity would live), or in
-   `lolay-agents` itself.
-3. How `lolay/infrastructure` applies: plan on pull request and apply on merge to
-   `main` through its own federation, or apply by hand at first.
-4. The monthly budget amount.
+1. The project sits under the lolay.com organization.
+2. Terraform state lives in `lolay-infra-tf-state`, in the separate admin project
+   `lolay-infra`, which also holds `lolay/infrastructure`'s own CI identities.
+3. `lolay/infrastructure` plans on pull requests and applies on merge to `main`
+   (`apply.yml`), through its own federation; `bootstrap/` is applied by hand.
+4. The monthly budget is $100, alerts only.
 
 ## Gotchas
 
