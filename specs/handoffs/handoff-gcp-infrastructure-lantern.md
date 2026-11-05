@@ -10,8 +10,14 @@ first. Written 2026-11-05.
 `lolay/agent-images` runs Claude Code self-hosted runners. Its GCP design: every
 Claude Code cloud session gets a fresh Cloud Run job execution (CPU or an NVIDIA
 RTX PRO 6000 GPU) built from images that agent-images builds and pushes from GitHub
-Actions. One always-on `e2-micro` runs one Claude orchestrator per runner type, and
-each orchestrator starts those executions. Nothing from Agerpoint is involved: this
+Actions; the `android` type gets a Compute Engine VM per session instead, because it
+needs KVM. One always-on `e2-micro` runs one Claude orchestrator per runner type, and
+each orchestrator starts those executions or VMs.
+
+The order of work: `linux` first and tested, then `gis` and `android`, then the GPU
+types (`linux-gpu`, `3d-gpu`), at which point the orchestrator VM moves to
+`e2-small`. Terraform for the first step needs everything below except the GPU
+quota; the Compute Engine pieces are for `android`, the second step. Nothing from Agerpoint is involved: this
 is a personal (`lolay`) project.
 
 ## The split
@@ -26,7 +32,8 @@ Terraform change.
 | Project, APIs, budget | Images and their tags |
 | Artifact Registry repo and cleanup policy | Cloud Run jobs, one per runner type (`agent-<type>`), created and updated by its deploy workflow |
 | GCS bucket for order markers | The orchestrator container and its image digest |
-| Network, the orchestrator VM, its boot config | The runner types (`linux`, `linux-gpu`, `gis`, `3d-gpu`, later `android`) |
+| Network, Cloud NAT, the orchestrator VM, its boot config | The runner types (`linux`, `gis`, `android`, then `linux-gpu`, `3d-gpu`) |
+| | The `android` Compute Engine image (Packer, image family `agent-android`) and the per-session VMs |
 | Service accounts, IAM, workload identity federation | |
 | GPU quota preference | |
 
@@ -68,10 +75,13 @@ no Terraform change and no key lands in state.
 - A custom VPC `agents`, one subnet in `us-central1`. No ingress firewall rules at all
   (the default network's open SSH rule is the reason not to use it). Optional: allow
   IAP's range `35.235.240.0/20` on 22 for break-glass SSH.
-- Outbound internet for the VM: either an ephemeral external IP (no ingress rules, so
-  nothing reaches it) or no external IP plus Cloud NAT. Either costs a few dollars a
-  month; pick one and note the cost.
-- VM `agent-orchestrator`: `e2-micro` (GCP free tier in `us-central1`), Container-
+- Cloud NAT on a Cloud Router in `us-central1` for outbound internet. No VM gets an
+  external IP: the orchestrator doesn't need one, and the `android` runner VMs come
+  and go, so NAT is simpler than an address each.
+- A firewall rule allowing IAP's range `35.235.240.0/20` on port 22 to instances
+  tagged `packer` only: Packer reaches its build VM through IAP (`use_iap = true`),
+  with no external IP.
+- VM `agent-orchestrator`: `e2-micro` to start (GCP free tier in `us-central1`), Container-
   Optimized OS, service account `agent-orchestrator`, shielded VM, OS Login on.
   Boot config: cloud-init that installs a systemd unit which
   1. reads metadata key `orchestrator-image` (an Artifact Registry digest),
@@ -81,7 +91,10 @@ no Terraform change and no key lands in state.
   agent-images' deploy sets that key; Terraform must ignore changes to it
   (`lifecycle { ignore_changes = [metadata["orchestrator-image"]] }`). Until the first
   image exists, the unit should wait quietly.
-- Machine type as a variable, so moving to `e2-small` is a one-line change.
+- Machine type as a variable: `e2-micro` now, `e2-small` when the GPU types arrive.
+- Nested virtualization allowed: if the project sits under an organization, the
+  `compute.disableNestedVirtualization` constraint must not be enforced for it. The
+  `android` VMs turn it on per instance.
 
 ### Service accounts and IAM
 
@@ -89,9 +102,9 @@ The project is dedicated to this, so project-level grants are an acceptable scop
 
 | Service account | Grants |
 | --- | --- |
-| `agent-orchestrator` (the VM's) | `secretmanager.secretAccessor` with an IAM condition `resource.name.startsWith("projects/<number>/secrets/claude-env-")`; `run.developer` (execute jobs with overrides); `iam.serviceAccountUser` on `agent-runner` (jobs run as it); `storage.objectCreator` and `objectViewer` on the marker bucket; `artifactregistry.reader`; `logging.logWriter`; `monitoring.metricWriter` |
-| `agent-runner` (what job executions run as) | `logging.logWriter` only. Sessions get no secrets and no GCP access |
-| `agent-images-ci` (GitHub Actions, through federation) | `artifactregistry.writer` on the repo; `run.developer`; `iam.serviceAccountUser` on `agent-runner`; `compute.instances.setMetadata` on the orchestrator VM only (a custom role or `compute.instanceAdmin.v1` scoped to that instance) |
+| `agent-orchestrator` (the VM's) | `secretmanager.secretAccessor` with an IAM condition `resource.name.startsWith("projects/<number>/secrets/claude-env-")`; `run.developer` (execute jobs with overrides); `iam.serviceAccountUser` on `agent-runner` (jobs and runner VMs run as it); `storage.objectCreator` and `objectViewer` on the marker bucket; `artifactregistry.reader`; `logging.logWriter`; `monitoring.metricWriter`; for `android`, `compute.instanceAdmin.v1` (create runner VMs, and its reaper deletes stopped ones) and `compute.imageUser` |
+| `agent-runner` (what job executions and runner VMs run as) | `logging.logWriter` only. Sessions get no secrets and no GCP access |
+| `agent-images-ci` (GitHub Actions, through federation) | `artifactregistry.writer` on the repo; `run.developer`; `iam.serviceAccountUser` on `agent-runner`; `compute.instances.setMetadata` on the orchestrator VM only (a custom role, or `compute.instanceAdmin.v1` scoped to that instance); for the `android` image, `compute.instanceAdmin.v1` and `compute.storageAdmin` (Packer's build VM and the image), `iap.tunnelResourceAccessor` (Packer's SSH) |
 
 ### Workload identity federation
 
@@ -143,8 +156,7 @@ resource name), `CI_SERVICE_ACCOUNT`, `ORCHESTRATOR_SERVICE_ACCOUNT`,
    `lolay-agents` itself.
 3. How `lolay/infrastructure` applies: plan on pull request and apply on merge to
    `main` through its own federation, or apply by hand at first.
-4. External IP or Cloud NAT for the orchestrator VM.
-5. The monthly budget amount.
+4. The monthly budget amount.
 
 ## Gotchas
 
@@ -156,7 +168,11 @@ resource name), `CI_SERVICE_ACCOUNT`, `ORCHESTRATOR_SERVICE_ACCOUNT`,
 - The free `e2-micro` is one per billing account across the whole account, and only in
   `us-central1`, `us-west1` and `us-east1`.
 - Cloud Run GPU jobs need the GPU quota and at least 20 vCPU and 80 GiB per RTX PRO
-  6000 instance; agent-images sets those on the job, but the quota is here.
+  6000 instance; agent-images sets those on the job, but the quota is here. Not
+  needed until the GPU step.
+- Nested virtualization needs an Intel machine series (`n2` to start) or AMD `n4d`;
+  not `e2` or Arm. The default `n2` CPU quota in `us-central1` covers a few runner VMs
+  at 8 vCPUs each.
 
 ## Branch
 

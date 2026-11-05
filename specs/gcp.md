@@ -60,7 +60,7 @@ Each type is four things, declared in `infra/gcp/<type>.env`:
 | `linux-gpu` | `agent-linux-gpu` (`agent-base-gpu` as is) | Cloud Run job, RTX PRO 6000, 20 vCPU, 80 GiB (that GPU's minimum); L4 for cheap tests | 0: a standby GPU bills the whole time |
 | `gis` | `agent-gis` (from `agent-base`: GDAL, QGIS, PDAL) | Cloud Run job, CPU | 0 or 1 |
 | `3d-gpu` | `agent-3d-gpu` (from `agent-base-gpu`: COLMAP built for Blackwell, Blender) | Cloud Run job, RTX PRO 6000 | 0 |
-| `android` | Compute Engine image | Compute Engine VM per session with nested virtualization (the fallback below); Cloud Run has no KVM | 0 |
+| `android` | Compute Engine image | Compute Engine VM per session with nested virtualization ([below](#compute-engine-vm-per-session-android-and-the-gpu-fallback)); Cloud Run has no KVM | 0 |
 | `mac` | Not on GCP | agent-images' Macs (Tart), as today: Mac development, iOS included | Per host |
 
 Mobile splits by platform: iOS needs macOS, which no GCP service runs, so it's part of
@@ -100,19 +100,20 @@ calls in, so with none running, sessions sit in the queue.
 | Host | Memory | Monthly cost, always on |
 | --- | --- | --- |
 | `e2-micro` (start here) | 1 GB | $0 in GCP's free tier (one per billing account, `us-central1`, `us-west1` or `us-east1`), plus possibly a few dollars for its external IP; check the billing report |
-| `e2-small` (if it runs out of memory) | 2 GB | About $12 |
+| `e2-small` (from the GPU milestone, or sooner if memory runs out) | 2 GB | About $12 |
 | Cloud Run worker pool, 1 vCPU, 512 MiB | | Roughly $45 to $50 at instance-based rates (unverified; Google's page didn't load) |
 
 Memory, measured: a long-running orchestrator on a Mac (2026-11-05) had a resident size
 of 126 MB; one on Linux was about 40 MB at startup before connecting. Resident size
 counts the Claude binary's shared code once per process, so several orchestrators
 share part of it; on Linux, `Pss` in `/proc/<pid>/smaps_rollup` gives the real share.
-Taking 130 MB each at face value: four orchestrators (`linux`, `linux-gpu`, `gis`,
-`3d-gpu`) are about 520 MB, which fits in an `e2-micro` next to Container-Optimized
-OS and Docker, and six probably don't. The hook adds to that if it shells out to
+Taking 130 MB each at face value: the first three types' orchestrators (`linux`,
+`gis`, `android`) are about 390 MB, which fits in an `e2-micro` next to
+Container-Optimized OS and Docker; with the GPU types added, the host moves to
+`e2-small`. The hook adds to that if it shells out to
 `gcloud` (Python, around 100 MB for each run), so the hook calls the Cloud Run and
 Storage REST APIs with `curl` and a token from the metadata server instead: small,
-and a second faster per spawn. m3 measures it; moving to `e2-small` is one setting.
+and a second faster per spawn. m1 measures it; moving to `e2-small` is one setting.
 
 The host runs Container-Optimized OS with no inbound access at all. A systemd unit
 starts the container and long-polls the metadata server
@@ -453,7 +454,8 @@ A virtual head: Xvfb, OpenGL through VirtualGL/EGL on the GPU, screenshots for
 computer use, noVNC if you want to watch. The open question is whether Cloud Run's
 mounted driver includes the graphics libraries (`libEGL_nvidia`, `libGLX_nvidia`,
 Vulkan ICD) or only compute. The docs only describe the compute path. That's the first
-spike, because it decides between Cloud Run and the fallback below. Software rendering
+question m3 answers, because it decides between Cloud Run and the Compute Engine path
+below. Software rendering
 (llvmpipe) on 20 vCPUs works for screenshots in the meantime, slowly.
 
 ## Platforms
@@ -477,53 +479,77 @@ inside it, which makes the 24-hour minimum irrelevant. Same two-VM license limit
 and guests can't be newer than the host, so it needs AWS's macOS 27 AMI. One open
 Tart issue reports VMs failing to start on a headless `mac2.metal`.
 
-## Fallback: a Compute Engine VM per session
+## Compute Engine VM per session: `android`, and the GPU fallback
 
-If Cloud Run can't render, or a type needs Docker in the session, a full GPU desktop,
-or nested virtualization:
+Cloud Run gives a container no KVM, so `android` runs as a Compute Engine VM per
+session, the cloud version of the Linux host's LXD VMs. The same path is the GPU
+fallback if Cloud Run can't render, and the answer for any type that needs Docker in
+the session or a full GPU desktop.
 
-- **Image:** Packer's `googlecompute` builder, provisioned by the same scripts as the
-  LXD image, plus NVIDIA's driver on `-gpu` types. A Compute Engine image instead of a
-  container; same `-next` promotion.
-- **Hook:** `gcloud compute instances create` from an instance template (G4 for
-  RTX PRO 6000, fractional sizes available; N2/C3 for CPU), the work order in instance
-  metadata that the guest reads once and deletes, `--max-run-duration` with
-  `--instance-termination-action=DELETE` as the backstop, and the guest deletes its
-  own VM when the runner exits.
-- **Warm starts:** a managed instance group standby pool of stopped or suspended VMs.
-- **Android:** Compute Engine supports nested virtualization on Intel VMs (and AMD
-  N4D), and with a VM per session the emulator is one level deep, not the two that
-  ruled cloud VMs out in [linux.md](linux.md). Worth a test before buying the NUC.
-
-That's more to own (driver, OS image), which is why it's the fallback, not the start.
+- **Image:** Packer's `googlecompute` builder, run from GitHub Actions (the build VM
+  runs in GCP, so nothing is pulled out), provisioned by the same scripts as the LXD
+  image (`images/linux/scripts`, `images/shared`): Android SDK, emulator, a booted
+  and snapshotted AVD. Published to the image family `agent-android`; the `-next`
+  pattern becomes "build, boot a test VM from it, then add it to the family", and
+  older images in the family are deleted, keeping one.
+- **Machine:** an Intel series with nested virtualization on (`n2-standard-8` to
+  start; the emulator needs KVM inside the VM), no external IP, egress through Cloud
+  NAT, the `agent-runner` service account, `--max-run-duration` as a backstop. Set
+  in `infra/gcp/android.env`, like every type.
+- **Hook:** the same contract as the Cloud Run hook. After the order marker, it
+  creates `agent-android-<order id prefix>` from the family's latest image through
+  the Compute Engine REST API, with the work order in instance metadata. The guest
+  reads it once, deletes the key, and runs `agent-runner` with `EPHEMERAL=true`, as
+  the LXD VMs do: one session, then power off.
+- **Cleanup:** the VM doesn't delete itself (that would mean a delete permission
+  inside the session). A reaper in the orchestrator container deletes stopped
+  `agent-android-*` instances every minute, plus any past `--max-run-duration`.
+- **Warm starts:** none at first (`--min-idle 0`); a managed instance group standby
+  pool of suspended VMs later if cold starts hurt.
 
 ## Milestones
 
-### m1 - CPU runner by hand
+Linux first and tested, then Android and GIS, then the GPU types. The orchestrator
+host starts as an `e2-micro`, which holds the first three types' orchestrators, and
+moves to `e2-small` with the GPU milestone.
 
-`agent-linux` image, a Cloud Run job, an environment secret, and `claude
-self-hosted-runner` started by a manual execution with the real secret. Proves the
-image, the Stop hook and the git proxy in Cloud Run.
+### m1 - `linux`
 
-### m2 - GPU spike
+The whole path for one type, end to end:
 
-`agent-linux-gpu` on an L4 first (cheaper), then RTX PRO 6000: `nvidia-smi`, CUDA probe,
-`eglinfo` and `vulkaninfo` against Xvfb, a Blender EEVEE render, a computer-use
-screenshot of a GL app. Measure cold start. Decides Cloud Run or the fallback.
+- `images/cloud/base`, `images/cloud/linux`, and the deploy workflow from `main`:
+  build, push, smoke through `agent-linux-next`, promote.
+- `hooks/gcp/spawn-runner` (Cloud Run), the orchestrator container with its
+  supervisor, and the `e2-micro` host from `lolay/infrastructure`.
+- The "Agent: Linux" environment in claude.ai and `claude-env-linux` in Secret
+  Manager.
+- Done when [tests/sessions/linux.md](../tests/sessions/linux.md) passes, run twice
+  so the isolation check sees a fresh runner the second time, and the orchestrator's
+  memory on the host is measured.
 
-### m3 - Orchestrator and hook
+### m2 - `gis` and `android`
 
-`hooks/gcp/spawn-runner`, the orchestrator image and its host, order markers. A
-session from claude.ai lands on a fresh execution and the execution ends with it.
+- `gis`: `images/cloud/gis` (GDAL, PDAL, QGIS), its job and environment. Done when
+  [tests/sessions/gis.md](../tests/sessions/gis.md) passes.
+- `android`: the Compute Engine path above: Packer image, the hook's Compute Engine
+  branch, the reaper, Cloud NAT. Done when
+  [tests/sessions/android.md](../tests/sessions/android.md) passes, with the emulator
+  boot time compared against the Linux host's.
 
-### m4 - Image pipeline
+### m3 - GPU types
 
-GitHub Actions build, smoke and promote; the hourly watch and nightly rebuild;
-cleanup policy; manifest artifacts; `make cloud-*` targets; README version table rows.
+- Host to `e2-small`.
+- `linux-gpu` on an L4 first (cheaper), then RTX PRO 6000. Done when
+  [tests/sessions/linux-gpu.md](../tests/sessions/linux-gpu.md) passes, which settles
+  the open graphics question: if OpenGL and Vulkan don't run on the GPU in Cloud Run,
+  GPU types move to the Compute Engine path (G4).
+- `3d-gpu`: COLMAP, Blender and the splatting library built for compute capability
+  12.0. Done when [tests/sessions/3d-gpu.md](../tests/sessions/3d-gpu.md) passes.
 
-### m5 - Fallback, only if m2 says so
+### m4 - Dependency watch
 
-The Compute Engine path above.
+The lock files, the hourly watch, the lock bot, the nightly rebuild, the cleanup
+policy and manifests. Independent of the types; it can start any time after m1.
 
 ## Open items
 
@@ -532,7 +558,8 @@ The Compute Engine path above.
 | Graphics libraries on Cloud Run GPUs | Decides whether a virtual head runs on Cloud Run |
 | Cold start of a multi-GB GPU image | Sets `--expected-spawn-seconds` and whether a standby is worth paying for |
 | Cloud Run GPU quota grant | New projects get a default grant; may need a request for RTX PRO 6000 |
-| Data | Agerpoint's data is in Azure; for lolay, keep data-heavy work next to wherever its data is, since cross-cloud egress is about $0.08 to $0.12 per GB |
+| Emulator speed under nested virtualization on Compute Engine | Decides whether `android` stays on GCP or on the Linux host; m2 measures it |
+| Data | Keep data-heavy work next to wherever its data is: cross-cloud egress is about $0.08 to $0.12 per GB |
 
 ## References
 
