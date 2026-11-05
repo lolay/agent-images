@@ -47,8 +47,10 @@ brew bundle --file="$brewfile"
 # start with them. Both report progress on stderr, which a green build doesn't
 # allow, so it goes to the log with the rest.
 PATH="$(brew --prefix rustup)/bin:$PATH"
+# The minimal profile plus clippy and rustfmt is the default profile without
+# rust-docs, the offline docs (about 900 MB).
 log "installing the Rust stable toolchain"
-rustup toolchain install stable --profile default 2>&1
+rustup toolchain install stable --profile minimal --component clippy,rustfmt 2>&1
 log "installing the latest Terraform"
 tenv tf install latest 2>&1
 tenv tf use latest 2>&1
@@ -64,6 +66,10 @@ curl -fsSL -o "$tflint_tmp/checksums.txt" "$tflint_release/checksums.txt"
 unzip -q -o "$tflint_tmp/tflint_linux_amd64.zip" tflint -d "$tflint_tmp"
 sudo install -m 755 "$tflint_tmp/tflint" /usr/local/bin/tflint
 rm -rf "$tflint_tmp"
+
+# The bottles Homebrew downloaded aren't needed once poured (about 450 MB).
+brew cleanup --prune=all -s
+rm -rf "$(brew --cache)"
 
 log "$(brew list --versions nowline triage | tr '\n' ';')"
 log "node $(node --version), pnpm $(pnpm --version), $(python3 --version), $(uv --version)"
