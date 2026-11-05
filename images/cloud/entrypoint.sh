@@ -119,7 +119,32 @@ smoke() {
 		}
 		printf '%s, %s writable' "$(brew --version | head -n 1)" "$prefix"
 	}
+	# shellcheck disable=SC2317,SC2329 # called through check
+	toolchains() {
+		local versions=() failed=0 tool output
+		# Each tool with the arguments that print its version. cargo, rustc and
+		# terraform are proxies (rustup, tenv): this fails if the image left out
+		# their toolchains.
+		local -a tools=(
+			"node --version" "pnpm --version" "python3 --version" "uv --version"
+			"go version" "cargo --version" "rustc --version" "protoc --version"
+			"buf --version" "grpcurl -version" "terraform version" "tflint --version"
+			"actionlint -version" "shellcheck --version" "mandoc -V"
+		)
+		for tool in "${tools[@]}"; do
+			# shellcheck disable=SC2086 # the command and its arguments
+			if output="$(CHECKPOINT_DISABLE=1 $tool 2>&1)"; then
+				versions+=("${tool%% *}: $(head -n 1 <<<"$output")")
+			else
+				versions+=("${tool%% *}: missing")
+				failed=1
+			fi
+		done
+		printf '%s\n' "${versions[@]}"
+		return "$failed"
+	}
 	check claude claude --version
+	check toolchains toolchains
 	check scratch scratch_disk
 	check outputs outputs_round_trip
 	check datasets datasets_read_only

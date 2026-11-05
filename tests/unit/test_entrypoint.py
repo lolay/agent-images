@@ -12,6 +12,10 @@ from support import REPO, base_env, read_env_file, write_executable
 
 ENTRYPOINT = REPO / "images/cloud/entrypoint.sh"
 PROFILE = REPO / "images/cloud/base/profile.sh"
+TOOLCHAINS = (
+    "node", "pnpm", "python3", "uv", "go", "cargo", "rustc", "protoc", "buf",
+    "grpcurl", "terraform", "tflint", "actionlint", "shellcheck", "mandoc",
+)
 
 
 class EntrypointCase(unittest.TestCase):
@@ -36,6 +40,13 @@ class EntrypointCase(unittest.TestCase):
             self.fake_bin / "fake-watchdog", 'echo ran >>"$FAKE_OUT/watchdog"\n'
         )
         write_executable(self.fake_bin / "claude", "echo '9.9.9 (Claude Code)'\n")
+        # The toolchains the smoke checks; FAKE_BROKEN_TOOL names one that fails,
+        # as a rustup or tenv proxy does when its toolchain isn't installed.
+        for tool in TOOLCHAINS:
+            write_executable(
+                self.fake_bin / tool,
+                f'[[ "${{FAKE_BROKEN_TOOL:-}}" != {tool} ]] || exit 1\necho "{tool} 9.9"\n',
+            )
         self.brew_prefix = self.tmp / "linuxbrew"
         for sub in ("Cellar", "bin"):
             (self.brew_prefix / sub).mkdir(parents=True)
@@ -91,6 +102,8 @@ class RunTests(EntrypointCase):
         self.assertEqual(env["XDG_CACHE_HOME"], f"{self.scratch}/cache")
         self.assertEqual(env["PIP_CACHE_DIR"], f"{self.scratch}/cache/pip")
         self.assertEqual(env["HOMEBREW_CACHE"], f"{self.scratch}/cache/Homebrew")
+        self.assertEqual(env["CARGO_HOME"], f"{self.scratch}/cache/cargo")
+        self.assertEqual(env["pnpm_config_store_dir"], f"{self.scratch}/cache/pnpm-store")
         self.assertEqual(env["CLAUDE_BASE_DIR"], f"{self.scratch}/workspace")
         self.assertEqual(env["AGENT_SCRATCH"], str(self.scratch))
         self.assertEqual(env["AGENT_DATASETS"], str(self.datasets))
@@ -176,15 +189,24 @@ class SmokeTests(EntrypointCase):
         lines = [line for line in result.stdout.splitlines() if line.startswith("smoke: ")]
         checks = {line.split()[2]: line.split()[1] for line in lines}
         self.assertEqual(
-            set(checks), {"claude", "scratch", "outputs", "datasets", "homebrew"}
+            set(checks),
+            {"claude", "toolchains", "scratch", "outputs", "datasets", "homebrew"},
         )
         self.assertEqual(checks["claude"], "pass")
+        self.assertEqual(checks["toolchains"], "pass")
         self.assertEqual(checks["outputs"], "pass")
         self.assertEqual(checks["homebrew"], "pass")
         self.assertEqual(checks["scratch"], "FAIL")
         self.assertEqual(checks["datasets"], "FAIL")
         self.assertEqual(list((self.outputs / "_smoke").iterdir()), [])
         self.assertFalse((self.out / "env").exists(), "smoke must not start the runner")
+
+    def test_a_toolchain_that_fails_fails_the_check(self):
+        result = self.run_entrypoint("smoke", FAKE_BROKEN_TOOL="cargo")
+        line = next(line for line in result.stdout.splitlines() if " toolchains " in line)
+        self.assertTrue(line.startswith("smoke: FAIL toolchains"), line)
+        self.assertIn("cargo: missing", line)
+        self.assertIn("node: node 9.9", line)
 
     def test_homebrew_must_be_writable_by_the_session_user(self):
         result = self.run_entrypoint("smoke", FAKE_BREW_PREFIX=str(self.tmp / "missing"))

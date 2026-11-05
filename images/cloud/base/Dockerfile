@@ -17,7 +17,8 @@ RUN apt-get update \
 USER ubuntu
 WORKDIR /home/ubuntu
 
-# apt packages, Homebrew and the Brewfile, with the Linux image's own script.
+# apt packages, Homebrew and the Brewfile, the Rust and Terraform toolchains and
+# tflint, with the Linux image's own script.
 RUN --mount=type=bind,source=images/linux,target=/tmp/agent-images/linux <<'SCRIPT'
 set -eu
 mkdir -p /tmp/staging/scripts
@@ -55,7 +56,8 @@ sudo install -d -m 755 -o ubuntu -g ubuntu /scratch /mnt/outputs
 sudo install -d -m 755 /mnt/datasets
 SCRIPT
 
-ENV PATH=/home/ubuntu/bin:/home/ubuntu/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin
+# profile.sh's PATH: Homebrew (and rustup's proxies) ahead of the system.
+ENV PATH=/home/ubuntu/bin:/home/ubuntu/.local/bin:/home/linuxbrew/.linuxbrew/opt/rustup/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Claude Code with its native installer (~/.local/bin/claude): an exact version,
 # or a channel.

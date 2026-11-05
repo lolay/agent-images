@@ -38,7 +38,7 @@ jobs:
         run: |
           mkdir -p "$STAGING_DIR/scripts"
           cp -R images/shared/. images/linux/files/. "$STAGING_DIR/"
-          cp images/linux/packages.txt "$STAGING_DIR/"
+          cp images/linux/packages.txt images/linux/Brewfile "$STAGING_DIR/"
           cp images/linux/scripts/*.sh "$STAGING_DIR/scripts/"
           : >"$STDERR_LOG"
       # Each script's stderr also goes to STDERR_LOG; the Green step fails on any.
@@ -58,6 +58,9 @@ jobs:
             agent-emulator status
             agent-emulator stop
             java -version 2>&1 | head -n 1
+            node --version && pnpm --version && python3 --version && uv --version
+            go version && cargo --version && protoc --version && buf --version
+            terraform version && tflint --version
             claude --version
             ls ~/.claude ~/.claude/skills'
       - name: Green (no stderr from the image scripts)

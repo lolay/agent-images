@@ -66,7 +66,9 @@ writing the exec channel, image publishing, and ephemeral VMs ourselves.
 `images/linux`, on Ubuntu's official `ubuntu:24.04` VM image (it has lxd-agent):
 
 - **Packages:** `packages.txt` from Ubuntu's archive, unpinned: the Brewfile's session
-  tools, OpenJDK 21, and the emulator's libraries.
+  tools, OpenJDK 21, and the emulator's and Chromium's libraries. The `Brewfile` has
+  the language toolchains (Node, Python, Go, Rust, protobuf, Terraform through tenv),
+  also unpinned.
 - **Claude Code:** the native installer; the runner runs `claude update` at start.
 - **Android SDK** in `/opt/android-sdk`, owned by the guest user:
   - installed through Google's Android CLI (`android sdk`, which replaced sdkmanager in

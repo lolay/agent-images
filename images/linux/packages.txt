@@ -16,6 +16,10 @@ tmux
 unzip
 zip
 
+# Man page lint (nowline's lint-man, triage's release). The language toolchains
+# come from the Brewfile, which has the current releases; Ubuntu's are years old.
+mandoc
+
 # Homebrew's prerequisites on Ubuntu (git and curl are above). The Brewfile's
 # formulae are prebuilt, but Homebrew refuses to install a formula without a
 # system compiler ("No developer tools installed"), and sessions need one anyway
@@ -48,3 +52,29 @@ libxkbcommon0
 libxkbfile1
 libxrandr2
 libxtst6
+
+# Chromium's runtime libraries and fonts, so Playwright tests run without
+# `playwright install-deps`, which needs apt (and so sudo, which Cloud Run
+# refuses). Playwright's ubuntu24.04-x64 list (nativeDeps.ts), less what's above
+# and xvfb: sessions run headless. Playwright still downloads its own browser.
+fonts-freefont-ttf
+fonts-ipafont-gothic
+fonts-liberation
+fonts-noto-color-emoji
+fonts-tlwg-loma-otf
+fonts-unifont
+fonts-wqy-zenhei
+libatk-bridge2.0-0t64
+libatk1.0-0t64
+libatspi2.0-0t64
+libcairo2
+libcups2t64
+libdbus-1-3
+libfreetype6
+libglib2.0-0t64
+libnspr4
+libpango-1.0-0
+libx11-6
+libxcb1
+libxext6
+libxfixes3

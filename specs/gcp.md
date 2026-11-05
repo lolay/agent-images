@@ -170,9 +170,10 @@ Choices, carried over from [design.md](design.md):
   like the Linux image. Cloud Run sets the kernel's no-new-privileges flag on every
   container, so `sudo` (and with it `apt-get install`) can't work there: found by m1's
   first smoke run, 2026-11-05. Sessions install with Homebrew, which the user owns;
-  root instead would lose that, since Homebrew refuses to run as root. The base image
-  carries `build-essential` and the Linux image's packages, so the usual toolchains
-  build. The `android` VMs keep passwordless sudo.
+  root instead would lose that, since Homebrew refuses to run as root. So the base
+  image carries the usual toolchains already (the Linux image's packages.txt and
+  Brewfile: Node, Python, Go, Rust, protobuf, Terraform), rather than leave every
+  session to install them. The `android` VMs keep passwordless sudo.
 - **CUDA matches the host driver.** Cloud Run mounts its driver (580.x, CUDA 13.0) at
   `/usr/local/nvidia/lib64`, so `agent-base-gpu` uses a CUDA 13.0 userland. Newer CUDA
   needs NVIDIA's forward-compatibility package. Anything compiled (COLMAP, PyTorch
