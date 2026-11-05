@@ -38,7 +38,7 @@ Session `cse_01BNKwNabKkmdBmz9vJa7zka`, host `localhost`, branch `claude/runner-
 | 7. Playwright chromium (no deps) | pass (note) | downloaded in 17.8 s. Full Chromium still missing libcups, libcairo, libpango; headless shell needs glib, atk, at-spi2 (installed via Homebrew, see Missing) |
 | 7. `browser.png` (example.com, headless) | pass | 1024×812 PNG, title "Example Domain", 811 distinct sampled colors |
 | 7. Headed display screenshot | skipped | `$DISPLAY` unset |
-| 8. Git commit and push | pending | see the final commit on the branch |
+| 8. Git commit and push | pass | results committed and pushed to `claude/runner-test-linux-9hpni5`; no PR opened |
 
 ## Timings
 
