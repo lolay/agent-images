@@ -103,12 +103,16 @@ calls in, so with none running, sessions sit in the queue.
 | `e2-small` (if it runs out of memory) | 2 GB | About $12 |
 | Cloud Run worker pool, 1 vCPU, 512 MiB | | Roughly $45 to $50 at instance-based rates (unverified; Google's page didn't load) |
 
-An orchestrator measured about 40 MB at startup on 2026-11-05 (it exited before
-connecting, without a real key, so steady state is still to measure). Six of them,
-plus the OS and Docker, should fit in 1 GB; m3 checks, and the move to `e2-small` is
-one setting. Polling is small, and image pulls from Artifact Registry in the same
-region are free. The orchestrators are the only always-on cost: every runner is a
-Cloud Run execution billed only while its session runs.
+Memory, measured: a long-running orchestrator on a Mac (2026-11-05) had a resident size
+of 126 MB; one on Linux was about 40 MB at startup before connecting. Resident size
+counts the Claude binary's shared code once per process, so several orchestrators
+share part of it; on Linux, `Pss` in `/proc/<pid>/smaps_rollup` gives the real share.
+Taking 130 MB each at face value: four orchestrators (`linux`, `linux-gpu`, `gis`,
+`3d-gpu`) are about 520 MB, which fits in an `e2-micro` next to Container-Optimized
+OS and Docker, and six probably don't. The hook adds to that if it shells out to
+`gcloud` (Python, around 100 MB for each run), so the hook calls the Cloud Run and
+Storage REST APIs with `curl` and a token from the metadata server instead: small,
+and a second faster per spawn. m3 measures it; moving to `e2-small` is one setting.
 
 The host runs Container-Optimized OS with no inbound access at all. A systemd unit
 starts the container and long-polls the metadata server
@@ -369,10 +373,13 @@ out instead of rotting.
 
 1. `unset SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET`.
 2. Create `gs://<bucket>/orders/$CLAUDE_RUNNER_ORDER_ID` with
-   `--if-generation-match=0`. If it already exists, this order has an execution:
-   exit 0. A lifecycle rule deletes markers after a day.
-3. `gcloud run jobs execute "agent-$RUNNER_TYPE" --region us-central1 --async
-   --update-env-vars SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET=<work order>,RUNNER_LABEL=<type>-<order id prefix>`.
+   `x-goog-if-generation-match: 0` (the Storage JSON API through `curl`, like every
+   call the hook makes; no `gcloud` on the host). If it already exists, this order
+   has an execution: exit 0. A lifecycle rule deletes markers after a day.
+3. Run the job with overrides: `POST .../jobs/agent-$RUNNER_TYPE:run` on the Cloud
+   Run Admin API, with `SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET=<work order>` and
+   `RUNNER_LABEL=<type>-<order id prefix>` as container env overrides (what
+   `gcloud run jobs execute --async --update-env-vars` does).
    The work order travels as an execution override. It's visible to anyone who can
    read the execution, but it's single-use and spent at registration, so a session
    that reads it gets nothing, the same reasoning as design.md. If that's not enough,
