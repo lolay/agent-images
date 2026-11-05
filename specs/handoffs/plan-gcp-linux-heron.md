@@ -1,6 +1,6 @@
 # Plan: m1 `linux` on GCP
 
-Status: **approved 2026-11-05; running s1 to s12 unattended, stopping at s13.** `MIN_IDLE=0` chosen. Branch
+Status: **s1 to s12 done (2026-11-05); waiting on Gary at s13.** `MIN_IDLE=0` chosen. Branch
 `claude/eloquent-mayer-ivkml8` in `lolay/agent-images`; `lolay/infrastructure` needs
 no change for m1 (its branch of the same name stays untouched).
 
@@ -378,7 +378,7 @@ read-through; no job without `environment: production` has `id-token: write`.
 
 Done: `make help` lists them; `make cloud-ci` passes here.
 
-#### s12 - [exec] Local verification and handoff
+#### s12 - [exec] Local verification and handoff (done)
 
 Everything that runs without GCP, in one pass on the final tree: `shellcheck -x` and
 `shfmt -d` on every script, `make cloud-test`, `make cloud-build`, `make cloud-smoke`,
