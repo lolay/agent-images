@@ -52,7 +52,8 @@ no Terraform change and no key lands in state.
   and Cloud Run GPUs; the region is the constraint, not the zone).
 - APIs: `run`, `artifactregistry`, `secretmanager`, `iam`, `iamcredentials`, `sts`,
   `compute`, `storage`, `logging`, `monitoring`, `cloudquotas`,
-  `cloudresourcemanager`, `billingbudgets`.
+  `cloudresourcemanager`, `billingbudgets`, `cloudbilling` (agent-images' deploy
+  reads current prices from the Cloud Billing Catalog API for the cost notice).
 - A billing budget on the project with alerts at 50%, 90%, 100% of a monthly amount
   Gary picks. GPU sessions are the cost risk.
 

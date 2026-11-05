@@ -533,10 +533,50 @@ runner sets the same).
     user the gs:// path.
   - Read shared inputs from $AGENT_DATASETS (read-only).
   - Code still goes to git: commit and push before the session ends.
+
+  ## Cost
+  - This runtime costs about $AGENT_COST_USD_PER_HOUR an hour while the session
+    runs (the start-of-session facts give the figure and its breakdown). Start
+    your first reply with the cost line from those facts. Before starting work you
+    expect to take over an hour, say what it will roughly cost.
   ```
 - The same `SessionStart` hook prints one line of facts into the session's context:
   free space on scratch, the outputs path as `gs://...`, and what's at the top of
   datasets.
+
+**Cost notice.** Every session opens by saying what its runtime costs, for example
+"⚠ This runtime costs approximately $8.99/hour" on a `3d-gpu` session. A `CLAUDE.md`
+can't print anything on its own (it's instructions to Claude, not output), so the
+same `SessionStart` hook does it two ways:
+
+- `systemMessage` in its JSON output, which Claude Code shows to the user as a
+  warning line;
+- `additionalContext` carrying the same line, with the `CLAUDE.md` rule above
+  ("start your first reply with the cost line"), in case a surface doesn't show
+  hook messages. m1 checks what claude.ai actually shows and drops whichever is
+  redundant.
+
+The figure is worked out at deploy, not baked into the image, because it depends on
+the job's resources (CPU, memory, GPU, scratch disk), which change in
+`infra/gcp/<type>.env` without an image build. Every deploy, which includes every
+image build and the nightly one:
+
+1. reads the type's resources from its env file;
+2. looks up the current prices for them in `us-central1` from the Cloud Billing
+   Catalog API (Cloud Run CPU, memory, GPU and ephemeral disk SKUs; Compute Engine
+   N2 cores, memory and balanced disk for `android`), with the workflow's federated
+   identity;
+3. sets two environment variables on the job (or the `android` VM's metadata):
+   `AGENT_COST_USD_PER_HOUR` (`8.99`) and `AGENT_COST_DETAIL` (each part's share and
+   the date the prices were read);
+4. writes the same figures into the image manifest and the job summary, so a price
+   change shows up in the deploy log.
+
+The figure is the runtime's list price per hour of the session, rounded up to the
+cent. It leaves out Claude usage itself (billed to the plan, not GCP), the free tier,
+egress, and the buckets, and the notice says "approximately" for that reason. If the
+price lookup fails, the deploy keeps the last figure and flags it in the job summary
+rather than failing.
 
 **Idle cost.** Close to nothing:
 
