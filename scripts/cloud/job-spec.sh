@@ -99,9 +99,10 @@ jq -n \
 				}],
 				volumes: [
 					{name: "scratch", emptyDir: {medium: "DISK", sizeLimit: $scratch}},
-					# The session user (uid 1000) writes, and sees folders other sessions made.
+					# Cloud Run mounts as the container user by default (uid 1000, mode
+					# 777/666); implicit-dirs shows folders other sessions made.
 					{name: "outputs", gcs: {bucket: $outputs_bucket, readOnly: false,
-						mountOptions: ["uid=1000", "gid=1000", "implicit-dirs"]}},
+						mountOptions: ["implicit-dirs"]}},
 					{name: "datasets", gcs: {bucket: $datasets_bucket, readOnly: true,
 						mountOptions: ["implicit-dirs"]}}
 				]

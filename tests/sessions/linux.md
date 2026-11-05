@@ -10,7 +10,7 @@ Time every step. Work in a scratch directory outside the repo
 ## 1. Facts
 
 Record: `uname -a`, `/etc/os-release`, `nproc`, `free -h`, `df -h` for `/` and the
-repo, the user, whether `sudo -n true` works, `claude --version`, and the published
+repo, the user, whether `sudo -n true` works (on Cloud Run it shouldn't: no-new-privileges), `claude --version`, and the published
 latest from `https://downloads.claude.ai/claude-code-releases/latest` (pass if they
 match). Record whether `$DISPLAY` is set.
 

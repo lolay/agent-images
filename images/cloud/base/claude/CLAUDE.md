@@ -2,9 +2,11 @@
 
 A disposable Linux container on Google Cloud Run (Ubuntu 24.04, x86_64, no GPU, no
 display) that serves this one session and is gone when it ends, so push anything
-worth keeping. You're the image's `ubuntu` user, with passwordless sudo:
-`sudo apt-get install` or `brew install` whatever a project needs. There's no Android
-SDK or emulator here.
+worth keeping. You're the image's `ubuntu` user, without root: Cloud Run sets the
+no-new-privileges flag, so `sudo` fails, and with it `apt-get install`. Install what a
+project needs with `brew install` (Homebrew is yours, and has Python, Node, Go, Rust
+and most build tools), `uv`/`pip`, `npm` or `cargo`. A C toolchain (`build-essential`)
+is already here. There's no Android SDK or emulator.
 
 ## Storage
 

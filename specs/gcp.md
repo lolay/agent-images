@@ -166,8 +166,13 @@ Choices, carried over from [design.md](design.md):
 - **Track latest, pin on breakage.** No versions in package lists. The pipeline below
   rebuilds whenever anything upstream moves, so images stay current without a
   self-update on every start.
-- **One unprivileged user with passwordless sudo**, like `admin` and `ubuntu`, not
-  root: sessions can install what a repo needs, and nothing outlives the execution.
+- **One unprivileged user, and no root on Cloud Run.** The images run as `ubuntu`,
+  like the Linux image. Cloud Run sets the kernel's no-new-privileges flag on every
+  container, so `sudo` (and with it `apt-get install`) can't work there: found by m1's
+  first smoke run, 2026-11-05. Sessions install with Homebrew, which the user owns;
+  root instead would lose that, since Homebrew refuses to run as root. The base image
+  carries `build-essential` and the Linux image's packages, so the usual toolchains
+  build. The `android` VMs keep passwordless sudo.
 - **CUDA matches the host driver.** Cloud Run mounts its driver (580.x, CUDA 13.0) at
   `/usr/local/nvidia/lib64`, so `agent-base-gpu` uses a CUDA 13.0 userland. Newer CUDA
   needs NVIDIA's forward-compatibility package. Anything compiled (COLMAP, PyTorch
@@ -330,7 +335,8 @@ Every deploy follows the `-next` pattern from `build-image.sh`:
    alone skips the build and reuses the live digest.
 2. Point `agent-<type>-next` at that digest and run one smoke execution in Cloud Run
    (the entrypoint's `smoke` mode): `claude --version`, scratch is a real writable
-   disk, outputs round-trips a file, datasets refuses a write, `sudo`, Homebrew; for
+   disk, outputs round-trips a file, datasets refuses a write, Homebrew's prefix is
+   writable by the session user; for
    `-gpu` types also `nvidia-smi`, a CUDA device probe, `eglinfo` against Xvfb. It
    runs in GCP, next to the registry, so the pull is free.
 3. Only if it passes, point `agent-<type>` at the same digest. Cloud Run resolves the
@@ -545,9 +551,9 @@ don't care which type they're on:
 - **Outputs** is for anything worth keeping that's too big for git: dense point
   clouds, trained models, renders, rasters. Each session writes under
   `<type>/<UTC date>/<session id>/`, so a listing reads by type and day; you read
-  results with `gcloud storage` or the console. It's mounted as the session's user
-  (`uid=1000`) with implicit directories, so a session sees folders other sessions
-  made. Cloud Storage FUSE isn't a full POSIX
+  results with `gcloud storage` or the console. Cloud Run mounts it as the
+  container's user (uid 1000, directories 777, files 666) with implicit directories,
+  so a session sees folders other sessions made. Cloud Storage FUSE isn't a full POSIX
   filesystem (no locking, slow small random writes), so a session works on scratch
   and copies finished files to outputs, rather than working in place.
 - **Datasets** holds inputs worth reusing between sessions: a cached Sentinel-2 or

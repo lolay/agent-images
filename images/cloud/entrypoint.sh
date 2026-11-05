@@ -51,8 +51,10 @@ prepare_scratch() {
 	if [[ "$AGENT_REQUIRE_SCRATCH_MOUNT" == "true" ]] && ! mountpoint -q "$AGENT_SCRATCH"; then
 		die "$AGENT_SCRATCH is not a mount; the job needs its scratch volume"
 	fi
+	# Cloud Run mounts it writable. sudo is only a fallback for other runtimes:
+	# Cloud Run sets no-new-privileges, which stops sudo altogether.
 	if [[ ! -w "$AGENT_SCRATCH" ]]; then
-		sudo -n chown "$(id -u):$(id -g)" "$AGENT_SCRATCH" || die "can't write $AGENT_SCRATCH"
+		sudo -n chown "$(id -u):$(id -g)" "$AGENT_SCRATCH" 2>/dev/null || die "can't write $AGENT_SCRATCH"
 	fi
 	mkdir -p "$AGENT_SCRATCH/workspace" "$TMPDIR" "$XDG_CACHE_HOME"
 }
@@ -107,12 +109,23 @@ smoke() {
 		fi
 		echo "listed; a write was refused"
 	}
+	# shellcheck disable=SC2317,SC2329 # called through check
+	homebrew_writable() {
+		local prefix
+		prefix="$(brew --prefix)"
+		[[ -w "$prefix/Cellar" && -w "$prefix/bin" ]] || {
+			echo "$prefix isn't writable by $(id -un)"
+			return 1
+		}
+		printf '%s, %s writable' "$(brew --version | head -n 1)" "$prefix"
+	}
 	check claude claude --version
 	check scratch scratch_disk
 	check outputs outputs_round_trip
 	check datasets datasets_read_only
-	check sudo sudo -n true
-	check homebrew brew --version
+	# Sessions install with Homebrew: Cloud Run's no-new-privileges flag stops sudo
+	# (and so apt), so the session user must own Homebrew's prefix.
+	check homebrew homebrew_writable
 	return "$failed"
 }
 

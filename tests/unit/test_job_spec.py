@@ -60,7 +60,7 @@ class JobSpecTests(unittest.TestCase):
         self.assertEqual(volumes["scratch"]["emptyDir"], {"medium": "DISK", "sizeLimit": "10Gi"})
         self.assertEqual(volumes["outputs"]["gcs"]["bucket"], "lolay-agents-outputs")
         self.assertFalse(volumes["outputs"]["gcs"]["readOnly"])
-        self.assertIn("uid=1000", volumes["outputs"]["gcs"]["mountOptions"])
+        self.assertEqual(volumes["outputs"]["gcs"]["mountOptions"], ["implicit-dirs"])
         self.assertEqual(volumes["datasets"]["gcs"]["bucket"], "lolay-agents-datasets")
         self.assertTrue(volumes["datasets"]["gcs"]["readOnly"])
         mounts = {mount["name"]: mount["mountPath"] for mount in task["containers"][0]["volumeMounts"]}

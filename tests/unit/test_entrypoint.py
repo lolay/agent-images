@@ -36,7 +36,13 @@ class EntrypointCase(unittest.TestCase):
             self.fake_bin / "fake-watchdog", 'echo ran >>"$FAKE_OUT/watchdog"\n'
         )
         write_executable(self.fake_bin / "claude", "echo '9.9.9 (Claude Code)'\n")
-        write_executable(self.fake_bin / "brew", "echo 'Homebrew 9.9'\n")
+        self.brew_prefix = self.tmp / "linuxbrew"
+        for sub in ("Cellar", "bin"):
+            (self.brew_prefix / sub).mkdir(parents=True)
+        write_executable(
+            self.fake_bin / "brew",
+            'if [[ "$1" == --prefix ]]; then echo "$FAKE_BREW_PREFIX"; else echo "Homebrew 9.9"; fi\n',
+        )
 
     def tearDown(self):
         subprocess.run(["rm", "-rf", str(self.tmp)], check=True)
@@ -54,6 +60,7 @@ class EntrypointCase(unittest.TestCase):
             "AGENT_REQUIRE_SCRATCH_MOUNT": "false",
             "AGENT_TYPE": "linux",
             "FAKE_OUT": str(self.out),
+            "FAKE_BREW_PREFIX": str(self.brew_prefix),
             "SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET": "work-order-jwt",
             "RUNNER_LABEL": "linux-abc123",
         }
@@ -169,7 +176,7 @@ class SmokeTests(EntrypointCase):
         lines = [line for line in result.stdout.splitlines() if line.startswith("smoke: ")]
         checks = {line.split()[2]: line.split()[1] for line in lines}
         self.assertEqual(
-            set(checks), {"claude", "scratch", "outputs", "datasets", "sudo", "homebrew"}
+            set(checks), {"claude", "scratch", "outputs", "datasets", "homebrew"}
         )
         self.assertEqual(checks["claude"], "pass")
         self.assertEqual(checks["outputs"], "pass")
@@ -178,6 +185,12 @@ class SmokeTests(EntrypointCase):
         self.assertEqual(checks["datasets"], "FAIL")
         self.assertEqual(list((self.outputs / "_smoke").iterdir()), [])
         self.assertFalse((self.out / "env").exists(), "smoke must not start the runner")
+
+    def test_homebrew_must_be_writable_by_the_session_user(self):
+        result = self.run_entrypoint("smoke", FAKE_BREW_PREFIX=str(self.tmp / "missing"))
+        line = next(line for line in result.stdout.splitlines() if " homebrew " in line)
+        self.assertTrue(line.startswith("smoke: FAIL homebrew"), line)
+        self.assertIn("isn't writable", line)
 
 
 if __name__ == "__main__":
