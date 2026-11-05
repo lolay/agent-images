@@ -61,7 +61,7 @@ Each type is four things, declared in `infra/gcp/<type>.env`:
 | --- | --- | --- | --- | --- |
 | `linux` | `agent-linux` (`agent-base` as is) | Cloud Run job, 4 vCPU, 16 GiB | 10 GiB | 0: a standby holds 4 vCPU and 16 GiB, about $270 a month; 1 later if cold starts hurt |
 | `linux-gpu` | `agent-linux-gpu` (`agent-base-gpu` as is) | Cloud Run job, RTX PRO 6000, 20 vCPU, 80 GiB (that GPU's minimum); L4 for cheap tests | 10 GiB now, 100 GiB later | 0: a standby GPU bills the whole time |
-| `gis` | `agent-gis` (toolsets core, native, node, gis: GDAL, PDAL, QGIS from conda-forge) | Cloud Run job, CPU | 10 GiB now, 100 GiB later | 0 or 1 |
+| `gis` | `agent-gis` (toolsets core, native, node, gis: GDAL, PDAL, QGIS from conda-forge) | Cloud Run job, 8 vCPU, 32 GiB (Cloud Run's most memory; gis is bound by memory, not CPU) | 10 GiB now, 100 GiB later | 0: a standby is about $550 a month |
 | `3d-gpu` | `agent-3d-gpu` (from `agent-base-gpu`: COLMAP built for Blackwell, Blender) | Cloud Run job, RTX PRO 6000 | 10 GiB now, 200 GiB (two volumes) later | 0 |
 | `android` | Compute Engine image | Compute Engine VM per session with nested virtualization ([below](#compute-engine-vm-per-session-android-and-the-gpu-fallback)); Cloud Run has no KVM | 100 GB boot disk | 0 |
 | `mac` | Not on GCP | agent-images' Macs (Tart), as today: Mac development, iOS included | The VM's disk | Per host |
