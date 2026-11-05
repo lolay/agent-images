@@ -18,7 +18,14 @@ FAKE_GCLOUD = f"""
 printf '%s\\n' "$*" >>"$FAKE_OUT/gcloud.log"
 case "$1 $2" in
 "auth print-access-token") echo {TOKEN} ;;
-"run jobs") exit "${{FAKE_SMOKE_STATUS:-0}}" ;;
+"run jobs")
+	case "$3" in
+	execute) exit "${{FAKE_SMOKE_STATUS:-0}}" ;;
+	executions) echo agent-linux-next-p5rqf ;;
+	esac ;;
+"logging read")
+	[[ -n "${{FAKE_LOG_DENIED:-}}" ]] && {{ echo "PERMISSION_DENIED" >&2; exit 1; }}
+	printf 'smoke: pass claude (2.1.318)\nsmoke: FAIL scratch (not a mount)\n' ;;
 "compute instances")
 	if [[ "$3" == describe ]]; then
 		echo '{{"metadata": {{"items": [{{"key": "orchestrator-image", "value": "{REGISTRY}/agent-orchestrator@sha256:cc"}}]}}}}'
@@ -78,6 +85,21 @@ class DeployTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("agent-linux keeps its image", result.stderr)
         self.assertEqual(self.job_patches(), ["agent-linux-next"])
+
+    def test_a_failed_smoke_prints_the_executions_log(self):
+        result = self.deploy("type", "linux", IMAGE, "abc123", FAKE_SMOKE_STATUS="1")
+        self.assertIn("deploy: agent-linux-next-p5rqf log:", result.stdout)
+        self.assertIn("  smoke: FAIL scratch (not a mount)", result.stdout)
+        read = [call for call in self.gcloud_calls() if call.startswith("logging read")][0]
+        self.assertIn('labels."run.googleapis.com/execution_name"="agent-linux-next-p5rqf"', read)
+
+    def test_an_unreadable_log_says_how_to_read_it(self):
+        result = self.deploy(
+            "type", "linux", IMAGE, "abc123", FAKE_SMOKE_STATUS="1", FAKE_LOG_DENIED="1"
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("can't read its log here", result.stdout)
+        self.assertIn("run: gcloud logging read", result.stdout)
 
     def test_live_reuses_the_current_image(self):
         self.assertEqual(self.deploy("type", "linux", IMAGE, "first").returncode, 0)

@@ -27,6 +27,7 @@ readonly repo
 source "$repo/hooks/gcp/lib.sh"
 : "${DEPLOY_POLL_SEC:=3}"
 : "${DEPLOY_TIMEOUT_SEC:=600}"
+: "${DEPLOY_LOG_WAIT_SEC:=5}"
 
 log() { printf 'deploy: %s\n' "$*"; }
 die() {
@@ -76,6 +77,31 @@ live_image() {
 	jq -er '.template.template.containers[0].image' <<<"$GCP_BODY"
 }
 
+# smoke_log <job>: print the latest execution's log, so a failed smoke shows
+# which check failed in the workflow run. Logs land a few seconds after the
+# execution ends, so it retries briefly; it never fails the caller.
+smoke_log() {
+	local job="$1" execution filter lines _
+	execution="$(gcloud run jobs executions list --job "$job" --project "$PROJECT_ID" --region "$REGION" \
+		--sort-by=~metadata.creationTimestamp --limit 1 --format 'value(metadata.name)' 2>/dev/null)" || execution=""
+	if [[ -z "$execution" ]]; then
+		log "$job: couldn't find the smoke execution to show its log"
+		return 0
+	fi
+	filter="resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$job\" AND labels.\"run.googleapis.com/execution_name\"=\"$execution\""
+	for _ in 1 2 3 4 5 6; do
+		lines="$(gcloud logging read "$filter" --project "$PROJECT_ID" --order asc --limit 300 \
+			--format 'value(textPayload)' 2>&1)" || {
+			log "$execution: can't read its log here ($lines); run: gcloud logging read '$filter' --project $PROJECT_ID --order asc"
+			return 0
+		}
+		[[ -z "$lines" ]] || break
+		sleep "$DEPLOY_LOG_WAIT_SEC"
+	done
+	log "$execution log:"
+	printf '%s\n' "${lines:-(empty)}" | sed 's/^/  /'
+}
+
 cmd_type() {
 	(($# == 3)) || die "usage: deploy.sh type <type> <image@sha256:...|--live> <commit>"
 	local type="$1" image="$2" sha="$3"
@@ -86,9 +112,11 @@ cmd_type() {
 
 	put_job "agent-$type-next" "$type" "$image" "$sha"
 	log "agent-$type-next: smoke execution"
-	gcloud run jobs execute "agent-$type-next" --project "$PROJECT_ID" --region "$REGION" \
-		--args=smoke --wait --quiet ||
-		die "smoke failed on agent-$type-next; agent-$type keeps its image (see the execution's logs)"
+	if ! gcloud run jobs execute "agent-$type-next" --project "$PROJECT_ID" --region "$REGION" \
+		--args=smoke --wait --quiet; then
+		smoke_log "agent-$type-next"
+		die "smoke failed on agent-$type-next; agent-$type keeps its image"
+	fi
 	put_job "agent-$type" "$type" "$image" "$sha"
 }
 
