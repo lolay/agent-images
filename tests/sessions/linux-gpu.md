@@ -5,7 +5,7 @@ GPU (an RTX PRO 6000, Blackwell, compute capability 12.0, on Cloud Run), thrown 
 after the session. The point of this test is proof that work actually runs on that
 GPU, through code compiled for it, and not quietly on the CPU or in software
 rendering. If a check fails, record it and carry on. Time every step. Work in
-`$HOME/runner-test`, and write outputs to
+`$AGENT_SCRATCH/runner-test` (`$HOME/runner-test` if that isn't set), and write outputs to
 `tests/sessions/results/linux-gpu/<UTC timestamp>/` in the repo.
 
 ## 0. Watch the GPU the whole time

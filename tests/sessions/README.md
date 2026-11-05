@@ -29,6 +29,10 @@ check; one failure is a finding, not a reason to stop.
 
 - Starts with the same facts: runner type, host, CPU, memory, disk, Claude Code
   version against the published latest, and whether the session can `sudo`.
+- Works on the scratch disk (`$AGENT_SCRATCH`), never in the in-memory filesystem, and
+  copies anything too big for git (over 10 MB) to `$AGENT_OUTPUTS`, listing those
+  files in the report with their `gs://` paths. See "Storage" in
+  [specs/gcp.md](../../specs/gcp.md).
 - Times every step, so runs can be compared over time.
 - Uses only public data and public package sources. Nothing needs a secret, and a
   test that seems to need one has found a problem.

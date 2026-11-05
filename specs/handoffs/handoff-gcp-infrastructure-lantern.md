@@ -69,6 +69,15 @@ no Terraform change and no key lands in state.
 - Bucket for spawn-hook order markers, `lolay-agents-orders` (or with a suffix if
   taken): uniform access, no public access, lifecycle delete after 1 day, no
   versioning.
+- Bucket `lolay-agents-outputs`: where sessions keep large results (point clouds,
+  models, rasters, videos). Uniform access, no public access, lifecycle delete after
+  30 days, no versioning. Sessions mount it read-write with Cloud Storage FUSE.
+- Bucket `lolay-agents-datasets`: reusable inputs Gary adds by hand. Uniform access,
+  no public access, no lifecycle rule. Sessions mount it read-only.
+- Cloud Run ephemeral disk quota: the defaults are 10 GiB per instance and 100 GiB per
+  region. Ask for 200 GiB per instance and 500 GiB in `us-central1` (quota
+  preferences, like the GPU quota). `linux` fits the defaults, so this can lag the
+  first step; `gis` needs it in the second.
 
 ### Network and the orchestrator host
 
@@ -103,7 +112,7 @@ The project is dedicated to this, so project-level grants are an acceptable scop
 | Service account | Grants |
 | --- | --- |
 | `agent-orchestrator` (the VM's) | `secretmanager.secretAccessor` with an IAM condition `resource.name.startsWith("projects/<number>/secrets/claude-env-")`; `run.developer` (execute jobs with overrides); `iam.serviceAccountUser` on `agent-runner` (jobs and runner VMs run as it); `storage.objectCreator` and `objectViewer` on the marker bucket; `artifactregistry.reader`; `logging.logWriter`; `monitoring.metricWriter`; for `android`, `compute.instanceAdmin.v1` (create runner VMs, and its reaper deletes stopped ones) and `compute.imageUser` |
-| `agent-runner` (what job executions and runner VMs run as) | `logging.logWriter` only. Sessions get no secrets and no GCP access |
+| `agent-runner` (what job executions and runner VMs run as) | `logging.logWriter`; `storage.objectAdmin` on `lolay-agents-outputs` only; `storage.objectViewer` on `lolay-agents-datasets` only. Sessions get no secrets and no other GCP access |
 | `agent-images-ci` (GitHub Actions, through federation) | `artifactregistry.writer` on the repo; `run.developer`; `iam.serviceAccountUser` on `agent-runner`; `compute.instances.setMetadata` on the orchestrator VM only (a custom role, or `compute.instanceAdmin.v1` scoped to that instance); for the `android` image, `compute.instanceAdmin.v1` and `compute.storageAdmin` (Packer's build VM and the image), `iap.tunnelResourceAccessor` (Packer's SSH) |
 
 ### Workload identity federation
@@ -135,7 +144,8 @@ non-secret values are committed, Terraform stays the source):
 `PROJECT_ID`, `PROJECT_NUMBER`, `REGION`, `ZONE`, `ARTIFACT_REGISTRY`
 (`us-central1-docker.pkg.dev/lolay-agents/agent-images`), `WIF_PROVIDER` (full
 resource name), `CI_SERVICE_ACCOUNT`, `ORCHESTRATOR_SERVICE_ACCOUNT`,
-`RUNNER_SERVICE_ACCOUNT`, `ORDER_BUCKET`, `ORCHESTRATOR_INSTANCE`, `NETWORK`,
+`RUNNER_SERVICE_ACCOUNT`, `ORDER_BUCKET`, `OUTPUTS_BUCKET`, `DATASETS_BUCKET`,
+`ORCHESTRATOR_INSTANCE`, `NETWORK`,
 `SUBNET` (for the `android` VMs and Packer's build VM).
 
 ## Not in this repo (on purpose)

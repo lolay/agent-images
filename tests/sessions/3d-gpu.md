@@ -6,7 +6,7 @@ built with CUDA, and a Gaussian splatting library. Run a full photogrammetry pip
 on the GPU and score it against ground truth. The scene is synthetic, rendered by you
 in Blender, so the true geometry and camera poses are known and nothing needs
 downloading. If a check fails, record it and carry on. Time every step. Work in
-`$HOME/runner-test`, and write outputs to
+`$AGENT_SCRATCH/runner-test` (`$HOME/runner-test` if that isn't set), and write outputs to
 `tests/sessions/results/3d-gpu/<UTC timestamp>/` in the repo.
 
 ## 0. Watch the GPU the whole time
@@ -120,13 +120,16 @@ plays (`ffprobe` shows 360 frames), and the mean PSNR over the path is reported.
 
 Stop the logger. Commit the results directory on the session's branch and push; no
 pull request. Include the report, `gpu.csv`, `cameras_gt.json`, the PNGs, three
-sample renders, `flythrough.mp4` and `flythrough.gif`; leave out the image set,
-`fused.ply`, the splat model and any other file over 10 MB. Write `report.md` in the
+sample renders, `flythrough.mp4` and `flythrough.gif`. Copy the large outputs to
+`$AGENT_OUTPUTS`: the image set, the COLMAP sparse and dense models, `fused.ply`, the
+Poisson mesh, the splat model, and the full-resolution flythrough frames. List them
+in the report with their `gs://` paths and sizes, and the total. Write `report.md` in the
 format from [README.md](README.md), with a GPU column (peak utilization and memory
 per step) and a metrics table (registration, pose error, accuracy, completeness,
 PSNR, SSIM, LPIPS, splat rendering frames per second). Embed `flythrough.gif` at the
 top of the report, then `splat_vs_gt.png` and `mesh_vs_gt.png`. End the session with
-both tables and links to `flythrough.mp4` and the report on the branch.
+both tables, links to `flythrough.mp4` and the report on the branch, and the
+`gs://` path of the outputs.
 
 The pass thresholds are a first guess for this scene; if a run fails one but the
 outputs look right, say so, and the threshold gets tuned rather than ignored.

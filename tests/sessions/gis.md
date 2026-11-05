@@ -4,7 +4,7 @@ You're in a session on the `gis` runner type: a CPU Linux container with the GIS
 stack (GDAL, PDAL, QGIS and their Python bindings), thrown away after the session.
 Do a small but real analysis on public data, the kind of thing a geospatial engineer
 does in a day, and write a report. If a check fails, record it and carry on. Time
-every step. Work in `$HOME/runner-test`, and write outputs to
+every step. Work in `$AGENT_SCRATCH/runner-test` (`$HOME/runner-test` if that isn't set), and write outputs to
 `tests/sessions/results/gis/<UTC timestamp>/` in the repo.
 
 The area: farmland west of Fresno, California, bounding box
@@ -70,7 +70,9 @@ tree count is non-zero. Record points read.
 
 ## 6. Git and report
 
-Commit the results directory (report, PNGs, CSV, the GeoJSON files; not the
-GeoTIFFs over 10 MB) on the session's branch and push; no pull request. Write
+Commit the results directory (report, PNGs, CSV, the GeoJSON files) on the
+session's branch and push, and copy the GeoTIFFs and the cropped point cloud
+(`writers.las`, as LAZ) to `$AGENT_OUTPUTS`, listed in the report with their `gs://`
+paths; no pull request. Write
 `report.md` in the format from [README.md](README.md) and end the session with the
 check table, the scene used, and the slowest step.

@@ -54,14 +54,14 @@ Each type is four things, declared in `infra/gcp/<type>.env`:
 | Backend | A Cloud Run job (`agent-<type>`) with its resources, or a Compute Engine template |
 | Orchestrator settings | `--min-idle`, `--expected-spawn-seconds`, runner flags |
 
-| Type | Image | Backend and resources | Standby |
-| --- | --- | --- | --- |
-| `linux` | `agent-linux` (`agent-base` as is) | Cloud Run job, 4 vCPU, 16 GiB | 1 (cheap, instant starts) |
-| `linux-gpu` | `agent-linux-gpu` (`agent-base-gpu` as is) | Cloud Run job, RTX PRO 6000, 20 vCPU, 80 GiB (that GPU's minimum); L4 for cheap tests | 0: a standby GPU bills the whole time |
-| `gis` | `agent-gis` (from `agent-base`: GDAL, QGIS, PDAL) | Cloud Run job, CPU | 0 or 1 |
-| `3d-gpu` | `agent-3d-gpu` (from `agent-base-gpu`: COLMAP built for Blackwell, Blender) | Cloud Run job, RTX PRO 6000 | 0 |
-| `android` | Compute Engine image | Compute Engine VM per session with nested virtualization ([below](#compute-engine-vm-per-session-android-and-the-gpu-fallback)); Cloud Run has no KVM | 0 |
-| `mac` | Not on GCP | agent-images' Macs (Tart), as today: Mac development, iOS included | Per host |
+| Type | Image | Backend and resources | Scratch disk | Standby |
+| --- | --- | --- | --- | --- |
+| `linux` | `agent-linux` (`agent-base` as is) | Cloud Run job, 4 vCPU, 16 GiB | 10 GiB | 1 (cheap, instant starts) |
+| `linux-gpu` | `agent-linux-gpu` (`agent-base-gpu` as is) | Cloud Run job, RTX PRO 6000, 20 vCPU, 80 GiB (that GPU's minimum); L4 for cheap tests | 100 GiB | 0: a standby GPU bills the whole time |
+| `gis` | `agent-gis` (from `agent-base`: GDAL, QGIS, PDAL) | Cloud Run job, CPU | 100 GiB | 0 or 1 |
+| `3d-gpu` | `agent-3d-gpu` (from `agent-base-gpu`: COLMAP built for Blackwell, Blender) | Cloud Run job, RTX PRO 6000 | 200 GiB (two volumes) | 0 |
+| `android` | Compute Engine image | Compute Engine VM per session with nested virtualization ([below](#compute-engine-vm-per-session-android-and-the-gpu-fallback)); Cloud Run has no KVM | 100 GB boot disk | 0 |
+| `mac` | Not on GCP | agent-images' Macs (Tart), as today: Mac development, iOS included | The VM's disk | Per host |
 
 Mobile splits by platform: iOS needs macOS, which no GCP service runs, so it's part of
 `mac`, on the Macs; Android needs KVM, which Cloud Run doesn't give, so it's a VM. Both still
@@ -447,6 +447,47 @@ CI configuration rule: non-secret, reviewed, and Terraform stays the source.
 
 The GitHub side is set by hand: the lock-bot App, the `production` and `lock-bot`
 environments, and the `main` ruleset (see [The lock bot](#the-lock-bot)).
+
+## Storage
+
+Three places a session can put files, from fastest and shortest-lived to slowest and
+longest-lived. Every runner gets the same three paths, so sessions and the tests
+don't care which type they're on:
+
+| Path | What it is | Lives | Size |
+| --- | --- | --- | --- |
+| `$AGENT_SCRATCH` (`/scratch`) | Cloud Run ephemeral disk: block storage dedicated to the instance | Until the execution ends | Per type, above |
+| `$AGENT_OUTPUTS` (`/mnt/outputs/<session id>`) | Cloud Storage bucket `lolay-agents-outputs`, mounted read-write with Cloud Storage FUSE | 30 days, then the bucket's lifecycle rule deletes it | Unbounded |
+| `$AGENT_DATASETS` (`/mnt/datasets`) | Cloud Storage bucket `lolay-agents-datasets`, mounted read-only with Cloud Storage FUSE and a file cache on `/scratch` | Until removed by hand | Unbounded |
+
+- **Scratch** is where work happens: the repo checkout (Claude's `--base-dir` is
+  `/scratch/workspace`), downloads, intermediate files, builds. Without it, Cloud
+  Run's filesystem is in memory, and every file written takes memory from the
+  session. Each volume holds 1 to 100 GiB, up to ten per instance, and it's gone when
+  the execution ends, crash included. Quotas start at 10 GiB per instance and 100 GiB
+  per region, so the GPU and GIS sizes above need a quota increase
+  (`lolay/infrastructure`).
+- **Outputs** is for anything worth keeping that's too big for git: dense point
+  clouds, trained models, renders, rasters. A session writes under its own session
+  id; you read results with `gcloud storage` or the console. Cloud Storage FUSE isn't
+  a full POSIX filesystem (no locking, slow small random writes), so a session works
+  on scratch and copies finished files to outputs, rather than working in place.
+- **Datasets** holds inputs worth reusing between sessions: a cached Sentinel-2 or
+  3DEP subset, a photogrammetry image set, model weights. Read-only to sessions; you
+  add to it with `gcloud storage cp`. The FUSE file cache on scratch makes a second
+  read of the same file local.
+- **Android** VMs get a 100 GB boot disk instead of an ephemeral volume, and the same
+  two buckets through `gcloud storage` (no FUSE mount needed on a VM).
+- **Memory** is the fourth option, already there: an RTX PRO 6000 instance has at
+  least 80 GiB, so a working set of a few GiB in `/dev/shm` costs nothing extra.
+- **Not proposed:** Filestore (NFS). It's fully POSIX and shared, but the smallest
+  instance is a fixed monthly cost far above everything else here combined.
+
+This changes one earlier decision: sessions now have GCP access, limited to these two
+buckets. Each execution's service account, `agent-runner`, can write
+`lolay-agents-outputs` and read `lolay-agents-datasets`, and nothing else, and every
+session can see every other session's outputs. Fine for one owner; revisit if other
+people get sessions on these runners. Nothing secret goes in either bucket.
 
 ## The head
 

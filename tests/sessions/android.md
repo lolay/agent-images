@@ -4,7 +4,7 @@ You're in a session on the `android` runner type: a Linux VM with the Android SD
 an emulator (`emulator-5554`) running inside it on KVM, thrown away after the session.
 Build and test a small app the way Android work would, and write a report. If a check
 fails, record it and carry on. Time every step. Build the app in a scratch directory
-(`$HOME/runner-test`), and write outputs to
+(`$AGENT_SCRATCH/runner-test` (`$HOME/runner-test` if that isn't set)), and write outputs to
 `tests/sessions/results/android/<UTC timestamp>/` in the repo.
 
 ## 1. Facts
