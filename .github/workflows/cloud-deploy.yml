@@ -129,6 +129,12 @@ jobs:
           REGISTRY: ${{ env.ARTIFACT_REGISTRY }}
           TAG: ${{ steps.tag.outputs.tag }}
           CLAUDE_VERSION: ${{ needs.plan.outputs.claude-version }}
+          # The next step reads bake's metadata from an environment variable.
+          # Provenance in it repeats the GitHub event (with the head commit's
+          # message) once per target, and a type is three targets (base,
+          # <type>-tools, <type>): over Linux's per-variable limit, so bash
+          # couldn't start. The digest is all the next step needs.
+          BUILDX_METADATA_PROVENANCE: disabled
         with:
           source: .
           files: images/cloud/docker-bake.hcl
@@ -196,6 +202,8 @@ jobs:
           REGISTRY: ${{ env.ARTIFACT_REGISTRY }}
           TAG: ${{ steps.tag.outputs.tag }}
           CLAUDE_VERSION: ${{ needs.plan.outputs.claude-version }}
+          # As in the types' bake: the metadata the next step reads stays small.
+          BUILDX_METADATA_PROVENANCE: disabled
         with:
           source: .
           files: images/cloud/docker-bake.hcl
