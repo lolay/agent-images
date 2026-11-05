@@ -20,8 +20,8 @@ service with Blackwell, so it would mean a VM per session and our own driver.
 claude.ai session queue
         │
         ▼
-Cloud Run worker pool  (one instance, no GPU, one per runner type)
-  claude self-hosted-runner orchestrator --hooks-dir hooks/gcp
+Cloud Run worker pool  (one instance, no GPU)
+  one claude self-hosted-runner orchestrator per runner type, --hooks-dir hooks/gcp
         │ spawn-runner: gcloud run jobs execute <type> --update-env-vars ...
         ▼
 Cloud Run job execution  (one per session)
@@ -40,15 +40,45 @@ Cloud Run job execution  (one per session)
 
 ## Runner types
 
-One Claude environment per type, each with its own orchestrator, job and image. The
-environment is what you pick when starting a session, so it's the selector; types
-never share capacity or images.
+A runner type is one Claude environment. The environment is what you pick when
+starting a session, so it's the selector: "GPU", "GIS", "iOS", "Android" each show
+up in the session picker by name, and a session runs on whatever backs that
+environment. Types never share capacity, images or secrets.
 
-| Type | Image | Job resources | Standby |
+Each type is four things, declared in `infra/gcp/<type>.env`:
+
+| Part | Per type |
+| --- | --- |
+| Claude environment and its secret | Created in claude.ai; the secret goes in Secret Manager as `claude-env-<type>` |
+| Image | `agent-<type>`, built `FROM` `agent-base` or `agent-gpu` plus the type's tools |
+| Backend | A Cloud Run job (`agent-<type>`) with its resources, or a Compute Engine template |
+| Orchestrator settings | `--min-idle`, `--expected-spawn-seconds`, runner flags |
+
+| Type | Image | Backend and resources | Standby |
 | --- | --- | --- | --- |
-| `cpu` | `agent-base` | 4 vCPU, 16 GiB | `--min-idle 1` (cheap, instant starts) |
-| `gpu` | `agent-gpu` (from `agent-base`) | RTX PRO 6000, 20 vCPU, 80 GiB (the minimum for that GPU); or L4, 4 vCPU, 16 GiB, for cheap tests | `--min-idle 0`: a standby GPU bills the whole time |
-| Later: `gis`, `3d` | From `agent-base` or `agent-gpu`, adding that domain's tools | As needed | As needed |
+| `cpu` | `agent-base` | Cloud Run job, 4 vCPU, 16 GiB | 1 (cheap, instant starts) |
+| `gpu` | `agent-gpu` | Cloud Run job, RTX PRO 6000, 20 vCPU, 80 GiB (that GPU's minimum); L4 for cheap tests | 0: a standby GPU bills the whole time |
+| `gis` | `agent-gis` (from `agent-base`: GDAL, QGIS, PDAL) | Cloud Run job, CPU | 0 or 1 |
+| `3d` | `agent-3d` (from `agent-gpu`: COLMAP built for Blackwell, Blender) | Cloud Run job, RTX PRO 6000 | 0 |
+| `android` | Compute Engine image | Compute Engine VM per session with nested virtualization (the fallback below); Cloud Run has no KVM | 0 |
+| `ios` | Not on GCP | agent-images' Macs (Tart), as today | Per host |
+
+Mobile splits by platform: iOS needs macOS, which no GCP service runs, so it stays on
+the Macs; Android needs KVM, which Cloud Run doesn't give, so it's a VM. Both still
+appear in the same session picker, because the picker lists environments, not clouds.
+
+**One worker pool for all orchestrators.** An orchestrator serves one environment,
+but it's a small stateless process. Instead of a worker pool per type, one pool (one
+instance, no GPU) runs a supervisor that starts an orchestrator per
+`infra/gcp/*.env` file, each with its own secret, hooks directory and `RUNNER_TYPE`.
+Adding a type is a new env file, a new image directory and a new environment in
+claude.ai; the push to `main` deploys it.
+
+**Choosing by repo instead (not proposed).** The hook gets
+`CLAUDE_RUNNER_PRIMARY_REPO_URL`, so one environment could pick the image from the
+repo (GIS repos to `agent-gis`). Standbys have no repo, though, so they'd all have to
+be one image, and you'd lose the explicit choice. Separate environments are simpler
+to reason about.
 
 Region: `us-central1`, the one with both L4 and RTX PRO 6000 on Cloud Run.
 
@@ -181,15 +211,33 @@ nightly build retries.
 
 The commit needs a GitHub App token (`actions/create-github-app-token`), not
 `GITHUB_TOKEN`: a push made with `GITHUB_TOKEN` doesn't start other workflows, so the
-deploy would never run. Two ways in, given a ruleset that requires pull requests on
-`main`:
+deploy would never run. Direct commit, not a pull request: deploys follow upstream
+within the hour, and the lock bot below is what keeps that safe.
 
-- **Direct commit (recommended):** the App is the ruleset's only bypass actor, and it
-  can only change `versions.lock` files (the workflow checks the diff before pushing).
-  Deploys follow upstream within the hour.
-- **Pull request with auto-merge:** the App opens or updates one `lock` pull request;
-  the build-only check runs; auto-merge squashes it. A review point, at the cost of a
-  few more minutes per release and a PR on most weekdays.
+### The lock bot
+
+A GitHub App's permissions are per repo and per kind (contents, pull requests, ...),
+not per path, and the rule that restricts file paths on push (push rulesets) is
+Enterprise Cloud only, for private and internal repos. So "it can only change
+`versions.lock`" is built from layers:
+
+| Layer | What it stops |
+| --- | --- |
+| Installed on `lolay/agent-images` only; permissions Contents write and Metadata read, nothing else | Any other repo; issues, pull requests, settings, secrets |
+| No Workflows permission | GitHub refuses any change from the App to `.github/workflows/`, so it can't rewrite the workflows that guard it |
+| Each run's token narrowed further (`permission-contents: write` on `actions/create-github-app-token`), valid one hour | A leaked token outliving its run |
+| The App's private key is a secret of a GitHub environment, `lock-bot`, that only `main` can use | Any branch, pull request or fork using the key; only reviewed code on `main` runs with it |
+| `main` ruleset: pull requests required, squash only, the App as the only bypass actor, no force pushes or deletions | Anyone else committing directly; the App rewriting history |
+| The watch checks its own diff before pushing: only `images/cloud/*/versions.lock`, fast-forward only | A bug in the resolver writing anything else |
+| An audit workflow on every push to `main` by the App: any path outside the lock files fails the run and notifies | Anything that slips past the above, caught within minutes |
+
+Commits made through the API (`createCommitOnBranch`) are signed by GitHub, so a
+"require signed commits" rule works with the bot too.
+
+Strongest option if that's not enough: put the locks in a separate repo
+(`lolay/agent-images-locks`) with the App installed only there, and have it notify
+this repo (`repository_dispatch`) to deploy. The App then can't touch this repo at
+all. More moving parts; not worth it for a lock file.
 
 Expect one or two deploys a day: Claude most weekdays, apt security updates a few
 times a week, Homebrew less.
@@ -308,8 +356,10 @@ project:
   secret, `roles/run.developer` on its job for overrides, object create on the marker
   bucket); `agent-runner` (logging only); `agent-images-ci` (Artifact Registry writer,
   run.developer on the jobs, through workload identity federation).
-- Per type: a Secret Manager secret with the environment key, the job, and the worker
-  pool running the orchestrator image.
+- Per type: a Secret Manager secret with the environment key and the job. One worker
+  pool runs every type's orchestrator.
+- The lock bot: a GitHub App, its key in the `lock-bot` environment, and the `main`
+  ruleset (see [The lock bot](#the-lock-bot)).
 - GPU quota for Cloud Run in `us-central1`.
 
 ## The head
