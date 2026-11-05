@@ -1,9 +1,9 @@
-# Handoff: Terraform for the `lolay-agents` GCP project
+# GCP infrastructure for agent-images
 
-For a new session in `lolay/infrastructure`, which doesn't exist yet. It needs no
-other context: the design it serves is `specs/gcp.md` in `lolay/agent-images`
-(branch `claude/gifted-fermi-zgbs2z` until it merges), and that spec is worth reading
-first. Written 2026-11-05.
+What `lolay/infrastructure` sets up in the `lolay-agents` GCP project for the runners
+in [gcp.md](gcp.md), and what it leaves to this repo. Written 2026-11-05 as the brief
+for the Terraform; Terraform in `lolay/infrastructure` is the source of truth once it
+exists, and this page says what agent-images expects from it.
 
 ## What this is for
 
@@ -186,9 +186,3 @@ resource name), `CI_SERVICE_ACCOUNT`, `ORCHESTRATOR_SERVICE_ACCOUNT`,
 - Nested virtualization needs an Intel machine series (`n2` to start) or AMD `n4d`;
   not `e2` or Arm. The default `n2` CPU quota in `us-central1` covers a few runner VMs
   at 8 vCPUs each.
-
-## Branch
-
-This handoff lives on `claude/gifted-fermi-zgbs2z` in `lolay/agent-images`, a task
-branch the harness assigned. Move it into `lolay/infrastructure` (or delete it here)
-before that branch merges.

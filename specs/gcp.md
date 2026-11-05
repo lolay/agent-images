@@ -454,7 +454,7 @@ workloads: images, the Cloud Run jobs, the orchestrator container, and the runne
 types, so adding a type never needs a Terraform change. Each type's Claude
 environment key goes into Secret Manager by hand as `claude-env-<type>`; the
 orchestrator's access is granted by that name prefix. What Terraform needs, in full:
-[handoffs/handoff-gcp-infrastructure-lantern.md](handoffs/handoff-gcp-infrastructure-lantern.md).
+[gcp-infrastructure.md](gcp-infrastructure.md).
 
 The jobs need no Terraform here: the deploy workflow runs `gcloud run jobs deploy`
 from each `infra/gcp/<type>.env`, which is idempotent, and deletes any `agent-*` job

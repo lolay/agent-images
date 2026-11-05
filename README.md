@@ -22,6 +22,11 @@ shell's environment for a directory you pick. See [Host runner](#host-runner-no-
 Design, constraints, and open items are in [specs/design.md](specs/design.md). Make
 targets are documented in [Makefile.md](Makefile.md).
 
+A third backend, Google Cloud (Cloud Run jobs per session, GPU types, Android on a
+Compute Engine VM), is designed but not built: [specs/gcp.md](specs/gcp.md), with the
+infrastructure it expects in [specs/gcp-infrastructure.md](specs/gcp-infrastructure.md)
+and a test session per runner type in [tests/sessions](tests/sessions/README.md).
+
 ## Requirements
 
 Hosts: Apple Silicon Macs on macOS 27 (Golden Gate). Guests are Golden Gate too.
