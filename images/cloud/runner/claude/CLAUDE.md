@@ -15,15 +15,13 @@ Installed at their latest release when the image was built, so check a repo's
 - No Docker: Cloud Run can't run containers inside a session, so Testcontainers and
   `docker build` don't work here.
 
-Install anything else with `brew install` (Homebrew is yours), `uv`, `pnpm`,
-`go install` or `cargo install`.
+Install anything else with `brew install` (Homebrew is yours) or the project's
+own package manager.
 
 ## No cloud access
 
-There's no gcloud and no cloud credentials, and none should be added. Terraform
-work here is offline: `terraform fmt`, `terraform validate` after
-`terraform init -backend=false`, and `tflint`. Plans and applies run in the repo's
-own CI.
+There's no gcloud and no cloud credentials, and none should be added. Work that
+needs them (deploys, Terraform plans and applies) runs in the repo's own CI.
 
 ## Storage
 

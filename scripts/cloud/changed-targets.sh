@@ -76,7 +76,7 @@ image_paths() {
 # (A * in these patterns also matches /, so the scripts are named outright.)
 readonly every_type=(
 	"images/shared/*" "images/toolsets/install-toolset.sh" "images/toolsets/write-claude-md.sh"
-	"images/cloud/entrypoint.sh"
+	"images/cloud/entrypoint.sh" "images/cloud/runner/*"
 	"images/cloud/docker-bake.hcl" ".dockerignore" "infra/gcp/project.env"
 )
 

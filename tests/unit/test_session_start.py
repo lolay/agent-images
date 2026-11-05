@@ -1,4 +1,4 @@
-"""images/cloud/base/claude/hooks/session-start.sh: outputs folder and the notice."""
+"""images/cloud/runner/claude/hooks/session-start.sh: outputs folder and the notice."""
 
 import json
 import subprocess
@@ -8,7 +8,7 @@ from pathlib import Path
 
 from support import REPO, base_env
 
-HOOK = REPO / "images/cloud/base/claude/hooks/session-start.sh"
+HOOK = REPO / "images/cloud/runner/claude/hooks/session-start.sh"
 # 2026-11-05T02:00:00Z, 6:00 PM PST on the 4th.
 NOW = 1793844000
 

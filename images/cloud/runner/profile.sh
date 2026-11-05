@@ -26,10 +26,22 @@ export TENV_AUTO_INSTALL=true
 # brew shellenv's name for the prefix; the tests point it at a fake one.
 HOMEBREW_PREFIX="${HOMEBREW_PREFIX:-/home/linuxbrew/.linuxbrew}"
 export HOMEBREW_PREFIX
+# What the image's toolsets recorded (images/toolsets/install-toolset.sh): their
+# PATH entries go after ~/bin and before Homebrew (the gis toolset's Python
+# ahead of any Homebrew one), and their profile fragments are sourced last.
+export AGENT_TOOLSETS_DIR="${AGENT_TOOLSETS_DIR:-/etc/agent-images/toolsets}"
+agent_toolset_path=""
+for agent_file in "$AGENT_TOOLSETS_DIR"/*.path; do
+	[ -f "$agent_file" ] || continue
+	while IFS= read -r agent_dir || [ -n "$agent_dir" ]; do
+		case "$agent_dir" in "" | \#*) continue ;; esac
+		agent_toolset_path="${agent_toolset_path:+$agent_toolset_path:}$agent_dir"
+	done <"$agent_file"
+done
 # The front of PATH is always these, in this order, whatever PATH the shell
 # inherited (a session's can lack them, or have them behind /usr/bin); duplicates
 # go. A PATH that already starts with them is left alone.
-agent_path_front="$HOME/bin:$HOME/.local/bin:$HOMEBREW_PREFIX/opt/rustup/bin:$HOMEBREW_PREFIX/bin:$HOMEBREW_PREFIX/sbin"
+agent_path_front="$HOME/bin:$HOME/.local/bin${agent_toolset_path:+:$agent_toolset_path}:$HOMEBREW_PREFIX/opt/rustup/bin:$HOMEBREW_PREFIX/bin:$HOMEBREW_PREFIX/sbin"
 case "$PATH" in
 "$agent_path_front" | "$agent_path_front":*) ;;
 *)
@@ -40,9 +52,14 @@ case "$PATH" in
 		END { printf "%s", out }')"
 	;;
 esac
-unset agent_path_front
+unset agent_path_front agent_toolset_path agent_file agent_dir
 case ":$PATH:" in
 *":$CARGO_HOME/bin:"*) ;;
 *) PATH="$PATH:$CARGO_HOME/bin" ;;
 esac
 export PATH
+for agent_file in "$AGENT_TOOLSETS_DIR"/*.profile.sh; do
+	# shellcheck source=/dev/null
+	[ -f "$agent_file" ] && . "$agent_file"
+done
+unset agent_file

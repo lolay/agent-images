@@ -1,0 +1,4 @@
+# pixi manages the GIS stack's conda-forge environment (pixi.toml); uv installs a
+# project's own Python dependencies on top of it.
+brew "pixi"
+brew "uv"

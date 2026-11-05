@@ -11,10 +11,8 @@ Installed at their latest release when the image was built, so check a repo's
 
 <!-- toolsets -->
 
-There's no gcloud and no cloud credentials, and none should be added. Terraform
-work here is offline: `terraform fmt`, `terraform validate` after
-`terraform init -backend=false`, and `tflint`. Plans and applies run in the repo's
-own CI.
+There's no gcloud and no cloud credentials, and none should be added. Work that
+needs them (deploys, Terraform plans and applies) runs in the repo's own CI.
 
 ## Android
 

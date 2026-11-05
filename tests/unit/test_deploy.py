@@ -143,8 +143,8 @@ class DeployTests(unittest.TestCase):
         ours = {"managed-by": "agent-images"}
         job("agent-linux", {**ours, "agent-images-type": "linux"})
         job("agent-linux-next", {**ours, "agent-images-type": "linux"})
-        job("agent-gis", {**ours, "agent-images-type": "gis"})
-        job("agent-gis-next", {**ours, "agent-images-type": "gis"})
+        job("agent-retired", {**ours, "agent-images-type": "retired"})
+        job("agent-retired-next", {**ours, "agent-images-type": "retired"})
         job("agent-other", {"agent-images-type": "other"})
         job("something-else", {})
         result = self.deploy("prune")

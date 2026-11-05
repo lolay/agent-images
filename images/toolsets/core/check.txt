@@ -1,0 +1,13 @@
+# Smoke checks (images/cloud/entrypoint.sh): label: command, which must exit 0;
+# its first line of output is the reported version.
+gh: gh --version
+git: git --version
+jq: jq --version
+rg: rg --version
+tmux: tmux -V
+age: age --version
+sops: sops --version
+actionlint: actionlint -version
+shellcheck: shellcheck --version
+mandoc: command -v mandoc
+cc: cc --version

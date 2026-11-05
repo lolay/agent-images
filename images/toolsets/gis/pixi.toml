@@ -1,0 +1,34 @@
+# The GIS stack, from conda-forge (specs/image-toolsets.md, "gis"). GDAL, PDAL
+# and QGIS are native libraries whose Python bindings must match them, and QGIS
+# isn't in Homebrew on Linux; conda-forge builds all of it against each other.
+# No versions, as everywhere else ("Track the latest", specs/design.md): each
+# build resolves the newest set that fits together, Python included, and
+# install.sh keeps the resolved pixi.lock in the image.
+#
+# install.sh copies this to /opt/gis, owned by the session user, so a session
+# adds packages with `pixi add --manifest-path /opt/gis/pixi.toml <name>`.
+[workspace]
+name = "gis"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[dependencies]
+python = "*"
+# libgdal is GDAL with its optional drivers; libgdal-core alone lacks many.
+gdal = "*"
+libgdal = "*"
+pdal = "*"
+python-pdal = "*"
+qgis = "*"
+rasterio = "*"
+geopandas = "*"
+pyogrio = "*"
+shapely = "*"
+pyproj = "*"
+pystac-client = "*"
+rioxarray = "*"
+xarray = "*"
+python-duckdb = "*"
+scipy = "*"
+matplotlib = "*"
+requests = "*"

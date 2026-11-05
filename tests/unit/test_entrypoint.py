@@ -11,7 +11,7 @@ from pathlib import Path
 from support import REPO, base_env, read_env_file, write_executable
 
 ENTRYPOINT = REPO / "images/cloud/entrypoint.sh"
-PROFILE = REPO / "images/cloud/base/profile.sh"
+PROFILE = REPO / "images/cloud/runner/profile.sh"
 TOOLCHAINS = (
     "node", "pnpm", "python3", "uv", "go", "cargo", "rustc", "protoc", "buf",
     "grpcurl", "terraform", "tflint", "actionlint", "shellcheck", "mandoc", "java",
@@ -48,6 +48,16 @@ class EntrypointCase(unittest.TestCase):
                 self.fake_bin / tool,
                 f'[[ "${{FAKE_BROKEN_TOOL:-}}" != {tool} ]] || exit 1\necho "{tool} 9.9"\n',
             )
+        # What install-toolset.sh records: two toolsets whose checks call the
+        # fakes, and one with no checks.
+        self.toolsets = self.tmp / "toolsets"
+        self.toolsets.mkdir()
+        half = len(TOOLCHAINS) // 2
+        (self.toolsets / "toolsets.txt").write_text("first\nbrowser\nsecond\n")
+        for name, tools in (("first", TOOLCHAINS[:half]), ("second", TOOLCHAINS[half:])):
+            (self.toolsets / f"{name}.check").write_text(
+                "# a comment\n\n" + "".join(f"{tool}: {tool} --version\n" for tool in tools)
+            )
         self.brew_prefix = self.tmp / "linuxbrew"
         for sub in ("Cellar", "bin"):
             (self.brew_prefix / sub).mkdir(parents=True)
@@ -65,6 +75,7 @@ class EntrypointCase(unittest.TestCase):
             "AGENT_DATASETS": str(self.datasets),
             "AGENT_OUTPUTS_ROOT": str(self.outputs),
             "AGENT_PROFILE": str(PROFILE),
+            "AGENT_TOOLSETS_DIR": str(self.toolsets),
             "AGENT_RUNNER_COMMAND": str(self.runner),
             "AGENT_WATCHDOG_COMMAND": str(self.watchdog),
             # The loop outlives the runner by at most one interval, holding the pipe.
@@ -232,14 +243,21 @@ class ProfileTests(unittest.TestCase):
     HOME = "/home/ubuntu"
     BREW = "/opt/brew"
 
-    def path_after(self, start_path, *, shell="sh", times=1, bash_env=False):
-        script = ". \"$PROFILE\"; " * times + 'printf %s "$PATH"'
+    def setUp(self):
+        self.toolsets = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        subprocess.run(["rm", "-rf", str(self.toolsets)], check=True)
+
+    def path_after(self, start_path, *, shell="sh", times=1, bash_env=False, then="printf %s \"$PATH\""):
+        script = ". \"$PROFILE\"; " * times + then
         env = {"HOME": self.HOME, "HOMEBREW_PREFIX": self.BREW, "PATH": start_path,
-               "PROFILE": str(PROFILE), "AGENT_SCRATCH": "/scratch"}
+               "PROFILE": str(PROFILE), "AGENT_SCRATCH": "/scratch",
+               "AGENT_TOOLSETS_DIR": str(self.toolsets)}
         command = [f"/bin/{shell}", "-c", script]
         if bash_env:
             env["BASH_ENV"] = str(PROFILE)
-            command = ["/bin/bash", "-c", 'printf %s "$PATH"']
+            command = ["/bin/bash", "-c", then]
         result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout.split(":")
@@ -267,6 +285,22 @@ class ProfileTests(unittest.TestCase):
 
     def test_non_interactive_bash_gets_it_through_bash_env(self):
         self.assert_front(self.path_after("/usr/bin:/bin", bash_env=True))
+
+    def test_toolset_paths_go_after_home_and_before_homebrew(self):
+        (self.toolsets / "gis.path").write_text("# the env\n/opt/gis/bin\n")
+        for times in (1, 3):
+            path = self.path_after(f"/usr/bin:{self.BREW}/bin:/opt/gis/bin:/bin", times=times)
+            self.assertEqual(
+                path[:4], [f"{self.HOME}/bin", f"{self.HOME}/.local/bin", "/opt/gis/bin", f"{self.BREW}/opt/rustup/bin"]
+            )
+            self.assertEqual(len(path), len(set(path)), f"duplicates in {path}")
+
+    def test_toolset_profiles_are_sourced(self):
+        (self.toolsets / "gis.profile.sh").write_text("export GIS_ENV=/opt/gis\n")
+        out = self.path_after("/usr/bin:/bin", then='printf %s "$GIS_ENV"')
+        self.assertEqual(out, ["/opt/gis"])
+        out = self.path_after("/usr/bin:/bin", bash_env=True, then='printf %s "$GIS_ENV"')
+        self.assertEqual(out, ["/opt/gis"])
 
 if __name__ == "__main__":
     unittest.main()

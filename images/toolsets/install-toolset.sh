@@ -2,9 +2,15 @@
 # Installs toolsets (specs/image-toolsets.md) into a Linux image, in the order
 # given. For each: its packages.txt from Ubuntu's archive, then its Brewfile
 # (installing Homebrew first if it isn't there yet), then its install.sh. A
-# toolset has any of the three, and optionally a CLAUDE.md: its lines for the
-# session's CLAUDE.md. Each installed toolset is recorded in record_dir, with its
-# CLAUDE.md, for write-claude-md.sh. Runs as the image's user, who has sudo, from
+# toolset has any of the three, and optionally:
+#   CLAUDE.md    its lines for the session's CLAUDE.md (write-claude-md.sh);
+#   check.txt    its smoke checks, `label: command` (images/cloud/entrypoint.sh);
+#   profile.sh   environment for every session shell, sourced by the cloud
+#                profile after its own;
+#   path.txt     directories for the front of every session's PATH, after ~/bin
+#                and before Homebrew's.
+# Each installed toolset is recorded in record_dir with those files. install.sh
+# gets TOOLSET_RECORD_DIR, and writes generated ones (<name>.profile.sh) there. Runs as the image's user, who has sudo, from
 # the cloud Dockerfiles and the Android image's install-packages.sh.
 #
 # Usage: install-toolset.sh <name>...
@@ -46,13 +52,17 @@ install_apt() {
 }
 
 # Records an installed toolset: its name once in toolsets.txt, in install order,
-# and its CLAUDE.md as <name>.md.
+# and its CLAUDE.md, check.txt, profile.sh and path.txt as <name>.md,
+# <name>.check, <name>.profile.sh and <name>.path.
 record() {
-	local name="$1" dir="$2"
+	local name="$1" dir="$2" file suffix
 	sudo install -d -m 755 "$record_dir"
 	sudo touch "$record_dir/toolsets.txt"
 	grep -qxF "$name" "$record_dir/toolsets.txt" || printf '%s\n' "$name" | sudo tee -a "$record_dir/toolsets.txt" >/dev/null
-	[[ ! -f "$dir/CLAUDE.md" ]] || sudo install -m 644 "$dir/CLAUDE.md" "$record_dir/$name.md"
+	for file in CLAUDE.md:md check.txt:check profile.sh:profile.sh path.txt:path; do
+		suffix="${file#*:}" file="${file%%:*}"
+		[[ ! -f "$dir/$file" ]] || sudo install -m 644 "$dir/$file" "$record_dir/$name.$suffix"
+	done
 }
 
 # Homebrew installs to /home/linuxbrew/.linuxbrew and must not run as root; the
@@ -108,7 +118,8 @@ for name in "$@"; do
 	if [[ -f "$dir/install.sh" ]]; then
 		# A toolset's own steps can use any formula installed so far.
 		[[ ! -x "$brew" ]] || brew_env
-		bash "$dir/install.sh"
+		sudo install -d -m 755 "$record_dir"
+		TOOLSET_RECORD_DIR="$record_dir" bash "$dir/install.sh"
 		# Any brew command it ran refilled Homebrew's cache.
 		[[ ! -x "$brew" ]] || rm -rf "$("$brew" --cache)"
 	fi

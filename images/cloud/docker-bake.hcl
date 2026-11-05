@@ -1,7 +1,10 @@
 # Builds the Cloud Run images (specs/gcp.md, "Images"). Run from the repo root,
 # which is the build context: `docker buildx bake -f images/cloud/docker-bake.hcl
-# linux` (make cloud-build). agent-base is a build parent, never deployed: each
-# type gets it as the agent-base context, so `FROM agent-base` never pulls.
+# linux` (make cloud-build). A type is two targets: <type>-tools, its Dockerfile
+# (images/cloud/<type>) on agent-base, and <type>, the shared runner stage
+# (images/cloud/runner) on those tools, which adds Claude Code last. Only <type>
+# is tagged and pushed; base and <type>-tools are build parents, passed as named
+# contexts, so their FROM lines never pull.
 
 variable "REGISTRY" {
   # Empty for local builds (tags agent-<name>:<TAG>); the deploy passes
@@ -24,25 +27,54 @@ function "tags" {
 }
 
 group "default" {
-  targets = ["linux", "orchestrator"]
+  targets = ["linux", "gis", "orchestrator"]
 }
 
 target "base" {
   context    = "."
   dockerfile = "images/cloud/base/Dockerfile"
+}
+
+# The runner stage every type ends with; a type's target inherits it and names
+# its tools.
+target "_runner" {
+  context    = "."
+  dockerfile = "images/cloud/runner/Dockerfile"
   args = {
     CLAUDE_VERSION = CLAUDE_VERSION
   }
-  tags = tags("base")
 }
 
-target "linux" {
+target "linux-tools" {
   context    = "."
   dockerfile = "images/cloud/linux/Dockerfile"
   contexts = {
     agent-base = "target:base"
   }
+}
+
+target "linux" {
+  inherits = ["_runner"]
+  contexts = {
+    agent-tools = "target:linux-tools"
+  }
   tags = tags("linux")
+}
+
+target "gis-tools" {
+  context    = "."
+  dockerfile = "images/cloud/gis/Dockerfile"
+  contexts = {
+    agent-base = "target:base"
+  }
+}
+
+target "gis" {
+  inherits = ["_runner"]
+  contexts = {
+    agent-tools = "target:gis-tools"
+  }
+  tags = tags("gis")
 }
 
 target "orchestrator" {

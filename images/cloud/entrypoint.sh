@@ -40,7 +40,7 @@ die() {
 	exit 1
 }
 
-# shellcheck source=images/cloud/base/profile.sh
+# shellcheck source=images/cloud/runner/profile.sh
 source "$AGENT_PROFILE"
 
 scratch_fstype() { findmnt -n -o FSTYPE --target "$AGENT_SCRATCH" 2>/dev/null || true; }
@@ -121,30 +121,27 @@ smoke() {
 	}
 	# shellcheck disable=SC2317,SC2329 # called through check
 	toolchains() {
-		local versions=() failed=0 tool name output
-		# Each tool with the arguments that print its version. cargo, rustc and
-		# terraform are proxies (rustup, tenv): this fails if the image left out
-		# their toolchains.
-		local -a tools=(
-			"node --version" "pnpm --version" "python3 --version" "uv --version"
-			"go version" "cargo --version" "rustc --version" "protoc --version"
-			"buf --version" "grpcurl -version" "terraform version" "tflint --version"
-			"actionlint -version" "shellcheck --version" "command -v mandoc"
-			"java -version" "cmake --version" "pkg-config --version" "gh --version"
-			"sops --version" "age --version" "rg --version" "tmux -V"
-		)
-		# mandoc has no version flag, so it only has to be on PATH.
-		for tool in "${tools[@]}"; do
-			name="${tool%% *}"
-			[[ "$name" != command ]] || name="${tool##* }"
-			# shellcheck disable=SC2086 # the command and its arguments
-			if output="$(CHECKPOINT_DISABLE=1 $tool 2>&1)"; then
-				versions+=("$name: $(head -n 1 <<<"$output")")
-			else
-				versions+=("$name: missing")
-				failed=1
-			fi
-		done
+		# Every installed toolset's checks (install-toolset.sh records them), in
+		# install order: `label: command`, which must exit 0. A proxy (cargo from
+		# rustup, terraform from tenv) fails if its toolchain wasn't installed.
+		local versions=() failed=0 name line label command output
+		[[ -s "$AGENT_TOOLSETS_DIR/toolsets.txt" ]] || {
+			printf 'no toolsets recorded in %s\n' "$AGENT_TOOLSETS_DIR"
+			return 1
+		}
+		while read -r name; do
+			[[ -f "$AGENT_TOOLSETS_DIR/$name.check" ]] || continue
+			while IFS= read -r line; do
+				[[ -n "$line" && "$line" != \#* ]] || continue
+				label="${line%%: *}" command="${line#*: }"
+				if output="$(CHECKPOINT_DISABLE=1 bash -c "$command" 2>&1 </dev/null)"; then
+					versions+=("$label: $(head -n 1 <<<"$output")")
+				else
+					versions+=("$label: missing")
+					failed=1
+				fi
+			done <"$AGENT_TOOLSETS_DIR/$name.check"
+		done <"$AGENT_TOOLSETS_DIR/toolsets.txt"
 		printf '%s\n' "${versions[@]}"
 		return "$failed"
 	}

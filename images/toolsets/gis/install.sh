@@ -1,0 +1,42 @@
+#!/bin/bash
+# The gis toolset's environment: pixi installs pixi.toml's conda-forge packages
+# into /opt/gis, owned by the image's user. Run by install-toolset.sh after the
+# Brewfile (pixi, uv), with Homebrew on PATH and TOOLSET_RECORD_DIR set.
+#
+# Sessions don't activate the environment themselves: this records its bin for
+# the front of PATH (gis.path) and its activation (GDAL_DATA, PROJ_DATA and the
+# rest, from pixi shell-hook, without the PATH line) as gis.profile.sh, which the
+# cloud profile sources.
+set -euo pipefail
+
+: "${TOOLSET_RECORD_DIR:?}"
+
+readonly root=/opt/gis
+readonly env="$root/.pixi/envs/default"
+
+log() { printf '==> gis: %s\n' "$*"; }
+
+sudo install -d -o "$(id -un)" -g "$(id -gn)" -m 755 "$root"
+install -m 644 "$(dirname "${BASH_SOURCE[0]}")/pixi.toml" "$root/pixi.toml"
+log "solving and installing $root/pixi.toml from conda-forge"
+# pixi reports progress on stderr, which a green build doesn't allow.
+pixi install --manifest-path "$root/pixi.toml" 2>&1
+
+{
+	printf '# The gis toolset environment (images/toolsets/gis/install.sh): pixi shell-hook\n'
+	printf '# without its PATH line, which gis.path covers.\n'
+	printf 'export GIS_ENV=%s\n' "$env"
+	# QGIS needs a display; sessions have none. Written literally, for the
+	# session's shell to expand.
+	# shellcheck disable=SC2016
+	printf 'export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"\n'
+	pixi shell-hook --manifest-path "$root/pixi.toml" --shell bash | grep -v '^export PATH='
+} | sudo tee "$TOOLSET_RECORD_DIR/gis.profile.sh" >/dev/null
+printf '%s/bin\n' "$env" | sudo tee "$TOOLSET_RECORD_DIR/gis.path" >/dev/null
+
+# The package cache isn't needed once the environment is linked (cloud images
+# keep each toolset in its own layer).
+pixi clean cache --yes 2>&1 || rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/rattler"
+
+log "$("$env/bin/gdalinfo" --version), $("$env/bin/pdal" --version | head -n 1 | tr -s ' '), $("$env/bin/python" --version)"
+log "$(du -sh "$env" | cut -f1) in $env"

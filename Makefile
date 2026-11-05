@@ -96,7 +96,7 @@ PKR_VAR_base_image ?= ghcr.io/cirruslabs/macos-$(MACOS_CODENAME)-xcode:latest
 # The GCP runners (specs/gcp.md): the Cloud Run images, the orchestrator
 # container, the hook and the deploy scripts. Built and tested on Linux with
 # Docker; the deploy itself runs only from main, in GitHub Actions.
-CLOUD_SCRIPTS := $(wildcard images/cloud/*.sh images/cloud/base/*.sh images/cloud/base/claude/hooks/*.sh \
+CLOUD_SCRIPTS := $(wildcard images/cloud/*.sh images/cloud/runner/*.sh images/cloud/runner/claude/hooks/*.sh \
                    images/toolsets/*.sh images/toolsets/*/*.sh \
                    images/cloud/orchestrator/*.sh scripts/cloud/*.sh hooks/gcp/*.sh) hooks/gcp/spawn-runner
 CLOUD_BAKE := docker buildx bake -f images/cloud/docker-bake.hcl
@@ -312,7 +312,7 @@ cloud-smoke: ## Run a built image's smoke checks against stand-in volumes: TYPE=
 cloud-lint: ## Lint the cloud scripts and settings (no writes)
 	shellcheck -x $(CLOUD_SCRIPTS)
 	shfmt -d $(CLOUD_SCRIPTS)
-	@jq empty images/cloud/base/claude/settings.json && printf '%s: OK\n' images/cloud/base/claude/settings.json
+	@jq empty images/cloud/runner/claude/settings.json && printf '%s: OK\n' images/cloud/runner/claude/settings.json
 
 cloud-test: ## Run the cloud unit tests (Linux: they use /proc and GNU tools)
 	@[ "$(HOST_OS)" = "Linux" ] || { printf 'make cloud-test needs Linux (/proc, GNU date); CI runs it\n' >&2; exit 1; }

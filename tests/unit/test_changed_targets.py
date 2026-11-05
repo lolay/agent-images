@@ -28,7 +28,9 @@ class ChangedTargetsTests(unittest.TestCase):
                 "RUN bash /t/install-toolset.sh node\n"
             ),
             "images/cloud/base-gpu/Dockerfile": "ARG BASE\nFROM agent-base\nRUN bash /t/install-toolset.sh display\n",
-            "images/cloud/linux/Dockerfile": "FROM agent-base\n",
+            "images/cloud/linux/Dockerfile": "FROM agent-base\nRUN bash /t/install-toolset.sh go\n",
+            "images/cloud/runner/Dockerfile": "FROM agent-tools\n",
+            "images/toolsets/go/Brewfile": 'brew "go"\n',
             "images/cloud/linux-gpu/Dockerfile": "FROM agent-base-gpu\n",
             "images/cloud/orchestrator/Dockerfile": "FROM ubuntu:24.04\n",
             "images/cloud/entrypoint.sh": "#!/bin/bash\n",
@@ -106,6 +108,17 @@ class ChangedTargetsTests(unittest.TestCase):
         self.assertEqual(
             self.change("images/toolsets/display/packages.txt")["types"],
             [{"type": "linux-gpu", "build": True}],
+        )
+
+    def test_a_types_own_toolset_rebuilds_only_it(self):
+        self.assertEqual(
+            self.change("images/toolsets/go/Brewfile")["types"], [{"type": "linux", "build": True}]
+        )
+
+    def test_the_runner_stage_rebuilds_every_type(self):
+        self.assertEqual(
+            self.change("images/cloud/runner/Dockerfile")["types"],
+            [{"type": "linux", "build": True}, {"type": "linux-gpu", "build": True}],
         )
 
     def test_a_toolset_no_cloud_type_installs_deploys_nothing(self):

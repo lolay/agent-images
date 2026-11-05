@@ -134,6 +134,8 @@ jobs:
           set: |
             base.cache-from=type=gha,scope=base
             base.cache-to=type=gha,mode=max,scope=base
+            ${{ matrix.type }}-tools.cache-from=type=gha,scope=${{ matrix.type }}-tools
+            ${{ matrix.type }}-tools.cache-to=type=gha,mode=max,scope=${{ matrix.type }}-tools
             ${{ matrix.type }}.cache-from=type=gha,scope=${{ matrix.type }}
             ${{ matrix.type }}.cache-to=type=gha,mode=max,scope=${{ matrix.type }}
       - name: Smoke and promote
