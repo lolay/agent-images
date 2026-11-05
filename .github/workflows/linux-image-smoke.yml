@@ -45,10 +45,8 @@ jobs:
       # Each script's stderr also goes to STDERR_LOG; the Green step fails on any.
       - name: setup-user
         run: bash "$STAGING_DIR/scripts/setup-user.sh" 2> >(tee -a "$STDERR_LOG" >&2)
-      - name: install-packages
+      - name: install-packages (the android toolset boots the emulator once, saves the snapshot)
         run: bash "$STAGING_DIR/scripts/install-packages.sh" 2> >(tee -a "$STDERR_LOG" >&2)
-      - name: ensure-android-sdk (boots the emulator once, saves the snapshot)
-        run: bash "$STAGING_DIR/scripts/ensure-android-sdk.sh" 2> >(tee -a "$STDERR_LOG" >&2)
       - name: Boot the emulator as a session would
         run: |
           bash -lc '

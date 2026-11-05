@@ -130,6 +130,8 @@ smoke() {
 			"go version" "cargo --version" "rustc --version" "protoc --version"
 			"buf --version" "grpcurl -version" "terraform version" "tflint --version"
 			"actionlint -version" "shellcheck --version" "command -v mandoc"
+			"java -version" "cmake --version" "pkg-config --version" "gh --version"
+			"sops --version" "age --version" "rg --version" "tmux -V"
 		)
 		# mandoc has no version flag, so it only has to be on PATH.
 		for tool in "${tools[@]}"; do

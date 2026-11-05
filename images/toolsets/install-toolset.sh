@@ -74,7 +74,9 @@ install_brewfile() {
 	done
 	log "installing $brewfile"
 	brew bundle --file="$brewfile"
-	mapfile -t formulae < <(sed -n 's/^brew "\([^"]*\)".*/\1/p' "$brewfile")
+	# brew bundle list evaluates the Brewfile, so it skips entries for other
+	# platforms (brew "git" if OS.mac?).
+	mapfile -t formulae < <(brew bundle list --formula --file="$brewfile")
 	log "$(brew list --versions "${formulae[@]}" | tr '\n' ';')"
 	# The bottles Homebrew downloaded and its API and bootsnap caches aren't
 	# needed once poured. On the cloud images each toolset is its own layer, so

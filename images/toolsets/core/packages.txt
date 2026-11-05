@@ -3,16 +3,14 @@
 # a version gets pinned only when a release breaks something (see "Track the
 # latest" in specs/design.md). # starts a comment.
 
-# Session tools, as in the macOS Brewfile.
-age
+# The rest of the session tools are in core/Brewfile, shared with macOS. These
+# are the ones the system side needs before Homebrew is on PATH: Homebrew's
+# installer (git, curl), the hooks and image scripts (jq), and archives.
 ca-certificates
 curl
-gh
 git
 jq
 python3
-ripgrep
-tmux
 unzip
 zip
 

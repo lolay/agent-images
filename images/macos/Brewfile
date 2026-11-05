@@ -1,29 +1,21 @@
-# Packages installed into every macOS image. No versions on purpose: each build
-# installs the current release, and a version gets pinned only when a release
-# breaks something (see "Track the latest" in specs/design.md). README.md records
-# what was current at the last lookup.
+# Packages only the macOS image gets, after the session tools in
+# images/toolsets/core/Brewfile (staged as Brewfile.core), which every image
+# shares. No versions on purpose: each build installs the current release, and a
+# version gets pinned only when a release breaks something (see "Track the
+# latest" in specs/design.md). README.md records what was current at the last
+# lookup.
 #
 # Every tap listed here is trusted by install-packages.sh before the bundle runs.
-tap "lolay/tap"
 
-brew "age"
 # asc-cli (tddworks/asc-cli); its command is `asc`. homebrew-core installed it
 # as `asccli` until 2026-10-10, when it dropped the rename to match upstream's
 # own docs. Core's `asc` formula is a different App Store Connect CLI that
 # installs its own `asc`, so the two conflict and only one can be installed.
 brew "asccli"
-brew "gh"
-brew "git"
-brew "jq"
-brew "ripgrep"
-brew "sops"
 brew "swiftformat"
 brew "swiftlint"
-brew "tmux"
 brew "xcbeautify"
 brew "xcodegen"
-brew "lolay/tap/nowline"
-brew "lolay/tap/triage"
 
 # Runner CLI. The runner script upgrades it at each start.
 cask "claude-code@latest"

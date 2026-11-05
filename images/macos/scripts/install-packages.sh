@@ -1,12 +1,13 @@
 #!/bin/bash
-# Installs the Brewfile as the guest user, who owns the base image's Homebrew
-# and its trust store, so each runner can upgrade its own CLI and sessions can
-# install what a project needs.
+# Installs Brewfile.core (images/toolsets/core/Brewfile, the session tools every
+# image shares) and then the macOS Brewfile, as the guest user, who owns the
+# base image's Homebrew and its trust store, so each runner can upgrade its own
+# CLI and sessions can install what a project needs.
 set -euo pipefail
 
 : "${STAGING_DIR:?}"
 
-readonly brewfile="$STAGING_DIR/Brewfile"
+readonly brewfiles=("$STAGING_DIR/Brewfile.core" "$STAGING_DIR/Brewfile")
 
 # Homebrew first on PATH, as in a login shell, so it doesn't warn that its git
 # is shadowed by /usr/bin/git; and no environment-variable hints in build logs.
@@ -21,7 +22,7 @@ brew update --quiet 2>&1
 
 # Homebrew refuses to load formulae from untrusted third-party taps, so trust
 # each Brewfile tap before the bundle loads them.
-sed -n 's/^tap "\([^"]*\)".*/\1/p' "$brewfile" | while read -r tap; do
+sed -n 's/^tap "\([^"]*\)".*/\1/p' "${brewfiles[@]}" | while read -r tap; do
 	brew tap "$tap" 2>&1
 	brew trust --tap "$tap"
 done
@@ -32,7 +33,9 @@ if brew list --cask claude-code >/dev/null 2>&1; then
 	brew uninstall --cask claude-code
 fi
 
-brew bundle --file="$brewfile"
+for brewfile in "${brewfiles[@]}"; do
+	brew bundle --file="$brewfile"
+done
 
 # Sessions expect the image's `asc` to be asc-cli (the Brewfile's asccli
 # formula). Core's conflicting `asc` formula is a different App Store Connect

@@ -1,7 +1,11 @@
 #!/bin/bash
-# Installs the Android SDK for the guest user and builds the emulator it boots
-# in every session, then fails the build if either doesn't work. Runs in the
-# guest as the guest user, after install-packages.sh (needs the JDK, curl, unzip).
+# The android toolset's SDK: installs the Android SDK for the image's user and
+# builds the emulator it boots in every session, then fails the build if either
+# doesn't work. Run by install-toolset.sh after the toolset's apt packages, as
+# the image's user; needs the jvm toolset first (and core's curl and unzip).
+# It uses the Android image's own files from images/linux (setup-user.sh puts
+# them in place first): /etc/profile.d/agent-images.sh for ANDROID_HOME, and
+# agent-emulator.
 #
 # Nothing is pinned: the newest command-line tools, and the newest stable API
 # level that has both a platform and an x86_64 Google APIs system image, with
@@ -25,9 +29,9 @@ readonly sdk="$ANDROID_HOME"
 readonly repository=https://dl.google.com/android/repository
 readonly avd=agent
 
-log() { printf '==> ensure-android-sdk: %s\n' "$*"; }
+log() { printf '==> android: %s\n' "$*"; }
 die() {
-	printf '==> ensure-android-sdk: %s\n' "$*" >&2
+	printf '==> android: %s\n' "$*" >&2
 	exit 1
 }
 # The Android CLI, without usage metrics.

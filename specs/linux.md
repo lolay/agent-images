@@ -66,12 +66,13 @@ writing the exec channel, image publishing, and ephemeral VMs ourselves.
 `images/linux`, on Ubuntu's official `ubuntu:24.04` VM image (it has lxd-agent):
 
 - **Packages:** the toolsets in `toolsets.txt`, from `images/toolsets`
-  ([image-toolsets.md](image-toolsets.md)), unpinned: session tools, OpenJDK 21, the
-  emulator's and Chromium's libraries from Ubuntu's archive, and the language
-  toolchains (Node, Python, Go, Rust, protobuf, Terraform through tenv) from
-  Homebrew.
+  ([image-toolsets.md](image-toolsets.md)), unpinned: OpenJDK 21, build tools and
+  headers, and the emulator's and Chromium's libraries from Ubuntu's archive; the
+  session tools (shared with the Mac) and the language toolchains (Node, Python,
+  Go, Rust, protobuf, Terraform through tenv) from Homebrew.
 - **Claude Code:** the native installer; the runner runs `claude update` at start.
-- **Android SDK** in `/opt/android-sdk`, owned by the guest user:
+- **Android SDK** in `/opt/android-sdk`, owned by the guest user (the `android`
+  toolset's `install.sh`):
   - installed through Google's Android CLI (`android sdk`, which replaced sdkmanager in
     2026): the newest stable API level with an x86_64 Google APIs image (37.0 today)
     and the newest build tools;

@@ -162,7 +162,7 @@ step. It passes `--var image_ref=$(IMAGE_REF)` so the image check follows `.env`
 | --- | --- |
 | `host-setup` | `scripts/linux/host-setup.sh`: checks VT-x/AMD-V and turns on nested KVM, installs the LXD snap (refreshes held) and initializes it with a ZFS pool and the `lxdbr0` bridge, installs Claude Code, enables lingering. Idempotent; uses sudo |
 | `doctor` | `triage --profile linux` (one profile; `MODE` is ignored) |
-| `build` | `scripts/linux/build-image.sh`: refreshes LXD, launches `agent-linux-build` from `ubuntu:24.04`, runs `images/linux/scripts` in it (the SDK step boots the emulator once for its snapshot), publishes `agent-linux-next`, then moves the `agent-linux` alias to it |
+| `build` | `scripts/linux/build-image.sh`: refreshes LXD, launches `agent-linux-build` from `ubuntu:24.04`, runs `images/linux/scripts` in it, which install the toolsets in `images/linux/toolsets.txt` (the `android` toolset boots the emulator once for its snapshot), publishes `agent-linux-next`, then moves the `agent-linux` alias to it |
 | `runner-run` | `scripts/linux/orchestrator-run.sh`: the secret from `~/.config/agent-images` into the environment, then `claude self-hosted-runner orchestrator --hooks-dir hooks/linux` |
 | `runner-install` | `scripts/linux/orchestrator-service.sh install`: systemd user unit `agent-images-orchestrator.service`, started at boot (lingering) |
 | `runner-uninstall` / `runner-stop` / `runner-status` | As on macOS, with systemd and `lxc` |

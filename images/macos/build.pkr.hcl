@@ -35,6 +35,12 @@ build {
     destination = "${local.guest_staging}/"
   }
 
+  # The session tools every image shares (specs/image-toolsets.md).
+  provisioner "file" {
+    source      = "${path.root}/../toolsets/core/Brewfile"
+    destination = "${local.guest_staging}/Brewfile.core"
+  }
+
   provisioner "shell" {
     environment_vars = [
       "STAGING_DIR=${local.guest_staging}",

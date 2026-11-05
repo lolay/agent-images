@@ -1,5 +1,5 @@
 #!/bin/bash
-# Runs this VM's Android emulator: AVD "agent" (built by ensure-android-sdk.sh),
+# Runs this VM's Android emulator: AVD "agent" (built by the android toolset's install.sh),
 # headless, KVM-accelerated, as emulator-5554. Installed as ~/bin/agent-emulator.
 # agent-runner-claude starts it at every runner start, so it's booted before a
 # session needs it; the image build uses it to save the quickboot snapshot.

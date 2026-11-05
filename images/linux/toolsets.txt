@@ -2,6 +2,7 @@
 # install-packages.sh passes them to images/toolsets/install-toolset.sh. The
 # cloud images list theirs in their Dockerfiles. # starts a comment.
 core
+native
 jvm
 browser
 android

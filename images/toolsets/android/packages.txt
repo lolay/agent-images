@@ -1,6 +1,5 @@
-# The Android emulator's system side. The SDK, the AVD and its snapshot come
-# from images/linux/scripts/ensure-android-sdk.sh, which only the Android image
-# runs (it needs KVM to boot the emulator once).
+# The Android emulator's system side. install.sh then adds the SDK, the AVD and
+# its snapshot (it needs KVM to boot the emulator once, so VM images only).
 
 # KVM checks (kvm-ok) for make doctor and agent-emulator status.
 cpu-checker

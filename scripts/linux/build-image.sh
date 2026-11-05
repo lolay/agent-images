@@ -9,7 +9,7 @@
 #
 # Settings (.env or environment): LINUX_BASE_IMAGE (default ubuntu:24.04),
 # BUILD_CPU (8), BUILD_MEMORY_GB (16), BUILD_DISK_GB (64). The build VM needs
-# nested KVM like a runner does: ensure-android-sdk.sh boots the emulator once.
+# nested KVM like a runner does: the android toolset boots the emulator once.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,7 +23,7 @@ readonly guest_staging="/tmp/agent-images"
 readonly linux_dir="$AGENT_IMAGES_DIR/images/linux"
 readonly shared_dir="$AGENT_IMAGES_DIR/images/shared"
 readonly toolsets_dir="$AGENT_IMAGES_DIR/images/toolsets"
-readonly provisioners=(setup-user install-packages ensure-android-sdk)
+readonly provisioners=(setup-user install-packages)
 # Every provisioner's stderr, so a build that isn't green says so.
 readonly build_err="$AGENT_IMAGES_LOG_DIR/linux-build.err"
 base_image="$(setting LINUX_BASE_IMAGE ubuntu:24.04)"

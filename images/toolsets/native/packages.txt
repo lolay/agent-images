@@ -1,0 +1,20 @@
+# What native builds look for, from Ubuntu's archive: the build tools and the
+# headers of the system libraries most crates, Python packages without a wheel
+# and Go cgo packages link (openssl-sys, psycopg, the stdlib modules pyenv-style
+# builds need). A Cloud Run session can't apt-get, so without these a build
+# that needs one fails there with no way to add it.
+cmake
+ninja-build
+pkg-config
+libbz2-dev
+libffi-dev
+liblzma-dev
+libpq-dev
+libreadline-dev
+libsqlite3-dev
+libssl-dev
+zlib1g-dev
+
+# Clients for local databases and the files sessions inspect.
+postgresql-client
+sqlite3

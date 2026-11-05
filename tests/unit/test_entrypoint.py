@@ -14,7 +14,8 @@ ENTRYPOINT = REPO / "images/cloud/entrypoint.sh"
 PROFILE = REPO / "images/cloud/base/profile.sh"
 TOOLCHAINS = (
     "node", "pnpm", "python3", "uv", "go", "cargo", "rustc", "protoc", "buf",
-    "grpcurl", "terraform", "tflint", "actionlint", "shellcheck", "mandoc",
+    "grpcurl", "terraform", "tflint", "actionlint", "shellcheck", "mandoc", "java",
+    "cmake", "pkg-config", "gh", "sops", "age", "rg", "tmux",
 )
 
 

@@ -198,7 +198,10 @@ Steps for [gcp.md](gcp.md) m2, ahead of `gis` and `android`:
   (otherwise they're kept once per layer). The Android image's scripts ran green on
   a hosted runner, with the emulator up from its snapshot in 9 s.
 - s3: add `native`; drop `android` from `linux` and move the SDK into the toolset's
-  `install.sh`; move session tools to the `core` Brewfile on Linux and the Mac.
+  `install.sh`; move session tools to the `core` Brewfile on Linux and the Mac. On
+  Linux, git and jq stay in apt: Homebrew's installer needs git, and the hooks call
+  jq before Homebrew is on PATH. The Mac gains actionlint and shellcheck from the
+  shared list.
 - s4: per-toolset `CLAUDE.md` fragments, and `changed-targets.sh` reading toolsets.
 - s5: rename `images/linux` to `images/android` and the alias to `agent-android`.
 - s6: `gis` on toolsets, as in the m2 plan.
