@@ -368,6 +368,32 @@ plus `--retire-at` set at start to the task deadline minus a margin, so Cloud Ru
 hard stop releases sessions cleanly instead of losing them. GPU jobs run up to
 12 hours (preview since 2026-10-30).
 
+## The orchestrator container
+
+One container image, `agent-orchestrator` (`images/cloud/orchestrator/`), runs every
+type's orchestrator. Claude's orchestrator takes one `--environment-secret-file`, so
+it's one process per type inside one container:
+
+- **Contents:** Claude Code, `gcloud`, `hooks/gcp`, and a supervisor script as the
+  entrypoint. Small, CPU only, and it never runs session code.
+- **Types:** the supervisor reads every `infra/gcp/*.env` baked into the image and
+  starts `claude self-hosted-runner orchestrator` for each, with `RUNNER_TYPE`, that
+  type's `--min-idle` and `--expected-spawn-seconds`, its own `--health-port`
+  (8080 upward), and `--shutdown-drain-sec 70`.
+- **Secrets:** each type's `claude-env-<type>` from Secret Manager, mounted as a file
+  per type by Cloud Run's secret volumes. The supervisor passes each orchestrator only
+  its own, and the hook unsets it before doing anything else.
+- **Supervision:** restart any orchestrator that exits; forward `SIGTERM` to all of
+  them; prefix each one's log lines with its type. Healthy only when every
+  orchestrator's `/healthz` reports `connected`.
+- **Deploys:** a push to `main` that touches `hooks/gcp/**`, `images/cloud/orchestrator/**`
+  or `infra/gcp/*.env` rebuilds it and updates the worker pool. Sessions in flight are
+  unaffected: they belong to runners, not to the orchestrator.
+
+One process for all types would mean one environment for all types, with the hook
+picking an image per session. That loses the explicit choice in the picker, and
+standbys, which start before any session exists, couldn't know which image to be.
+
 ## Setup
 
 A short `scripts/gcp/setup.sh` (or OpenTofu once it outgrows a script) for one
