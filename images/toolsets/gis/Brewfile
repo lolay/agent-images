@@ -2,3 +2,6 @@
 # project's own Python dependencies on top of it.
 brew "pixi"
 brew "uv"
+# As in the python toolset: ruff and pre-commit.
+brew "ruff"
+brew "pre-commit"

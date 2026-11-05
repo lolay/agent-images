@@ -9,6 +9,8 @@ python3: python3 --version
 bindings: out="$(python3 -c 'import osgeo.gdal, rasterio, geopandas, pdal, qgis.core, pystac_client, duckdb, pyarrow, geoarrow.pyarrow, polars, zarr, dask_geopandas, odc.stac, h3, osmium, pmtiles' 2>&1)" && [ -z "$out" ] && echo "osgeo, rasterio, geopandas, pdal, qgis.core, pystac_client, duckdb, pyarrow, geoarrow, polars, zarr, dask_geopandas, odc.stac, h3, osmium, pmtiles" || { echo "$out"; false; }
 one gdal: python3 -c 'import osgeo.gdal, rasterio; a, b = osgeo.gdal.__version__, rasterio.__gdal_version__; assert a == b, (a, b); print("GDAL", a)'
 uv: uv --version
+ruff: ruff --version
+pre-commit: pre-commit --version
 tippecanoe: tippecanoe --version 2>&1 | head -n 1
 untwine: command -v untwine
 osmium: osmium --version | head -n 1

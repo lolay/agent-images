@@ -140,6 +140,30 @@ it. COLMAP is built from source in a builder stage (`CMAKE_CUDA_ARCHITECTURES=12
 and only its install tree is copied in. Blender ships its own Python and its own
 Cycles kernels; take blender.org's Linux build, not Ubuntu's.
 
+### `gis` stays CPU; capture and reconstruction go to `3d-gpu`
+
+Decided 2026-11-05, checked against the pipelines these images are meant to serve.
+`gis` is CPU work that ends in maps: rasters, vectors, and LiDAR terrain (ground
+classification, DTM, DSM, canopy height), which is why PDAL and COPC stay there.
+The drone capture and reconstruction side goes to `3d-gpu` in m3, where those
+pipelines run:
+
+- exiftool, for capture metadata (GPS, gimbal, vendor XMP): still the standard, since
+  Python EXIF libraries miss vendor maker-notes.
+- OpenCV (headless) for imagery; kornia for the same on the GPU.
+- laspy with lazrs, for NumPy access to LAS, LAZ and COPC alongside PDAL.
+- ffmpeg, for frames from capture video.
+- Spirula Studio, proposed: a Gaussian splat trainer whose Linux release is one
+  Vulkan binary, so nothing has to be compiled for compute capability 12.0 (gsplat
+  does). It needs the Vulkan loader, libOpenGL and an NVIDIA ICD manifest when the
+  driver ships without one, and Vulkan working on Cloud Run GPUs, which the
+  `linux-gpu` test settles. gsplat stays as the scriptable library. Check its license
+  before the image redistributes the binary.
+
+Left out, superseded: fiona (pyogrio is geopandas' default), rtree (shapely 2's
+STRtree), entwine's EPT (COPC through untwine). Code that still imports them can
+`pixi add` them.
+
 ### Rust in `gis` or `3d-gpu`
 
 Not in the image. rustup is user space and installs stable in well under a minute on

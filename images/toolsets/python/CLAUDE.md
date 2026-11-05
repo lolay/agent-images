@@ -1,1 +1,1 @@
-- Python (Homebrew's, ahead of Ubuntu's on PATH) with uv.
+- Python (Homebrew's, ahead of Ubuntu's on PATH) with uv, ruff and pre-commit.

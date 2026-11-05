@@ -1,3 +1,8 @@
 # Homebrew's current Python 3 ahead of Ubuntu's on PATH, and uv.
 brew "python"
 brew "uv"
+
+# The Python linter and formatter (flake8, isort and black in one), and the
+# pre-commit hook runner most Python repos use.
+brew "ruff"
+brew "pre-commit"

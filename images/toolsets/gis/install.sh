@@ -29,7 +29,9 @@ pixi install --manifest-path "$root/pixi.toml" 2>&1
 # other package at its newest; when the builds agree, nothing is dropped.
 : >"$root/dropped-plugins.txt"
 for plugin in "$env"/lib/libpdal_plugin_*.so "$env"/lib/gdalplugins/*.so "$env"/lib/qgis/plugins/*.so; do
-	[[ -f "$plugin" && ! -L "$plugin" ]] || continue
+	# PDAL's are symlinks (.so -> .so.20 -> .so.20.x.y); ldd follows them, and
+	# the rm below takes the whole chain.
+	[[ -e "$plugin" ]] || continue
 	missing="$(LD_LIBRARY_PATH="$env/lib" ldd "$plugin" 2>/dev/null | awk '/not found/ {print $1}' | sort -u | paste -sd ' ')"
 	[[ -n "$missing" ]] || continue
 	log "dropping ${plugin#"$env"/}: missing $missing"
