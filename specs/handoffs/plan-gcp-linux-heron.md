@@ -160,7 +160,7 @@ Modifies:
 
 Done: both specs read true against the Terraform; nothing else changes.
 
-#### s2 - [fast] Commit the GCP env files
+#### s2 - [fast] Commit the GCP env files (done)
 
 - `infra/gcp/project.env`: exactly the fifteen values Gary gave, nothing added.
 - `infra/gcp/linux.env`: `CPU=4`, `MEMORY=16Gi`, `SCRATCH_GIB=10`,
