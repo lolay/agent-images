@@ -417,22 +417,21 @@ standbys, which start before any session exists, couldn't know which image to be
 
 ## Setup
 
-A short `scripts/gcp/setup.sh` (or OpenTofu once it outgrows a script) for one
-project:
+The GCP project is `lolay-agents`, set up by Terraform in `lolay/infrastructure`
+(foundation: project, registry, bucket, network, the orchestrator VM, service
+accounts, IAM, workload identity federation, GPU quota). This repo owns the
+workloads: images, the Cloud Run jobs, the orchestrator container, and the runner
+types, so adding a type never needs a Terraform change. Each type's Claude
+environment key goes into Secret Manager by hand as `claude-env-<type>`; the
+orchestrator's access is granted by that name prefix. What Terraform needs, in full:
+[handoffs/handoff-gcp-infrastructure-lantern.md](handoffs/handoff-gcp-infrastructure-lantern.md).
 
-- Artifact Registry repo; GCS bucket for order markers.
-- Service accounts: `agent-orchestrator`, the host's (Secret Manager accessor on the
-  `claude-env-*` secrets, `roles/run.developer` on the jobs for overrides, object
-  create on the marker bucket, Artifact Registry reader); `agent-runner` (logging
-  only); `agent-images-ci` (Artifact Registry writer, run.developer on the jobs,
-  `compute.instances.setMetadata` on the orchestrator host, through workload identity
-  federation).
-- The orchestrator host: one `e2-micro`, Container-Optimized OS, no external
-  inbound, the `agent-orchestrator` service account.
-- Per type: a Secret Manager secret with the environment key, and the job.
-- The lock bot: a GitHub App, its key in the `lock-bot` environment, and the `main`
-  ruleset (see [The lock bot](#the-lock-bot)).
-- GPU quota for Cloud Run in `us-central1`.
+Terraform's outputs (project, registry path, federation provider, service accounts,
+bucket, VM) are committed here as a copy in one env file for the workflows, per the
+CI configuration rule: non-secret, reviewed, and Terraform stays the source.
+
+The GitHub side is set by hand: the lock-bot App, the `production` and `lock-bot`
+environments, and the `main` ruleset (see [The lock bot](#the-lock-bot)).
 
 ## The head
 
