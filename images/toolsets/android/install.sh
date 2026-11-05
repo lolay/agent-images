@@ -3,7 +3,7 @@
 # builds the emulator it boots in every session, then fails the build if either
 # doesn't work. Run by install-toolset.sh after the toolset's apt packages, as
 # the image's user; needs the jvm toolset first (and core's curl and unzip).
-# It uses the Android image's own files from images/linux (setup-user.sh puts
+# It uses the Android image's own files from images/android (setup-user.sh puts
 # them in place first): /etc/profile.d/agent-images.sh for ANDROID_HOME, and
 # agent-emulator.
 #

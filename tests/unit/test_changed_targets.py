@@ -39,7 +39,7 @@ class ChangedTargetsTests(unittest.TestCase):
             "images/toolsets/android/packages.txt": "cpu-checker\n",
             "images/toolsets/install-toolset.sh": "#!/bin/bash\n",
             "images/toolsets/write-claude-md.sh": "#!/bin/bash\n",
-            "images/linux/toolsets.txt": "core\n",
+            "images/android/toolsets.txt": "core\n",
             "hooks/gcp/spawn-runner": "#!/bin/bash\n",
             "scripts/cloud/job-spec.sh": "#!/bin/bash\n",
             "specs/gcp.md": "# GCP\n",
@@ -122,7 +122,7 @@ class ChangedTargetsTests(unittest.TestCase):
 
     def test_the_android_images_toolset_list_deploys_nothing(self):
         self.assertEqual(
-            self.change("images/linux/toolsets.txt"), {"types": [], "orchestrator": False, "prune": False}
+            self.change("images/android/toolsets.txt"), {"types": [], "orchestrator": False, "prune": False}
         )
 
     def test_a_types_directory_rebuilds_only_it(self):

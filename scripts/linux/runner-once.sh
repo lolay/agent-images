@@ -20,7 +20,7 @@ readonly vm="${1:?usage: runner-once.sh <vm>}"
 is_runner_name "$vm" || die "$vm is not a runner name (runner-N)"
 readonly runner_dir="$RUNNERS_DIR/$vm"
 readonly work_order="$runner_dir/work-order"
-image_ref="$(setting IMAGE_REF "$LINUX_IMAGE_ALIAS")"
+image_ref="$(setting IMAGE_REF "$ANDROID_IMAGE_ALIAS")"
 cpu="$(setting VM_CPU 6)"
 memory_gb="$(setting VM_MEMORY_GB 24)"
 readonly image_ref cpu memory_gb

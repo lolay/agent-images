@@ -57,9 +57,9 @@ tracks the latest and pins only on breakage
 | Claude Code | `claude-code@latest` cask (2.1.286) | `images/macos/Brewfile`; the Claude runner upgrades it at each start |
 | Image packages | xcodegen 2.46.0, xcbeautify 3.2.1, swiftlint 0.65.1, swiftformat 0.63.1, sops 3.13.3, age 1.3.2, nowline 0.11.0 and triage 0.4.0 (`lolay/tap`), asccli 0.18.6 (command `asc`) | `images/macos/Brewfile`; current release at build time |
 | shellcheck / shfmt | 0.11.0 / 3.14.1 | Build host tools for `make lint` |
-| actions/checkout | v7.0.1 | `.github/workflows/ci.yml`, `.github/workflows/linux-image-smoke.yml` |
+| actions/checkout | v7.0.1 | `.github/workflows/ci.yml`, `.github/workflows/android-image-smoke.yml` |
 | Linux host | Ubuntu 24.04 Server, LXD snap `latest/stable` (refreshes held; `make build` refreshes) | `scripts/linux/host-setup.sh` |
-| Linux image | `ubuntu:24.04`; OpenJDK 21; Android command-line tools 23.0, emulator 37.1.11, platform and x86_64 Google APIs image `android-37.0`, build-tools 37.0.0 | `images/linux/toolsets.txt` (the toolsets in `images/toolsets`; the SDK is the `android` toolset's `install.sh`): newest stable at build time |
+| Android image (Linux host) | `ubuntu:24.04`; OpenJDK 21; Android command-line tools 23.0, emulator 37.1.11, platform and x86_64 Google APIs image `android-37.0`, build-tools 37.0.0 | `images/android/toolsets.txt` (the toolsets in `images/toolsets`; the SDK is the `android` toolset's `install.sh`): newest stable at build time |
 | Linux toolchains | Node 26.13.0, pnpm 12.16.1, Python 3.15.2, uv 0.13.7, Go 1.27.3, Rust 1.99.1 (rustup stable), protoc 36.2, buf 1.75.0, grpcurl 1.9.4, Terraform 1.17.1 (tenv), tflint 0.65.0, actionlint 1.7.12, shellcheck 0.11.0, nowline 0.12.1, triage 0.5.0 (2026-11-05) | The `images/toolsets` Brewfiles and install scripts: newest stable at build time |
 | hashicorp/setup-packer | v3.4.0 (installs Packer 1.16.1) | `.github/workflows/ci.yml` |
 
@@ -210,7 +210,7 @@ make host-setup            # KVM nesting, LXD with a ZFS pool, Claude Code, ling
 sudo reboot                # picks up the lxd group and lingering
 make init                  # .env from .env.linux.example
 make doctor
-make build                 # the agent-linux LXD image (SDK, emulator snapshot)
+make build                 # the agent-android LXD image (SDK, emulator snapshot)
 
 # A separate self-hosted environment in claude.ai for this box, so sessions choose
 # it for Android work. Its secret stays in ~/.config/agent-images (mode 600).
@@ -221,7 +221,7 @@ make runner-install        # systemd user unit; starts at boot, no login needed
 make runner-status
 ```
 
-Every session gets a fresh VM from `agent-linux`, with the emulator booted as
+Every session gets a fresh VM from `agent-android`, with the emulator booted as
 `emulator-5554` from a clean snapshot. The VM powers off after its session and LXD
 deletes it. Up to `RUNNER_MAX` (default 2) VMs, each `VM_CPU` (6) and `VM_MEMORY_GB`
 (24).
@@ -263,7 +263,7 @@ To roll the new image out without a gap in service (a host with room for the bui
 or a separate build host), build while the runners work and recycle the VMs after:
 
 ```bash
-make build                 # the new image replaces agent-macos / agent-linux only once finished
+make build                 # the new image replaces agent-macos / agent-android only once finished
 make runner-stop           # the running orchestrator boots replacements from the new image
 ```
 

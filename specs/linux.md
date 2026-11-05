@@ -2,7 +2,7 @@
 
 Status: **implemented, not yet run on hardware.** The image's contents are proven
 without a Linux host. The provisioning scripts run clean in an `ubuntu:24.04`
-container, and the manual `linux-image-smoke` workflow runs them on a hosted
+container, and the manual `android-image-smoke` workflow runs them on a hosted
 `ubuntu-24.04` runner. On that runner the emulator is two virtualization levels
 deep, the same as inside an LXD runner VM. There, on 2026-09-29:
 - the build's cold boot of API 37.0 (Android 17, x86_64) reached `boot_completed` in
@@ -49,10 +49,10 @@ Gradle Managed Devices.
 
 | Tart (macOS) | LXD (Linux) |
 | --- | --- |
-| `tart clone` + `tart run` | `lxc launch agent-linux runner-N --vm --ephemeral`: a copy-on-write clone on a ZFS pool, removed when it powers off |
+| `tart clone` + `tart run` | `lxc launch agent-android runner-N --vm --ephemeral`: a copy-on-write clone on a ZFS pool, removed when it powers off |
 | `tart exec -i` | `lxc exec --force-noninteractive` (lxd-agent) |
 | `tart set --cpu --memory` | `--config limits.cpu --config limits.memory` |
-| Packer build, rename `-next` | `build-image.sh`, `lxc publish` as `agent-linux-next`, move the alias |
+| Packer build, rename `-next` | `build-image.sh`, `lxc publish` as `agent-android-next`, move the alias |
 | Host LaunchAgents (login) | systemd user units with lingering (boot, no login) |
 | Keychain | `~/.config/agent-images/` (mode 600) on a dedicated host |
 
@@ -63,7 +63,7 @@ writing the exec channel, image publishing, and ephemeral VMs ourselves.
 
 ### Guest
 
-`images/linux`, on Ubuntu's official `ubuntu:24.04` VM image (it has lxd-agent):
+`images/android`, on Ubuntu's official `ubuntu:24.04` VM image (it has lxd-agent):
 
 - **Packages:** the toolsets in `toolsets.txt`, from `images/toolsets`
   ([image-toolsets.md](image-toolsets.md)), unpinned: OpenJDK 21, build tools and
@@ -120,7 +120,7 @@ As on the Mac, a good build writes nothing to stderr: tools that report routine
 progress there (`snap refresh`, `cloud-init status`, `adb`'s daemon notices) are sent
 to stdout, and real errors keep stderr and fail the build through `set -e`.
 `make build` copies the provisioners' stderr to `build/logs/linux-build.err` and ends
-with "green" or the number of stderr lines. The `linux-image-smoke` workflow fails
+with "green" or the number of stderr lines. The `android-image-smoke` workflow fails
 if the image scripts write any stderr.
 
 ## Hardware

@@ -187,7 +187,12 @@ tooling as PyO3 extensions, or Rust splatting like Brush). If that becomes true,
 
 `images/linux` becomes `images/android`, and the LXD alias `agent-linux` becomes
 `agent-android`, as gcp.md already suggests. The Linux host hasn't run on hardware
-yet, so this is the cheapest it'll ever be.
+yet, so this is the cheapest it'll ever be. Done in s5, with the names that follow
+from it: `agent-android-build` and `-next`, `ANDROID_IMAGE_ALIAS` and `ANDROID_DIR`
+in the host scripts and Makefile, and the `android-image-smoke` workflow.
+`scripts/linux`, `hooks/linux` and the doctor's `linux` profile keep their names:
+they're about the Linux host. A host set up before this needs `IMAGE_REF=agent-android`
+in its `.env` (none exists yet).
 
 ## Plan
 

@@ -18,7 +18,7 @@ readonly SECRETS_DIR="$HOME/.config/agent-images"
 
 # The LXD image runner VMs launch from (make build).
 # shellcheck disable=SC2034 # used by the scripts that source this
-readonly LINUX_IMAGE_ALIAS="agent-linux"
+readonly ANDROID_IMAGE_ALIAS="agent-android"
 
 # Prints a secret: the VM-specific file if present, else the default one.
 # Returns non-zero if neither exists.

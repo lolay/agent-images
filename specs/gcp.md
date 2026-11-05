@@ -32,8 +32,8 @@ Cloud Run job execution  (one per session)
 
 | Today (Linux host) | GCP |
 | --- | --- |
-| `lxc launch agent-linux runner-N --ephemeral` | A run of job `agent-<type>` through the Cloud Run Admin API: one execution, gone when it exits |
-| `build-image.sh` → `lxc publish agent-linux-next`, move the alias | Build and push to Artifact Registry, smoke-test `agent-<type>-next`, then point the job at the new digest |
+| `lxc launch agent-android runner-N --ephemeral` | A run of job `agent-<type>` through the Cloud Run Admin API: one execution, gone when it exits |
+| `build-image.sh` → `lxc publish agent-android-next`, move the alias | Build and push to Artifact Registry, smoke-test `agent-<type>-next`, then point the job at the new digest |
 | systemd user unit runs the orchestrator | One `e2-micro` running the orchestrator container |
 | `~/.config/agent-images` holds the environment secret | Secret Manager, read only by the orchestrator's service account |
 | `runner-once.sh` deletes the VM | Nothing to delete: the execution ends when the container exits |
@@ -77,8 +77,8 @@ compose the same way if they come (`linux-arm64`). Every resource takes the type
 name: environment "Agent: 3D (GPU)" in claude.ai, `infra/gcp/3d-gpu.env`, secret
 `claude-env-3d-gpu`, image and job `agent-3d-gpu`, `images/cloud/3d-gpu/`. The two
 build parents, `agent-base` and `agent-base-gpu`, aren't types and never deploy on
-their own. (`agent-linux` here is a Cloud Run image; the Linux host's LXD alias of
-the same name is the Android image, and would be clearer renamed `agent-android`.)
+their own. (The Linux host's LXD image, the Android one, was also called
+`agent-linux` until [image-toolsets.md](image-toolsets.md) s5; it's `agent-android`.)
 
 **One host for all orchestrators, one orchestrator per type.** An orchestrator
 registers with one environment's secret, so it serves exactly one type; there's no
@@ -736,7 +736,7 @@ the session or a full GPU desktop.
 
 - **Image:** Packer's `googlecompute` builder, run from GitHub Actions (the build VM
   runs in GCP, so nothing is pulled out), provisioned by the same scripts as the LXD
-  image (`images/linux/scripts`, `images/shared`): Android SDK, emulator, a booted
+  image (`images/android/scripts`, `images/shared`): Android SDK, emulator, a booted
   and snapshotted AVD. Published to the image family `agent-android`; the `-next`
   pattern becomes "build, boot a test VM from it, then add it to the family", and
   older images in the family are deleted, keeping one.

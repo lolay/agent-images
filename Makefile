@@ -43,7 +43,7 @@ LEVEL ?= patch
 
 MACOS_DIR := images/macos
 SHARED_DIR := images/shared
-LINUX_DIR := images/linux
+ANDROID_DIR := images/android
 BUILD_DIR := build
 LOG_DIR := $(BUILD_DIR)/logs
 IMAGE_NAME := agent-macos
@@ -52,7 +52,7 @@ IMAGE_NAME := agent-macos
 PKR_VAR_vm_name := $(IMAGE_NAME)-next
 ifeq ($(HOST_OS),Linux)
 # The LXD image alias scripts/linux/build-image.sh publishes.
-IMAGE_REF ?= agent-linux
+IMAGE_REF ?= agent-android
 else
 IMAGE_REF ?= $(IMAGE_NAME)
 endif
@@ -107,7 +107,7 @@ CLAUDE_VERSION ?= latest
 
 SHELL_SCRIPTS := $(wildcard $(MACOS_DIR)/scripts/*.sh $(MACOS_DIR)/files/*.sh \
                    $(SHARED_DIR)/*.sh $(SHARED_DIR)/runners/*.sh $(SHARED_DIR)/claude/hooks/*.sh \
-                   $(LINUX_DIR)/scripts/*.sh $(LINUX_DIR)/files/*.sh \
+                   $(ANDROID_DIR)/scripts/*.sh $(ANDROID_DIR)/files/*.sh \
                    scripts/*.sh scripts/linux/*.sh hooks/spawn-runner hooks/linux/spawn-runner) \
                  $(CLOUD_SCRIPTS)
 

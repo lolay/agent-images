@@ -39,7 +39,7 @@ debugging. Dotted arrows are independent gates.
 | Variable | Default | Used by |
 | --- | --- | --- |
 | `VM` | none (required) | all `vm-*` (`vm-create` refuses `runner-N`), optional for `secret-set` |
-| `IMAGE_REF` | `agent-macos` (Linux: `agent-linux`), from `.env` | `image-pull`, `vm-create`, runner VMs |
+| `IMAGE_REF` | `agent-macos` (Linux: `agent-android`), from `.env` | `image-pull`, `vm-create`, runner VMs |
 | `RUNNER_MAX` / `RUNNER_MIN_IDLE` | `2` / `1` (from `.env`) | Runner VMs at most / kept booted as standby |
 | `RUNNER_SPAWN_SECONDS` | `300` | The orchestrator's `--expected-spawn-seconds` lease |
 | `ORCHESTRATOR_HEALTH_PORT` | `8080` | The orchestrator's `/healthz` on the host |
@@ -162,7 +162,7 @@ step. It passes `--var image_ref=$(IMAGE_REF)` so the image check follows `.env`
 | --- | --- |
 | `host-setup` | `scripts/linux/host-setup.sh`: checks VT-x/AMD-V and turns on nested KVM, installs the LXD snap (refreshes held) and initializes it with a ZFS pool and the `lxdbr0` bridge, installs Claude Code, enables lingering. Idempotent; uses sudo |
 | `doctor` | `triage --profile linux` (one profile; `MODE` is ignored) |
-| `build` | `scripts/linux/build-image.sh`: refreshes LXD, launches `agent-linux-build` from `ubuntu:24.04`, runs `images/linux/scripts` in it, which install the toolsets in `images/linux/toolsets.txt` (the `android` toolset boots the emulator once for its snapshot), publishes `agent-linux-next`, then moves the `agent-linux` alias to it |
+| `build` | `scripts/linux/build-image.sh`: refreshes LXD, launches `agent-android-build` from `ubuntu:24.04`, runs `images/android/scripts` in it, which install the toolsets in `images/android/toolsets.txt` (the `android` toolset boots the emulator once for its snapshot), publishes `agent-android-next`, then moves the `agent-android` alias to it |
 | `runner-run` | `scripts/linux/orchestrator-run.sh`: the secret from `~/.config/agent-images` into the environment, then `claude self-hosted-runner orchestrator --hooks-dir hooks/linux` |
 | `runner-install` | `scripts/linux/orchestrator-service.sh install`: systemd user unit `agent-images-orchestrator.service`, started at boot (lingering) |
 | `runner-uninstall` / `runner-stop` / `runner-status` | As on macOS, with systemd and `lxc` |
@@ -179,7 +179,7 @@ powers off). Claims live in `build/runners/runner-N/`, as on macOS. Logs:
 | `build/logs/runner-N.guest.log` | The VM's journal for `agent-runner` and the watchdog, streamed while it runs; a `=== time runner-N order … ===` header per VM |
 | `build/logs/runner-N.lxc.log` | `lxc launch` output |
 
-For a debug VM: `lxc launch agent-linux debug-1 --vm`, then
+For a debug VM: `lxc launch agent-android debug-1 --vm`, then
 `scripts/linux/vm-configure.sh debug-1` (settings from `vms/debug-1.env`), and
 `lxc exec debug-1 -- bash` to look around.
 
@@ -219,7 +219,7 @@ Where things live:
 | Workflow | Target |
 | --- | --- |
 | `.github/workflows/ci.yml` | `make init`, `make ci` on `macos-latest` |
-| `.github/workflows/linux-image-smoke.yml` | Manual only: runs `images/linux/scripts` on `ubuntu-24.04` (which has KVM) and boots the emulator |
+| `.github/workflows/android-image-smoke.yml` | Manual only: runs `images/android/scripts` on `ubuntu-24.04` (which has KVM) and boots the emulator |
 | `.github/workflows/cloud-build.yml` | `make cloud-ci` on `ubuntu-24.04`, for pull requests touching the cloud paths; no GCP credentials |
 | `.github/workflows/cloud-deploy.yml` | Push to `main` or dispatch: builds, pushes, smoke-tests and promotes what changed, in environment `production` |
 

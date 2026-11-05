@@ -69,7 +69,7 @@ class WriteClaudeMdTests(unittest.TestCase):
         self.assertFalse(self.output.exists())
 
     def test_every_session_template_has_the_marker(self):
-        for template in ("images/cloud/base/claude/CLAUDE.md", "images/linux/files/claude/CLAUDE.md"):
+        for template in ("images/cloud/base/claude/CLAUDE.md", "images/android/files/claude/CLAUDE.md"):
             self.assertIn("\n<!-- toolsets -->\n", (REPO / template).read_text(), template)
 
     def test_every_toolset_fragment_is_bullets(self):

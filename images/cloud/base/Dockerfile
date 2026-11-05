@@ -22,7 +22,7 @@ WORKDIR /home/ubuntu
 # The toolsets (images/toolsets, specs/image-toolsets.md), one layer each. Each
 # layer mounts only the installer and its own toolset, so a change to one
 # toolset rebuilds its layer and those after it, not the ones before. The
-# Android image's list (images/linux/toolsets.txt) less android: Cloud Run has no
+# Android image's list (images/android/toolsets.txt) less android: Cloud Run has no
 # KVM. apt toolsets first: they move slowest.
 ARG APT_DROP_LISTS=true
 RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \

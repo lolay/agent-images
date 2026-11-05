@@ -1,8 +1,8 @@
 #!/bin/bash
 # Builds the Linux runner image (make build on a Linux host): launch a build VM
-# from Ubuntu's official image, provision it with images/linux/scripts, publish
-# it as agent-linux-next, and only then move the agent-linux alias to it, so
-# runner VMs (which launch agent-linux) never start from a half-built image. The
+# from Ubuntu's official image, provision it with images/android/scripts, publish
+# it as agent-android-next, and only then move the agent-android alias to it, so
+# runner VMs (which launch agent-android) never start from a half-built image. The
 # counterpart of the macOS image's Packer build.
 #
 # Usage: scripts/linux/build-image.sh
@@ -17,10 +17,10 @@ readonly script_dir
 # shellcheck source=scripts/linux/lib.sh
 source "$script_dir/lib.sh"
 
-readonly build_vm="agent-linux-build"
-readonly next_alias="$LINUX_IMAGE_ALIAS-next"
+readonly build_vm="agent-android-build"
+readonly next_alias="$ANDROID_IMAGE_ALIAS-next"
 readonly guest_staging="/tmp/agent-images"
-readonly linux_dir="$AGENT_IMAGES_DIR/images/linux"
+readonly android_dir="$AGENT_IMAGES_DIR/images/android"
 readonly shared_dir="$AGENT_IMAGES_DIR/images/shared"
 readonly toolsets_dir="$AGENT_IMAGES_DIR/images/toolsets"
 readonly provisioners=(setup-user install-packages)
@@ -65,13 +65,13 @@ lxc exec "$build_vm" -- cloud-init status --wait >/dev/null 2>&1 || true
 
 log "staging files"
 lxc exec "$build_vm" -- mkdir -p "$guest_staging/scripts"
-for source_dir in "$shared_dir" "$linux_dir/files"; do
+for source_dir in "$shared_dir" "$android_dir/files"; do
 	tar -C "$source_dir" -cf - . | lxc exec "$build_vm" --force-noninteractive -- tar -xf - --no-same-owner -C "$guest_staging"
 done
-tar -C "$linux_dir" -cf - toolsets.txt | lxc exec "$build_vm" --force-noninteractive -- tar -xf - --no-same-owner -C "$guest_staging"
+tar -C "$android_dir" -cf - toolsets.txt | lxc exec "$build_vm" --force-noninteractive -- tar -xf - --no-same-owner -C "$guest_staging"
 lxc exec "$build_vm" -- mkdir -p "$guest_staging/toolsets"
 tar -C "$toolsets_dir" -cf - . | lxc exec "$build_vm" --force-noninteractive -- tar -xf - --no-same-owner -C "$guest_staging/toolsets"
-tar -C "$linux_dir/scripts" -cf - . | lxc exec "$build_vm" --force-noninteractive -- tar -xf - --no-same-owner -C "$guest_staging/scripts"
+tar -C "$android_dir/scripts" -cf - . | lxc exec "$build_vm" --force-noninteractive -- tar -xf - --no-same-owner -C "$guest_staging/scripts"
 
 # The provisioners run as the guest user, as the macOS image's do, and use sudo
 # for the root parts. Their stderr also goes to build_err: a green build has none.
@@ -100,18 +100,18 @@ lxc publish "$build_vm" local: --alias "$next_alias" --compression zstd \
 # Only a finished build reaches the alias. A runner launching in the moment
 # between delete and create fails its spawn, and the session is re-offered.
 new_image="$(image_fingerprint "$next_alias")"
-old_image="$(image_fingerprint "$LINUX_IMAGE_ALIAS")"
+old_image="$(image_fingerprint "$ANDROID_IMAGE_ALIAS")"
 [[ -n "$new_image" ]] || die "publish produced no $next_alias image"
 if [[ -n "$old_image" ]]; then
-	lxc image alias delete "$LINUX_IMAGE_ALIAS"
+	lxc image alias delete "$ANDROID_IMAGE_ALIAS"
 fi
-lxc image alias create "$LINUX_IMAGE_ALIAS" "$new_image"
+lxc image alias create "$ANDROID_IMAGE_ALIAS" "$new_image"
 lxc image alias delete "$next_alias"
 # Running VMs keep their copy-on-write clone; the old image is no longer needed.
 if [[ -n "$old_image" && "$old_image" != "$new_image" ]]; then
 	lxc image delete "$old_image" || log "couldn't delete the previous image $old_image" >&2
 fi
-log "built $LINUX_IMAGE_ALIAS (${new_image:0:12}) from $base_image"
+log "built $ANDROID_IMAGE_ALIAS (${new_image:0:12}) from $base_image"
 if [[ -s "$build_err" ]]; then
 	log "not green: $(wc -l <"$build_err") stderr lines from the provisioners (see $build_err)"
 else

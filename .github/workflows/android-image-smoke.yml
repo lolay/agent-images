@@ -1,14 +1,17 @@
-# Manual smoke test of the Linux image's contents on a hosted runner, which has
-# KVM: runs images/linux/scripts directly on the runner (no LXD VM around them),
+# Manual smoke test of the Android image's contents on a hosted runner, which has
+# KVM: runs images/android/scripts directly on the runner (no LXD VM around them),
 # including the emulator boot that saves the quickboot snapshot, then boots it
 # again the way a session does. It proves everything in the image except LXD
 # itself, without a Linux host, and that the scripts run green (nothing on
-# stderr). Run it from the Actions tab after changing images/linux,
+# stderr). Run it from the Actions tab after changing images/android,
 # images/toolsets or images/shared; it never runs on pull requests.
-name: linux-image-smoke
+name: android-image-smoke
 
 on:
   workflow_dispatch:
+  # Temporary: a renamed workflow can't be dispatched until it's on main.
+  push:
+    branches: [claude/gcp-tools-strategy-6kpqtl]
 
 permissions:
   contents: read
@@ -37,10 +40,10 @@ jobs:
       - name: Stage
         run: |
           mkdir -p "$STAGING_DIR/scripts"
-          cp -R images/shared/. images/linux/files/. "$STAGING_DIR/"
-          cp images/linux/toolsets.txt "$STAGING_DIR/"
+          cp -R images/shared/. images/android/files/. "$STAGING_DIR/"
+          cp images/android/toolsets.txt "$STAGING_DIR/"
           cp -R images/toolsets "$STAGING_DIR/toolsets"
-          cp images/linux/scripts/*.sh "$STAGING_DIR/scripts/"
+          cp images/android/scripts/*.sh "$STAGING_DIR/scripts/"
           : >"$STDERR_LOG"
       # Each script's stderr also goes to STDERR_LOG; the Green step fails on any.
       - name: setup-user
