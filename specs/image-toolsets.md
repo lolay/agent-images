@@ -212,7 +212,9 @@ Steps for [gcp.md](gcp.md) m2, ahead of `gis` and `android`:
   left out what `android` also installs, so dropping `android` from `linux` dropped
   libnss3 and seven others. Checked by a headless Chromium screenshot in the image.
   The macOS half is untested until a Mac host runs `make build`.
-- s4: per-toolset `CLAUDE.md` fragments, and `changed-targets.sh` reading toolsets.
+- s4 (done): per-toolset `CLAUDE.md` fragments, and `changed-targets.sh` reading
+  toolsets. Both images' session `CLAUDE.md` now list exactly what's installed
+  (checked in the cloud build and on the hosted Android run).
 - s5: rename `images/linux` to `images/android` and the alias to `agent-android`.
 - s6: `gis` on toolsets, as in the m2 plan.
 
