@@ -1,0 +1,84 @@
+#!/bin/bash
+# What a push to main redeploys (specs/gcp.md, "What a push to main deploys"):
+#
+#   changed-targets.sh <base> <head>    the targets the diff touches
+#   changed-targets.sh --all            every target
+#
+# Prints {"types": [{"type": "linux", "build": true}, ...], "orchestrator": bool}.
+# build is false when only the type's env file changed: the deploy rewrites the
+# job and reuses the live image. A base that isn't a commit here (none yet, or
+# gone after a force push) means everything. Run from the repo root.
+set -euo pipefail
+
+all=false
+if [[ "${1:-}" == "--all" ]]; then
+	all=true
+elif (($# == 2)); then
+	base="$1" head="$2"
+	if [[ -z "$base" ]] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+		all=true
+	fi
+else
+	printf 'usage: %s <base> <head> | --all\n' "$(basename "$0")" >&2
+	exit 2
+fi
+
+# shellcheck source=hooks/gcp/lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../../hooks/gcp/lib.sh"
+AGENT_GCP_ENV_DIR=infra/gcp
+mapfile -t types < <(gcp_types)
+
+changed=()
+$all || mapfile -t changed < <(git diff --name-only "$base" "$head")
+
+touched() {
+	local pattern path
+	for path in "${changed[@]}"; do
+		for pattern in "$@"; do
+			# shellcheck disable=SC2053 # the patterns are globs on purpose
+			[[ "$path" == $pattern ]] && return 0
+		done
+	done
+	return 1
+}
+
+# The build parent a Dockerfile names (FROM agent-<parent>), if any.
+parent_of() {
+	sed -n -E 's/^FROM[[:space:]]+agent-([a-z0-9-]+).*/\1/p' "images/cloud/$1/Dockerfile" 2>/dev/null | head -n 1
+}
+
+# image_paths <type>: the type's directory and every build parent's, up the chain.
+image_paths() {
+	local dir="$1" seen=" "
+	while [[ -n "$dir" && "$seen" != *" $dir "* ]]; do
+		printf 'images/cloud/%s/*\n' "$dir"
+		seen+="$dir "
+		dir="$(parent_of "$dir")"
+	done
+}
+
+# What every type is built from.
+readonly every_type=(
+	"images/shared/*" "images/linux/packages.txt" "images/linux/Brewfile"
+	"images/linux/scripts/install-packages.sh" "images/cloud/entrypoint.sh"
+	"images/cloud/docker-bake.hcl" ".dockerignore" "infra/gcp/project.env"
+)
+
+entries=()
+for type in "${types[@]}"; do
+	mapfile -t own < <(image_paths "$type")
+	if $all || touched "${every_type[@]}" "${own[@]}"; then
+		entries+=("$(jq -cn --arg type "$type" '{type: $type, build: true}')")
+	elif touched "infra/gcp/$type.env" "scripts/cloud/job-spec.sh"; then
+		entries+=("$(jq -cn --arg type "$type" '{type: $type, build: false}')")
+	fi
+done
+
+orchestrator=false
+if $all || touched "hooks/gcp/*" "images/cloud/orchestrator/*" "infra/gcp/*.env" \
+	"images/cloud/docker-bake.hcl" ".dockerignore"; then
+	orchestrator=true
+fi
+
+printf '%s\n' "${entries[@]}" | jq -cs --argjson orchestrator "$orchestrator" \
+	'{types: map(select(. != null)), orchestrator: $orchestrator}'

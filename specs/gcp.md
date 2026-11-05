@@ -226,11 +226,12 @@ matrix. A failed deploy makes the next one redeploy more, never less:
 
 | Path changed | Redeploys |
 | --- | --- |
-| `images/shared/**`, `images/linux/packages.txt`, `images/linux/Brewfile`, `images/cloud/base/**`, `images/cloud/entrypoint.sh` | Every runner type |
+| `images/shared/**`, `images/linux/packages.txt`, `images/linux/Brewfile`, `images/linux/scripts/install-packages.sh`, `images/cloud/base/**`, `images/cloud/entrypoint.sh`, `images/cloud/docker-bake.hcl`, `.dockerignore` | Every runner type |
 | `images/cloud/base-gpu/**` | Every `-gpu` type (each is built `FROM` it) |
 | `images/cloud/<type>/**`, including its `versions.lock` | That type |
 | `hooks/gcp/**`, `images/cloud/orchestrator/**` | The orchestrator host (new image, then the host restarts its container) |
 | `infra/gcp/<type>.env` (CPU, memory, GPU, timeout, `--min-idle`) | That type's job and orchestrator settings, no image build |
+| `scripts/cloud/job-spec.sh` | Every type's job, no image build |
 | Anything else (`specs/`, the macOS and Linux images, README) | Nothing |
 
 The `FROM` chain comes from the Dockerfiles themselves, so adding a type doesn't mean

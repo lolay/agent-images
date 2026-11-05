@@ -32,6 +32,8 @@ class Request:
 class State:
     objects: dict = field(default_factory=dict)  # (bucket, name) -> bytes
     secrets: dict = field(default_factory=dict)  # name -> value
+    jobs: dict = field(default_factory=dict)  # full job name -> Job body
+    operations: int = 0
     requests: list = field(default_factory=list)
     failures: dict = field(default_factory=dict)  # (method, path suffix) -> (status, body)
     delays: dict = field(default_factory=dict)  # path suffix -> seconds before answering
@@ -137,6 +139,12 @@ def route(state: State, request: Request):
             return 404, {"error": {"message": "no such object"}}
         return 204, None
 
+    if "/jobs" in path and path.startswith("/v2/") and not path.endswith(":run"):
+        return route_jobs(state, request)
+
+    if request.method == "GET" and "/operations/" in path and path.startswith("/v2/"):
+        return 200, {"name": path.removeprefix("/v2/"), "done": True, "response": {}}
+
     if request.method == "POST" and path.endswith(":run") and "/jobs/" in path:
         job = path.rsplit("/", 1)[1].removesuffix(":run")
         parent = path.split("/jobs/")[0].removeprefix("/v2/")
@@ -152,4 +160,35 @@ def route(state: State, request: Request):
         data = base64.b64encode(state.secrets[name].encode()).decode()
         return 200, {"name": path, "payload": {"data": data}}
 
+    return 404, {"error": {"message": f"no fake for {request.method} {path}"}}
+
+
+def route_jobs(state: State, request: Request):
+    """Cloud Run v2 jobs: PATCH (allowMissing), GET one, list, DELETE."""
+    path = request.path.removeprefix("/v2/")
+    parent = path.split("/jobs")[0]
+
+    def operation():
+        state.operations += 1
+        # Not done yet, so the caller has to poll it.
+        return {"name": f"{parent}/operations/op-{state.operations}", "done": False}
+
+    if path.endswith("/jobs"):
+        return 200, {"jobs": list(state.jobs.values())}
+    if request.method == "PATCH":
+        if request.query.get("allowMissing") != "true" and path not in state.jobs:
+            return 404, {"error": {"message": f"{path} not found"}}
+        job = request.json()
+        if job.get("name") not in (None, path):
+            return 400, {"error": {"message": "name in the body doesn't match the URL"}}
+        state.jobs[path] = {**job, "name": path}
+        return 200, operation()
+    if request.method == "GET":
+        if path not in state.jobs:
+            return 404, {"error": {"message": f"{path} not found"}}
+        return 200, state.jobs[path]
+    if request.method == "DELETE":
+        if state.jobs.pop(path, None) is None:
+            return 404, {"error": {"message": f"{path} not found"}}
+        return 200, operation()
     return 404, {"error": {"message": f"no fake for {request.method} {path}"}}

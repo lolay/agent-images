@@ -28,13 +28,14 @@ gcp_load_env() {
 	done
 }
 
-# gcp_types: every runner type, one per line (an env file other than project.env).
+# gcp_types: every runner type, one per line in byte order (an env file other
+# than project.env).
 gcp_types() {
 	local file type
 	for file in "$AGENT_GCP_ENV_DIR"/*.env; do
 		type="$(basename "$file" .env)"
 		[[ "$type" == "project" ]] || printf '%s\n' "$type"
-	done
+	done | LC_ALL=C sort
 }
 
 # gcp_uri <text>: percent-encode for a URL path segment or query value.

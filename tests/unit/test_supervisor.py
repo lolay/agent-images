@@ -20,6 +20,7 @@ SUPERVISOR = REPO / "images/cloud/orchestrator/supervisor.sh"
 # the way the orchestrator does.
 FAKE_CLAUDE = r"""
 type="$RUNNER_TYPE"
+trap 'echo term >>"$FAKE_OUT/$type.term.$$"; sleep "${FAKE_DRAIN:-0.3}"; exit 0' TERM
 secret_file=""
 args=("$@")
 for ((i = 0; i < ${#args[@]}; i++)); do
@@ -36,7 +37,6 @@ mode_var="FAKE_MODE_${type//-/_}"
 if [[ "${!mode_var:-serve}" == exit ]]; then
 	exit 3
 fi
-trap 'echo term >>"$FAKE_OUT/$type.term.$$"; sleep "${FAKE_DRAIN:-0.3}"; exit 0' TERM
 while :; do sleep 0.1; done
 """
 
@@ -198,9 +198,8 @@ class SupervisionTests(SupervisorCase):
         self.assertEqual(self.starts("linux"), [])
         status = self.stop()
         self.assertEqual(status, 0)
-        for record in self.starts("linux"):
-            pid = record.name.rsplit(".", 1)[1]
-            self.assertTrue((self.out / f"linux.term.{pid}").exists(), "linux started, so it was stopped")
+        alive = subprocess.run(["pgrep", "-f", str(self.claude)], capture_output=True)
+        self.assertNotEqual(alive.returncode, 0, "linux started late, and was stopped too")
 
 
 class MemoryTests(SupervisorCase):

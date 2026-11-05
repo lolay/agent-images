@@ -323,7 +323,7 @@ subtly wrong, and a mistake loses spawns during every deploy.
 Done: unit tests pass; the image builds and `docker run` with a fake secret source
 starts and stops cleanly within the budget.
 
-#### s9 - [exec] Job spec, deploy script and the path map
+#### s9 - [exec] Job spec, deploy script and the path map (done)
 
 - `scripts/cloud/job-spec.sh <type> <image>`: the v2 Job JSON: `agent-runner` service
   account, gen2, `maxRetries: 0`, one task, `timeout`, CPU and memory, env
