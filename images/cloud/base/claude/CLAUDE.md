@@ -40,9 +40,8 @@ own CI.
 
 ## Time limit
 
-- The session ends at a set time, and after a stretch with no messages (the
-  start-of-session notice gives both). Start your first reply with the notice lines
-  from the start-of-session facts.
+- The session ends at a set time, and after a stretch with no messages: the
+  start-of-session notice (already shown to the user) gives both.
 - Before starting work you expect to take over an hour, say whether it fits before
   the end time, and, when the notice gives the runtime's cost, roughly what it will
   cost. Commit and push well before the end.

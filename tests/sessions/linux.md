@@ -16,7 +16,9 @@ match). Record whether `$DISPLAY` is set.
 
 List environment variable names only, never values, and fail the check if any name
 looks like a credential (`*KEY*`, `*TOKEN*`, `*SECRET*`, `*PASSWORD*`), except
-`SELF_HOSTED_RUNNER_*` and Claude's own session variables; note those separately.
+`SELF_HOSTED_RUNNER_*`, Claude's own session variables (`CLAUDE_*`, `CCR_*`), and the
+runner's git configuration (`GIT_CONFIG_KEY_*`, `GIT_CONFIG_VALUE_*`, `GIT_CONFIG_COUNT`:
+how it points git at Anthropic's proxy); note those separately.
 
 Check the session notice: the session should have opened with "⚠ This runtime costs
 approximately $X/hour" and "⚠ This session will time out after N minutes of
@@ -84,8 +86,10 @@ Clone `https://github.com/BurntSushi/ripgrep` (shallow) and run
 
 ## 7. Browser
 
-Install Playwright's Chromium (`npx playwright install --with-deps chromium`), then
-screenshot `https://example.com` headless to `browser.png`. Pass if the PNG exists and
+Install Playwright's Chromium (`npx playwright install chromium`, or `pnpm exec` in a
+project `pnpm init` made: npm's `npx` refuses pnpm's `devEngines` field). Not
+`--with-deps`: it installs system libraries with apt, which needs root, and the image
+already carries Chromium's libraries. Then screenshot `https://example.com` headless to `browser.png`. Pass if the PNG exists and
 isn't blank (more than one distinct pixel color). If `$DISPLAY` is set, also launch
 Chromium headed on it and screenshot the display (`import -window root` or `xwd`) to
 `display.png`.

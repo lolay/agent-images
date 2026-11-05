@@ -88,7 +88,7 @@ class SessionStartTests(unittest.TestCase):
             "⚠ This session will time out after 60 minutes of inactivity, and ends by "
             "2:00 AM PST at the latest (in 8 h 0 min). Push your work before then.",
         )
-        self.assertIn("start your first reply with these lines", self.context(output))
+        self.assertIn("Session notice (already shown to the user):", self.context(output))
 
     def test_notice_ends_at_the_runner_deadline_when_earlier(self):
         output = self.run_hook(AGENT_RETIRE_AT=str(NOW + 2 * 3600 + 30 * 60))

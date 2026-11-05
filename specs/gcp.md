@@ -1,8 +1,10 @@
-# GCP runners (proposal)
+# GCP runners
 
-Status: **m1 (`linux`) in progress.** Written 2026-11-04; the foundation is applied
-(`lolay/infrastructure`, `stacks/gcp/agents`, 2026-11-05). Recheck anything marked
-preview before building on it.
+Status: **m1 (`linux`) done, 2026-11-05**: sessions run on Cloud Run, tested twice
+([m1 results](#m1-results)). Written 2026-11-04; the foundation is applied
+(`lolay/infrastructure`, `stacks/gcp/agents`). m2 is next
+([handoffs/handoff-m2-gis-android.md](handoffs/handoff-m2-gis-android.md)). Recheck
+anything marked preview before building on it.
 
 The same model as the Mac and Linux runners, with Google running the hardware: Claude's
 orchestrator calls a hook per queued session, the hook starts one throwaway workload,
@@ -108,10 +110,11 @@ Memory, measured: a long-running orchestrator on a Mac (2026-11-05) had a reside
 of 126 MB; one on Linux was about 40 MB at startup before connecting. Resident size
 counts the Claude binary's shared code once per process, so several orchestrators
 share part of it; on Linux, `Pss` in `/proc/<pid>/smaps_rollup` gives the real share.
-Taking 130 MB each at face value: the first three types' orchestrators (`linux`,
-`gis`, `android`) are about 390 MB, which fits in an `e2-micro` next to
-Container-Optimized OS and Docker; with the GPU types added, the host moves to
-`e2-small`. The hook adds to that if it shells out to
+Measured on the `e2-micro` in m1 (2026-11-05, during a session): the `linux`
+orchestrator's Pss was 78 to 84 MiB, the supervisor's under 2 MiB, and the VM had
+about 610 of its 967 MiB available. So `gis` and `android` (m2) at about 85 MiB each
+leave around 440 MiB; with the GPU types too it would be about 270 MiB, which is why
+the host moves to `e2-small` at m3. The hook adds to that if it shells out to
 `gcloud` (Python, around 100 MB for each run), so the hook calls the Cloud Run and
 Storage REST APIs with `curl` and a token from the metadata server instead: small,
 and a second faster per spawn. m1 measures it; moving to `e2-small` is one setting.
@@ -610,8 +613,7 @@ runner sets the same).
   ## Cost and time limit
   - This runtime costs about $AGENT_COST_USD_PER_HOUR an hour while the session
     runs, and the session ends at a set time (the start-of-session facts give both).
-    Start your first reply with the notice line from those facts. Before starting
-    work you expect to take over an hour, say what it will roughly cost and whether
+    Before starting work you expect to take over an hour, say what it will roughly cost and whether
     it fits before the end time. Commit and push well before the end.
   ```
 - The same `SessionStart` hook prints one line of facts into the session's context:
@@ -632,10 +634,10 @@ output), so the same `SessionStart` hook does it two ways:
 
 - `systemMessage` in its JSON output, which Claude Code shows to the user as a
   warning line;
-- `additionalContext` carrying the same line, with the `CLAUDE.md` rule above
-  ("start your first reply with the cost line"), in case a surface doesn't show
-  hook messages. m1 checks what claude.ai actually shows and drops whichever is
-  redundant.
+- `additionalContext` carrying the same line, so Claude knows the limits too.
+
+m1 found claude.ai shows the `systemMessage` line, so the `CLAUDE.md` rule that had
+Claude repeat it as its first line is gone: it only doubled the notice.
 
 m1 prints the time-limit line only. The cost line needs the deploy's price lookup,
 which comes after m1; until `AGENT_COST_USD_PER_HOUR` is set, the hook leaves it out
@@ -771,12 +773,32 @@ The whole path for one type, end to end:
 - `hooks/gcp/spawn-runner` (Cloud Run), the orchestrator container with its
   supervisor, and the `e2-micro` host from `lolay/infrastructure` (applied).
 - No standby, no cost line, Claude upgrading itself at start (all above).
-- Plan: [handoffs/plan-gcp-linux-heron.md](handoffs/plan-gcp-linux-heron.md).
+- Plan: `specs/handoffs/plan-gcp-linux-heron.md` (removed once m1 was done; in git history at `f2bd141`).
 - The "Agent: Linux" environment in claude.ai and `claude-env-linux` in Secret
   Manager.
 - Done when [tests/sessions/linux.md](../tests/sessions/linux.md) passes, run twice
   so the isolation check sees a fresh runner the second time, and the orchestrator's
   memory on the host is measured.
+
+#### m1 results
+
+Done 2026-11-05: [lolay/agent-images#13](https://github.com/lolay/agent-images/pull/13),
+then #14 (no sudo), #15 (toolchains in the image, by Gary) and #16 (PATH in every
+shell). Both test runs passed every check that can pass: the second on a fresh
+runner (no isolation marker), with nothing missing from the image. What they and the
+deploys found:
+
+| Finding | Result |
+| --- | --- |
+| Scratch on Cloud Run jobs | `emptyDir` `medium: DISK` works: ext4, 10 GiB, 210 MB/s each way (looks like a provisioned cap) |
+| Root | None: Cloud Run sets no-new-privileges, so `sudo` and apt fail. Sessions run as `ubuntu` and install with Homebrew (#14); the image carries Chromium's libraries for Playwright (#15) |
+| Buckets | Outputs round-trips (about 60 MB/s write through FUSE); datasets is read-only. Cloud Run mounts both as the container's uid 1000 by default; explicit `uid`/`gid` options got uid 2000 |
+| Cold start | About 55 s for the 5.5 GB image (Cloud Run streams layers). `EXPECTED_SPAWN_SECONDS` stays 180, about three times that |
+| CPU | `nproc` reports 5 for a 4 vCPU job; the ripgrep release build (33 to 60 s) used under 3 |
+| Session id | `CLAUDE_CODE_REMOTE_SESSION_ID` (`cse_...`), as in Anthropic's own cloud sessions |
+| Session notice | The time line is right (the earlier of 8 h from session start and the runner's retire time) and claude.ai shows the hook's `systemMessage` |
+| Orchestrator memory | 78 to 84 MiB Pss on the `e2-micro` (see "Memory, measured" above) |
+| Hostname | `localhost` in every execution; the test's isolation marker records the session id to tell runs apart |
 
 ### m2 - `gis` and `android`
 
