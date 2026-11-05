@@ -220,7 +220,8 @@ Steps for [gcp.md](gcp.md) m2, ahead of `gis` and `android`:
 - s4 (done): per-toolset `CLAUDE.md` fragments, and `changed-targets.sh` reading
   toolsets. Both images' session `CLAUDE.md` now list exactly what's installed
   (checked in the cloud build and on the hosted Android run).
-- s5: rename `images/linux` to `images/android` and the alias to `agent-android`.
+- s5 (done): rename `images/linux` to `images/android` and the alias to
+  `agent-android` (Renames, above).
 - s6: `gis` on toolsets, as in the m2 plan.
 
 `linux-gpu` and `3d-gpu` follow in m3 on the same structure.
