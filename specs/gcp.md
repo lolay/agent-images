@@ -20,7 +20,7 @@ service with Blackwell, so it would mean a VM per session and our own driver.
 claude.ai session queue
         │
         ▼
-Cloud Run worker pool  (one instance, no GPU)
+Compute Engine e2-micro  (free tier, always on, no GPU)
   one claude self-hosted-runner orchestrator per runner type, --hooks-dir hooks/gcp
         │ spawn-runner: gcloud run jobs execute <type> --update-env-vars ...
         ▼
@@ -33,7 +33,7 @@ Cloud Run job execution  (one per session)
 | --- | --- |
 | `lxc launch agent-linux runner-N --ephemeral` | `gcloud run jobs execute agent-<type>`: one execution, gone when it exits |
 | `build-image.sh` → `lxc publish agent-linux-next`, move the alias | Build and push to Artifact Registry, smoke-test `agent-<type>-next`, then point the job at the new digest |
-| systemd user unit runs the orchestrator | Cloud Run worker pool, one instance |
+| systemd user unit runs the orchestrator | One `e2-micro` running the orchestrator container |
 | `~/.config/agent-images` holds the environment secret | Secret Manager, read only by the orchestrator's service account |
 | `runner-once.sh` deletes the VM | Nothing to delete: the execution ends when the container exits |
 | Claim `runner-1..N` with `mkdir` | Idempotency marker in GCS, created with `--if-generation-match=0` |
@@ -92,9 +92,29 @@ runner waiting: a runner starts only when a session queues, and the session wait
 the cold start (image pull and boot, minutes for a large GPU image). That's the
 setting for every `-gpu` type, and for any type where a wait is fine. The
 orchestrators themselves must stay up: they poll Anthropic for work, and nothing
-calls in, so with none running, sessions sit in the queue. The host is the one fixed
-cost: one Cloud Run worker pool instance, or a Compute Engine `e2-micro`, which is in
-GCP's free tier in `us-central1` and holds a few orchestrators in its 1 GB.
+calls in, so with none running, sessions sit in the queue.
+
+**The orchestrator host: start with the smallest.** One Compute Engine `e2-micro` in
+`us-central1` runs the orchestrator container (below) for every type.
+
+| Host | Memory | Monthly cost, always on |
+| --- | --- | --- |
+| `e2-micro` (start here) | 1 GB | $0 in GCP's free tier (one per billing account, `us-central1`, `us-west1` or `us-east1`), plus possibly a few dollars for its external IP; check the billing report |
+| `e2-small` (if it runs out of memory) | 2 GB | About $12 |
+| Cloud Run worker pool, 1 vCPU, 512 MiB | | Roughly $45 to $50 at instance-based rates (unverified; Google's page didn't load) |
+
+An orchestrator measured about 40 MB at startup on 2026-11-05 (it exited before
+connecting, without a real key, so steady state is still to measure). Six of them,
+plus the OS and Docker, should fit in 1 GB; m3 checks, and the move to `e2-small` is
+one setting. Polling is small, and image pulls from Artifact Registry in the same
+region are free. The orchestrators are the only always-on cost: every runner is a
+Cloud Run execution billed only while its session runs.
+
+The host runs Container-Optimized OS with no inbound access at all. A systemd unit
+starts the container and long-polls the metadata server
+(`?wait_for_change=true`) for an `orchestrator-image` key. A deploy sets that key to
+the new digest, and the unit pulls it and restarts the container, so deploys need no
+SSH.
 
 **Choosing by repo instead (not proposed).** The hook gets
 `CLAUDE_RUNNER_PRIMARY_REPO_URL`, so one environment could pick the image from the
@@ -182,7 +202,7 @@ matrix:
 | `images/shared/**`, `images/linux/packages.txt`, `images/linux/Brewfile`, `images/cloud/base/**`, `images/cloud/entrypoint.sh` | Every runner type |
 | `images/cloud/base-gpu/**` | Every `-gpu` type (each is built `FROM` it) |
 | `images/cloud/<type>/**`, including its `versions.lock` | That type |
-| `hooks/gcp/**`, `images/cloud/orchestrator/**` | The orchestrator worker pools (new image, then `gcloud run worker-pools update`) |
+| `hooks/gcp/**`, `images/cloud/orchestrator/**` | The orchestrator host (new image, then the host restarts its container) |
 | `infra/gcp/<type>.env` (CPU, memory, GPU, timeout, `--min-idle`) | That type's job and orchestrator settings, no image build |
 | Anything else (`specs/`, the macOS and Linux images, README) | Nothing |
 
@@ -380,14 +400,15 @@ it's one process per type inside one container:
   starts `claude self-hosted-runner orchestrator` for each, with `RUNNER_TYPE`, that
   type's `--min-idle` and `--expected-spawn-seconds`, its own `--health-port`
   (8080 upward), and `--shutdown-drain-sec 70`.
-- **Secrets:** each type's `claude-env-<type>` from Secret Manager, mounted as a file
-  per type by Cloud Run's secret volumes. The supervisor passes each orchestrator only
-  its own, and the hook unsets it before doing anything else.
+- **Secrets:** each type's `claude-env-<type>`, read from Secret Manager at start by
+  the host's service account and written to a file per type (mode 600, tmpfs). The
+  supervisor passes each orchestrator only its own, and the hook unsets it before
+  doing anything else.
 - **Supervision:** restart any orchestrator that exits; forward `SIGTERM` to all of
   them; prefix each one's log lines with its type. Healthy only when every
   orchestrator's `/healthz` reports `connected`.
 - **Deploys:** a push to `main` that touches `hooks/gcp/**`, `images/cloud/orchestrator/**`
-  or `infra/gcp/*.env` rebuilds it and updates the worker pool. Sessions in flight are
+  or `infra/gcp/*.env` rebuilds it and restarts it on the host. Sessions in flight are
   unaffected: they belong to runners, not to the orchestrator.
 
 One process for all types would mean one environment for all types, with the hook
@@ -400,12 +421,15 @@ A short `scripts/gcp/setup.sh` (or OpenTofu once it outgrows a script) for one
 project:
 
 - Artifact Registry repo; GCS bucket for order markers.
-- Service accounts: `agent-orchestrator` (Secret Manager accessor on its environment
-  secret, `roles/run.developer` on its job for overrides, object create on the marker
-  bucket); `agent-runner` (logging only); `agent-images-ci` (Artifact Registry writer,
-  run.developer on the jobs, through workload identity federation).
-- Per type: a Secret Manager secret with the environment key and the job. One worker
-  pool runs every type's orchestrator.
+- Service accounts: `agent-orchestrator`, the host's (Secret Manager accessor on the
+  `claude-env-*` secrets, `roles/run.developer` on the jobs for overrides, object
+  create on the marker bucket, Artifact Registry reader); `agent-runner` (logging
+  only); `agent-images-ci` (Artifact Registry writer, run.developer on the jobs,
+  `compute.instances.setMetadata` on the orchestrator host, through workload identity
+  federation).
+- The orchestrator host: one `e2-micro`, Container-Optimized OS, no external
+  inbound, the `agent-orchestrator` service account.
+- Per type: a Secret Manager secret with the environment key, and the job.
 - The lock bot: a GitHub App, its key in the `lock-bot` environment, and the `main`
   ruleset (see [The lock bot](#the-lock-bot)).
 - GPU quota for Cloud Run in `us-central1`.
@@ -476,7 +500,7 @@ screenshot of a GL app. Measure cold start. Decides Cloud Run or the fallback.
 
 ### m3 - Orchestrator and hook
 
-`hooks/gcp/spawn-runner`, the orchestrator image, the worker pool, order markers. A
+`hooks/gcp/spawn-runner`, the orchestrator image and its host, order markers. A
 session from claude.ai lands on a fresh execution and the execution ends with it.
 
 ### m4 - Image pipeline
