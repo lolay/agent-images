@@ -4,7 +4,9 @@
 # the repo root. The host runs it as container agent-orchestrator with
 # --restart=always and --stop-timeout 85, and passes it nothing: the runner
 # types and project settings are baked in from infra/gcp.
-FROM ubuntu:24.04
+# Docker Hub's ubuntu through Google's mirror: Docker Hub rate-limits anonymous
+# pulls, and mirror.gcr.io caches the same images without that limit.
+FROM mirror.gcr.io/library/ubuntu:24.04
 
 RUN apt-get update \
 	&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl jq procps \

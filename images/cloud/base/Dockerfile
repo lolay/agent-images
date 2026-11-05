@@ -6,7 +6,9 @@
 # The user is the stock image's ubuntu (uid 1000) with passwordless sudo, like
 # the Linux image's ubuntu and the macOS image's admin: sessions install what a
 # repo needs, and nothing outlives the execution.
-FROM ubuntu:24.04
+# Docker Hub's ubuntu through Google's mirror: Docker Hub rate-limits anonymous
+# pulls, and mirror.gcr.io caches the same images without that limit.
+FROM mirror.gcr.io/library/ubuntu:24.04
 
 RUN apt-get update \
 	&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends sudo ca-certificates curl \

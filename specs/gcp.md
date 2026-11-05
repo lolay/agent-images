@@ -184,6 +184,10 @@ Choices, carried over from [design.md](design.md):
   needs NVIDIA's forward-compatibility package. Anything compiled (COLMAP, PyTorch
   extensions) must target compute capability 12.0 or carry PTX, or it fails on
   Blackwell.
+- **Docker Hub images come through Google's mirror** (`mirror.gcr.io/library/ubuntu`,
+  `mirror.gcr.io/nvidia/cuda`): Docker Hub rate-limits anonymous pulls, which CI and
+  local builds hit. The mirror is a pull-through cache of Docker Hub, so a digest is
+  the same on both; a tag can trail Docker Hub's for a while after it moves.
 - **No secrets in images or sessions** ([secrets.md](secrets.md)). The runner's
   service account gets logging and the two buckets (below) only.
 - **Claude upgrades itself at start until m4.** The plan is no self-update: the watch
@@ -194,7 +198,8 @@ Choices, carried over from [design.md](design.md):
 Layer order, slowest-moving first, so a rebuild only redoes what changed:
 
 ```
-FROM <base>@<digest>      ubuntu:24.04, or nvidia/cuda 13.0 runtime for gpu
+FROM <base>@<digest>      ubuntu:24.04, or nvidia/cuda 13.0 runtime for gpu,
+                          both through mirror.gcr.io
 apt packages              packages.txt, at the locked snapshot
 Homebrew + Brewfile       incl. lolay/tap
 type tools                gis, 3d, ...
@@ -259,7 +264,7 @@ image.
 
 | Dependency | Locked as | Resolved by (on the hosted runner, from upstream only) |
 | --- | --- | --- |
-| Base image | Digest | `crane digest ubuntu:24.04` (or the CUDA tag): a registry HEAD, no pull |
+| Base image | Digest | `crane digest mirror.gcr.io/library/ubuntu:24.04` (or the CUDA tag): a registry HEAD, no pull |
 | apt packages, dependencies included | An Ubuntu snapshot timestamp, plus the full resolved list | `apt-get install --simulate` of `packages.txt` in a stock `ubuntu:24.04` container at the locked base digest, once with `--snapshot <locked>` and once against today's archive. Any difference in the resolved set means apt moved |
 | Homebrew, dependencies and `lolay/tap` included | Each formula and cask with its version and revision | `brew info --json=v2` on the runner's own Homebrew (preinstalled on Ubuntu runners), after `brew tap lolay/tap` |
 | Claude Code | Version | `https://downloads.claude.ai/claude-code-releases/latest` |
@@ -408,7 +413,7 @@ it's fixed. How, per source:
 
 | Dependency | Pin | Notes |
 | --- | --- | --- |
-| Base image | `FROM ubuntu:24.04@sha256:...` | The watch reports it as pinned instead of rebuilding |
+| Base image | `FROM mirror.gcr.io/library/ubuntu:24.04@sha256:...` | The watch reports it as pinned instead of rebuilding |
 | apt package | `name=version` in `packages.txt`, resolved against the locked snapshot | The snapshot keeps old versions installable. To hold all of apt still, freeze the snapshot timestamp in the lock |
 | Homebrew formula | A versioned formula if one exists (`python@3.12`), else `brew extract --version=X <formula> lolay/tap` and name `lolay/tap/<formula>@X` in the Brewfile | `brew pin` doesn't help a fresh build. An extracted formula has no bottle, so it builds from source |
 | `lolay/tap` formula | Revert in the tap, or add a versioned formula there | It's ours |
