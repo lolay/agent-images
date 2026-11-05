@@ -426,6 +426,13 @@ environment key goes into Secret Manager by hand as `claude-env-<type>`; the
 orchestrator's access is granted by that name prefix. What Terraform needs, in full:
 [handoffs/handoff-gcp-infrastructure-lantern.md](handoffs/handoff-gcp-infrastructure-lantern.md).
 
+The jobs need no Terraform here: the deploy workflow runs `gcloud run jobs deploy`
+from each `infra/gcp/<type>.env`, which is idempotent, and deletes any `agent-*` job
+whose env file is gone. A second Terraform in this repo (its state next to
+`lolay/infrastructure`'s, applied by the deploy workflow with the new digest as a
+variable) becomes worth it if the workloads grow past jobs: the Android type's
+Compute Engine templates and standby pools are the likely trigger.
+
 Terraform's outputs (project, registry path, federation provider, service accounts,
 bucket, VM) are committed here as a copy in one env file for the workflows, per the
 CI configuration rule: non-secret, reviewed, and Terraform stays the source.
