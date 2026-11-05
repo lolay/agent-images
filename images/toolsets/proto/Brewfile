@@ -1,0 +1,5 @@
+# Protobuf and gRPC. Language plugins (protoc-gen-go, grpcio-tools,
+# protoc-gen-es, tonic-build) are project dependencies, not image tools.
+brew "protobuf"
+brew "buf"
+brew "grpcurl"

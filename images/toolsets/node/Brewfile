@@ -1,0 +1,3 @@
+# Node, and pnpm from Homebrew, since Node 25 stopped bundling corepack.
+brew "node"
+brew "pnpm"

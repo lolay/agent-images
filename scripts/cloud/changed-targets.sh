@@ -64,8 +64,7 @@ image_paths() {
 
 # What every type is built from.
 readonly every_type=(
-	"images/shared/*" "images/linux/packages.txt" "images/linux/Brewfile"
-	"images/linux/scripts/install-packages.sh" "images/cloud/entrypoint.sh"
+	"images/shared/*" "images/toolsets/*" "images/cloud/entrypoint.sh"
 	"images/cloud/docker-bake.hcl" ".dockerignore" "infra/gcp/project.env"
 )
 

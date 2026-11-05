@@ -28,6 +28,8 @@ class ChangedTargetsTests(unittest.TestCase):
             "images/cloud/orchestrator/Dockerfile": "FROM ubuntu:24.04\n",
             "images/cloud/entrypoint.sh": "#!/bin/bash\n",
             "images/shared/agent-runner.sh": "#!/bin/bash\n",
+            "images/toolsets/core/packages.txt": "git\n",
+            "images/linux/toolsets.txt": "core\n",
             "hooks/gcp/spawn-runner": "#!/bin/bash\n",
             "scripts/cloud/job-spec.sh": "#!/bin/bash\n",
             "specs/gcp.md": "# GCP\n",
@@ -84,6 +86,17 @@ class ChangedTargetsTests(unittest.TestCase):
             [{"type": "linux", "build": True}, {"type": "linux-gpu", "build": True}],
         )
         self.assertFalse(result["orchestrator"])
+
+    def test_a_toolset_rebuilds_every_type(self):
+        self.assertEqual(
+            self.change("images/toolsets/core/packages.txt")["types"],
+            [{"type": "linux", "build": True}, {"type": "linux-gpu", "build": True}],
+        )
+
+    def test_the_android_images_toolset_list_deploys_nothing(self):
+        self.assertEqual(
+            self.change("images/linux/toolsets.txt"), {"types": [], "orchestrator": False, "prune": False}
+        )
 
     def test_a_types_directory_rebuilds_only_it(self):
         result = self.change("images/cloud/linux/Dockerfile")

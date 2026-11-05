@@ -1,0 +1,3 @@
+# rustup is keg-only; PATH names its bin, which holds the cargo and rustc
+# proxies. install.sh installs the stable toolchain.
+brew "rustup"

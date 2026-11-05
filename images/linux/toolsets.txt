@@ -1,0 +1,13 @@
+# The toolsets the Android image installs, in order (specs/image-toolsets.md):
+# install-packages.sh passes them to images/toolsets/install-toolset.sh. The
+# cloud images list theirs in their Dockerfiles. # starts a comment.
+core
+jvm
+browser
+android
+node
+python
+go
+rust
+proto
+terraform

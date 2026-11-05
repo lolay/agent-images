@@ -1,7 +1,7 @@
 # agent-base: what every Cloud Run runner type is built FROM (specs/gcp.md,
-# "Images"). Ubuntu 24.04, the Linux image's apt packages and Brewfile, the
-# shared runner files, and Claude Code last, since it moves most often. Build it
-# with images/cloud/docker-bake.hcl from the repo root.
+# "Images"). Ubuntu 24.04, the toolsets, the shared runner files, and Claude
+# Code last, since it moves most often. Build it with
+# images/cloud/docker-bake.hcl from the repo root.
 #
 # The user is the stock image's ubuntu (uid 1000) with passwordless sudo, like
 # the Linux image's ubuntu and the macOS image's admin: sessions install what a
@@ -17,16 +17,41 @@ RUN apt-get update \
 USER ubuntu
 WORKDIR /home/ubuntu
 
-# apt packages, Homebrew and the Brewfile, the Rust and Terraform toolchains and
-# tflint, with the Linux image's own script.
-RUN --mount=type=bind,source=images/linux,target=/tmp/agent-images/linux <<'SCRIPT'
-set -eu
-mkdir -p /tmp/staging/scripts
-cp /tmp/agent-images/linux/packages.txt /tmp/agent-images/linux/Brewfile /tmp/staging/
-cp /tmp/agent-images/linux/scripts/install-packages.sh /tmp/staging/scripts/
-STAGING_DIR=/tmp/staging INSTALL_CLAUDE=false bash /tmp/staging/scripts/install-packages.sh
-rm -rf /tmp/staging
-SCRIPT
+# The toolsets (images/toolsets, specs/image-toolsets.md), one layer each. Each
+# layer mounts only the installer and its own toolset, so a change to one
+# toolset rebuilds its layer and those after it, not the ones before. The same
+# list as the Android image's images/linux/toolsets.txt for now; it narrows to
+# what this image needs in s3. apt toolsets first: they move slowest.
+RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
+	--mount=type=bind,source=images/toolsets/core,target=/tmp/toolsets/core \
+	bash /tmp/toolsets/install-toolset.sh core
+RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
+	--mount=type=bind,source=images/toolsets/jvm,target=/tmp/toolsets/jvm \
+	bash /tmp/toolsets/install-toolset.sh jvm
+RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
+	--mount=type=bind,source=images/toolsets/browser,target=/tmp/toolsets/browser \
+	bash /tmp/toolsets/install-toolset.sh browser
+RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
+	--mount=type=bind,source=images/toolsets/android,target=/tmp/toolsets/android \
+	bash /tmp/toolsets/install-toolset.sh android
+RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
+	--mount=type=bind,source=images/toolsets/node,target=/tmp/toolsets/node \
+	bash /tmp/toolsets/install-toolset.sh node
+RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
+	--mount=type=bind,source=images/toolsets/python,target=/tmp/toolsets/python \
+	bash /tmp/toolsets/install-toolset.sh python
+RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
+	--mount=type=bind,source=images/toolsets/go,target=/tmp/toolsets/go \
+	bash /tmp/toolsets/install-toolset.sh go
+RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
+	--mount=type=bind,source=images/toolsets/rust,target=/tmp/toolsets/rust \
+	bash /tmp/toolsets/install-toolset.sh rust
+RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
+	--mount=type=bind,source=images/toolsets/proto,target=/tmp/toolsets/proto \
+	bash /tmp/toolsets/install-toolset.sh proto
+RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
+	--mount=type=bind,source=images/toolsets/terraform,target=/tmp/toolsets/terraform \
+	bash /tmp/toolsets/install-toolset.sh terraform
 
 # The runner (images/shared), the Claude Code settings the runner seeds into
 # every session (the shared Stop hook plus the cloud SessionStart hook), the

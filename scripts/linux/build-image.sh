@@ -22,6 +22,7 @@ readonly next_alias="$LINUX_IMAGE_ALIAS-next"
 readonly guest_staging="/tmp/agent-images"
 readonly linux_dir="$AGENT_IMAGES_DIR/images/linux"
 readonly shared_dir="$AGENT_IMAGES_DIR/images/shared"
+readonly toolsets_dir="$AGENT_IMAGES_DIR/images/toolsets"
 readonly provisioners=(setup-user install-packages ensure-android-sdk)
 # Every provisioner's stderr, so a build that isn't green says so.
 readonly build_err="$AGENT_IMAGES_LOG_DIR/linux-build.err"
@@ -67,7 +68,9 @@ lxc exec "$build_vm" -- mkdir -p "$guest_staging/scripts"
 for source_dir in "$shared_dir" "$linux_dir/files"; do
 	tar -C "$source_dir" -cf - . | lxc exec "$build_vm" --force-noninteractive -- tar -xf - --no-same-owner -C "$guest_staging"
 done
-tar -C "$linux_dir" -cf - packages.txt Brewfile | lxc exec "$build_vm" --force-noninteractive -- tar -xf - --no-same-owner -C "$guest_staging"
+tar -C "$linux_dir" -cf - toolsets.txt | lxc exec "$build_vm" --force-noninteractive -- tar -xf - --no-same-owner -C "$guest_staging"
+lxc exec "$build_vm" -- mkdir -p "$guest_staging/toolsets"
+tar -C "$toolsets_dir" -cf - . | lxc exec "$build_vm" --force-noninteractive -- tar -xf - --no-same-owner -C "$guest_staging/toolsets"
 tar -C "$linux_dir/scripts" -cf - . | lxc exec "$build_vm" --force-noninteractive -- tar -xf - --no-same-owner -C "$guest_staging/scripts"
 
 # The provisioners run as the guest user, as the macOS image's do, and use sudo

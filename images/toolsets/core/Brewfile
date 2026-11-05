@@ -1,0 +1,12 @@
+# Homebrew formulae every Linux image gets. No versions, same policy
+# (specs/design.md, "Track the latest").
+#
+# Every tap listed here is trusted by install-toolset.sh before the bundle runs.
+tap "lolay/tap"
+
+# Lint.
+brew "actionlint"
+brew "shellcheck"
+
+brew "lolay/tap/nowline"
+brew "lolay/tap/triage"

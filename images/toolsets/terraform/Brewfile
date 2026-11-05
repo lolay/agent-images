@@ -1,0 +1,4 @@
+# Terraform through tenv, which reads a repo's .terraform-version (Homebrew
+# dropped terraform after its license change). install.sh installs the latest
+# Terraform and tflint.
+brew "tenv"

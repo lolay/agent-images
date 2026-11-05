@@ -97,6 +97,7 @@ PKR_VAR_base_image ?= ghcr.io/cirruslabs/macos-$(MACOS_CODENAME)-xcode:latest
 # container, the hook and the deploy scripts. Built and tested on Linux with
 # Docker; the deploy itself runs only from main, in GitHub Actions.
 CLOUD_SCRIPTS := $(wildcard images/cloud/*.sh images/cloud/base/*.sh images/cloud/base/claude/hooks/*.sh \
+                   images/toolsets/*.sh images/toolsets/*/*.sh \
                    images/cloud/orchestrator/*.sh scripts/cloud/*.sh hooks/gcp/*.sh) hooks/gcp/spawn-runner
 CLOUD_BAKE := docker buildx bake -f images/cloud/docker-bake.hcl
 # TYPE=all builds every type and the orchestrator (the bake file's default group).

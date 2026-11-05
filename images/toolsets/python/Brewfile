@@ -1,0 +1,3 @@
+# Homebrew's current Python 3 ahead of Ubuntu's on PATH, and uv.
+brew "python"
+brew "uv"

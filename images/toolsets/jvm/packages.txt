@@ -1,0 +1,2 @@
+# Android, Kotlin and Gradle builds. JDK 21 is the version Android Studio bundles.
+openjdk-21-jdk-headless

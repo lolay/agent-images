@@ -59,8 +59,8 @@ tracks the latest and pins only on breakage
 | shellcheck / shfmt | 0.11.0 / 3.14.1 | Build host tools for `make lint` |
 | actions/checkout | v7.0.1 | `.github/workflows/ci.yml`, `.github/workflows/linux-image-smoke.yml` |
 | Linux host | Ubuntu 24.04 Server, LXD snap `latest/stable` (refreshes held; `make build` refreshes) | `scripts/linux/host-setup.sh` |
-| Linux image | `ubuntu:24.04`; OpenJDK 21; Android command-line tools 23.0, emulator 37.1.11, platform and x86_64 Google APIs image `android-37.0`, build-tools 37.0.0 | `images/linux/packages.txt`, `images/linux/Brewfile` (Homebrew: nowline 0.11.0, triage 0.5.0), `images/linux/scripts/ensure-android-sdk.sh`: newest stable at build time |
-| Linux toolchains | Node 26.13.0, pnpm 12.16.1, Python 3.15.2, uv 0.13.7, Go 1.27.3, Rust 1.99.1 (rustup stable), protoc 36.2, buf 1.75.0, grpcurl 1.9.4, Terraform 1.17.1 (tenv), tflint 0.65.0, actionlint 1.7.12, shellcheck 0.11.0, nowline 0.12.1, triage 0.5.0 (2026-11-05) | `images/linux/Brewfile`, `images/linux/scripts/install-packages.sh`: newest stable at build time |
+| Linux image | `ubuntu:24.04`; OpenJDK 21; Android command-line tools 23.0, emulator 37.1.11, platform and x86_64 Google APIs image `android-37.0`, build-tools 37.0.0 | `images/linux/toolsets.txt` (the toolsets in `images/toolsets`), `images/linux/scripts/ensure-android-sdk.sh`: newest stable at build time |
+| Linux toolchains | Node 26.13.0, pnpm 12.16.1, Python 3.15.2, uv 0.13.7, Go 1.27.3, Rust 1.99.1 (rustup stable), protoc 36.2, buf 1.75.0, grpcurl 1.9.4, Terraform 1.17.1 (tenv), tflint 0.65.0, actionlint 1.7.12, shellcheck 0.11.0, nowline 0.12.1, triage 0.5.0 (2026-11-05) | The `images/toolsets` Brewfiles and install scripts: newest stable at build time |
 | hashicorp/setup-packer | v3.4.0 (installs Packer 1.16.1) | `.github/workflows/ci.yml` |
 
 ## Build (build host)

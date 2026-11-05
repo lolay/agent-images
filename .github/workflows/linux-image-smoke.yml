@@ -3,8 +3,8 @@
 # including the emulator boot that saves the quickboot snapshot, then boots it
 # again the way a session does. It proves everything in the image except LXD
 # itself, without a Linux host, and that the scripts run green (nothing on
-# stderr). Run it from the Actions tab after changing images/linux or
-# images/shared; it never runs on pull requests.
+# stderr). Run it from the Actions tab after changing images/linux,
+# images/toolsets or images/shared; it never runs on pull requests.
 name: linux-image-smoke
 
 on:
@@ -38,7 +38,8 @@ jobs:
         run: |
           mkdir -p "$STAGING_DIR/scripts"
           cp -R images/shared/. images/linux/files/. "$STAGING_DIR/"
-          cp images/linux/packages.txt images/linux/Brewfile "$STAGING_DIR/"
+          cp images/linux/toolsets.txt "$STAGING_DIR/"
+          cp -R images/toolsets "$STAGING_DIR/toolsets"
           cp images/linux/scripts/*.sh "$STAGING_DIR/scripts/"
           : >"$STDERR_LOG"
       # Each script's stderr also goes to STDERR_LOG; the Green step fails on any.

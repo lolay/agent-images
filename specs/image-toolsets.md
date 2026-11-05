@@ -186,13 +186,15 @@ yet, so this is the cheapest it'll ever be.
 
 Steps for [gcp.md](gcp.md) m2, ahead of `gis` and `android`:
 
-- s1: `images/toolsets/` and `install-toolset.sh`; split today's `packages.txt`
-  and Brewfile into `core`, `node`, `python`, `go`, `rust`, `proto`, `terraform`,
-  `jvm`, `browser` and `android`, with no change in what any image contains.
+- s1 (done): `images/toolsets/` and `install-toolset.sh`; split today's
+  `packages.txt` and Brewfile into `core`, `node`, `python`, `go`, `rust`, `proto`,
+  `terraform`, `jvm`, `browser` and `android`, with no change in what any image
+  contains. Until s3 the `android` toolset is only its apt libraries, since
+  `agent-linux` still installs them; the SDK stays in `ensure-android-sdk.sh`.
 - s2: rebuild `agent-linux` and the LXD image from toolsets; diff the installed
   package lists against the current images (should be identical).
-- s3: add `native`; drop the emulator libraries and `cpu-checker` from `linux`;
-  move session tools to the `core` Brewfile on Linux and the Mac.
+- s3: add `native`; drop `android` from `linux` and move the SDK into the toolset's
+  `install.sh`; move session tools to the `core` Brewfile on Linux and the Mac.
 - s4: per-toolset `CLAUDE.md` fragments, and `changed-targets.sh` reading toolsets.
 - s5: rename `images/linux` to `images/android` and the alias to `agent-android`.
 - s6: `gis` on toolsets, as in the m2 plan.

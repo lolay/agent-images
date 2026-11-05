@@ -9,9 +9,7 @@ on:
     paths:
       - images/cloud/**
       - images/shared/**
-      - images/linux/packages.txt
-      - images/linux/Brewfile
-      - images/linux/scripts/install-packages.sh
+      - images/toolsets/**
       - hooks/gcp/**
       - infra/gcp/**
       - scripts/cloud/**

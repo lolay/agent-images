@@ -2,9 +2,7 @@
 # Send only what they read.
 *
 !images/shared/
-!images/linux/packages.txt
-!images/linux/Brewfile
-!images/linux/scripts/
+!images/toolsets/
 !images/cloud/
 !hooks/gcp/
 !infra/gcp/
