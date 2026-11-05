@@ -26,11 +26,13 @@ args=("$@")
 for ((i = 0; i < ${#args[@]}; i++)); do
 	[[ "${args[i]}" == --environment-secret-file ]] && secret_file="${args[i + 1]}"
 done
+# Written whole, then moved into place: the test reads it as soon as it exists.
 {
 	echo "pid=$$"
 	echo "args=$*"
 	echo "secret=$(cat "$secret_file")"
-} >"$FAKE_OUT/$type.start.$$"
+} >"$FAKE_OUT/.$type.start.$$"
+mv "$FAKE_OUT/.$type.start.$$" "$FAKE_OUT/$type.start.$$"
 echo "hello from $type"
 echo "a warning from $type" >&2
 mode_var="FAKE_MODE_${type//-/_}"
@@ -57,14 +59,19 @@ class SupervisorCase(unittest.TestCase):
         self.gcp.state.secrets.update({"claude-env-linux": "linux-key", "claude-env-gis": "gis-key"})
         self.lines = []
         self.process = None
+        self.reader = None
 
     def tearDown(self):
-        if self.process:
-            if self.process.poll() is None:
-                self.process.kill()
-                self.process.wait()
-            self.process.stdout.close()
+        if self.process and self.process.poll() is None:
+            self.process.kill()
+            self.process.wait()
+        # Its children hold the log pipe: end them first, so the reader sees EOF
+        # and closing the pipe can't block on the reader's lock.
         subprocess.run(["pkill", "-f", str(self.claude)], check=False)
+        if self.reader:
+            self.reader.join(timeout=5)
+        if self.process:
+            self.process.stdout.close()
         self.gcp.__exit__(None, None, None)
         subprocess.run(["rm", "-rf", str(self.tmp)], check=True)
 
@@ -90,7 +97,8 @@ class SupervisorCase(unittest.TestCase):
             stderr=subprocess.STDOUT,
             text=True,
         )
-        threading.Thread(target=self.collect, daemon=True).start()
+        self.reader = threading.Thread(target=self.collect, daemon=True)
+        self.reader.start()
 
     def collect(self):
         for line in self.process.stdout:
@@ -189,6 +197,17 @@ class SupervisionTests(SupervisorCase):
         self.assertIn("supervisor: every orchestrator has stopped", self.lines)
         alive = subprocess.run(["pgrep", "-f", str(self.claude)], capture_output=True)
         self.assertNotEqual(alive.returncode, 0, "no orchestrator outlives the supervisor")
+
+    def test_orchestrators_ending_together_are_all_collected(self):
+        # Several children exiting at once must all be collected, or the
+        # supervisor never exits.
+        for name in ("alpha", "beta", "gamma"):
+            (self.env_dir / f"{name}.env").write_text("MIN_IDLE=0\n")
+            self.gcp.state.secrets[f"claude-env-{name}"] = f"{name}-key"
+        self.start(FAKE_DRAIN="0")
+        types = ("alpha", "beta", "gamma", "gis", "linux")
+        self.wait_for(lambda: all(self.starts(name) for name in types), what="five types")
+        self.assertEqual(self.stop(), 0)
 
     def test_sigterm_during_a_start_still_reaches_that_orchestrator(self):
         # linux's secret takes a second, so the signal lands while it starts.

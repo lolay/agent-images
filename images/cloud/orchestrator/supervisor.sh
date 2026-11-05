@@ -204,6 +204,40 @@ on_signal() {
 }
 trap on_signal TERM INT
 
+# child_exited <type> <pid> <status>: forget it, and schedule its restart.
+child_exited() {
+	local type="$1" pid="$2" status="$3" now
+	unset "type_of[$pid]"
+	pid_of[$type]=""
+	if $stopping; then
+		log "$type: orchestrator stopped ($status)"
+		return
+	fi
+	now="$(date +%s)"
+	if ((now - started_at[$type] >= RESTART_RESET_SEC)); then
+		backoff[$type]=$RESTART_MIN_SEC
+	fi
+	log "$type: orchestrator exited ($status) after $((now - started_at[$type]))s; restarting in ${backoff[$type]}s"
+	next_start[$type]=$((now + backoff[$type]))
+	backoff[$type]=$((backoff[$type] * 2 > RESTART_MAX_SEC ? RESTART_MAX_SEC : backoff[$type] * 2))
+}
+
+# Insurance alongside wait -n: every pass also collects any recorded child that
+# is no longer running, so an exit wait -n didn't report (several orchestrators
+# ending together on SIGTERM) can't leave the supervisor waiting forever.
+reap_exited() {
+	local type pid status
+	for type in "${types[@]}"; do
+		pid="${pid_of[$type]:-}"
+		if [[ -z "$pid" ]] || kill -0 "$pid" 2>/dev/null; then
+			continue
+		fi
+		status=0
+		wait "$pid" 2>/dev/null || status=$?
+		child_exited "$type" "$pid" "$status"
+	done
+}
+
 tick_pid=""
 start_tick() {
 	sleep "$TICK_SEC" &
@@ -223,6 +257,7 @@ start_tick
 next_memory=$(($(date +%s) + MEMORY_LOG_INTERVAL_SEC))
 
 while :; do
+	reap_exited
 	now="$(date +%s)"
 	if ! $stopping; then
 		for type in "${types[@]}"; do
@@ -254,17 +289,5 @@ while :; do
 	fi
 	type="${type_of[$exited]:-}"
 	[[ -n "$type" ]] || continue
-	unset "type_of[$exited]"
-	pid_of[$type]=""
-	if $stopping; then
-		log "$type: orchestrator stopped ($status)"
-		continue
-	fi
-	now="$(date +%s)"
-	if ((now - started_at[$type] >= RESTART_RESET_SEC)); then
-		backoff[$type]=$RESTART_MIN_SEC
-	fi
-	log "$type: orchestrator exited ($status) after $((now - started_at[$type]))s; restarting in ${backoff[$type]}s"
-	next_start[$type]=$((now + backoff[$type]))
-	backoff[$type]=$((backoff[$type] * 2 > RESTART_MAX_SEC ? RESTART_MAX_SEC : backoff[$type] * 2))
+	child_exited "$type" "$exited" "$status"
 done

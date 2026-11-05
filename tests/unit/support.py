@@ -1,10 +1,15 @@
 """Helpers shared by the unit tests: the repo root and fake commands on PATH."""
 
+import faulthandler
 import os
 import stat
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
+
+# The suite takes under a minute. If it ever hangs (a child holding a pipe open),
+# print every thread's stack and fail instead of waiting forever.
+faulthandler.dump_traceback_later(300, exit=True)
 
 
 def write_executable(path: Path, body: str) -> Path:
