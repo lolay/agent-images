@@ -1,7 +1,7 @@
 # Build-only check for pull requests that touch the GCP runners: lint, the unit
-# tests, and a build of every cloud image, with no push and no GCP credentials
-# (specs/gcp.md, "Only main deploys"). It has no id-token permission and no
-# environment, so it couldn't get a GCP token if it tried.
+# tests, and a build of every cloud image (one runner each), with no push and
+# no GCP credentials (specs/gcp.md, "Only main deploys"). It has no id-token
+# permission and no environment, so it couldn't get a GCP token if it tried.
 name: cloud-build
 
 on:
@@ -22,13 +22,38 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Install tools
         run: sudo apt-get install -y --no-install-recommends shellcheck shfmt
+      - name: Lint and unit tests
+        run: make cloud-lint cloud-test
+
+  # One image per runner: together they don't fit on one. A build with no
+  # output is the check; nothing is loaded or pushed.
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [linux, gis, orchestrator]
+    steps:
+      - uses: actions/checkout@v7.0.1
+      # Hosted runners leave about 14 GB free, and agent-gis alone is 9 GB. The
+      # preinstalled toolchains these jobs never use (.NET, Android, GHC,
+      # CodeQL) are about 30 GB more.
+      - name: Free disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
       - uses: docker/setup-buildx-action@v4.4.1
-      - name: Gate
-        run: make cloud-ci CLAUDE_VERSION="$(curl -fsSL https://downloads.claude.ai/claude-code-releases/latest)"
+      - name: Build ${{ matrix.target }}
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          CLAUDE_VERSION="$(curl -fsSL https://downloads.claude.ai/claude-code-releases/latest)" \
+            docker buildx bake -f images/cloud/docker-bake.hcl "$TARGET"

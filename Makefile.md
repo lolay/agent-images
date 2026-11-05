@@ -196,7 +196,7 @@ or deploys: only a push to `main` does, through `.github/workflows/cloud-deploy.
 | `cloud-smoke` | Runs `agent-<TYPE>:local smoke` (the entrypoint's checks, what the deploy runs on `agent-<type>-next`) with anonymous volumes standing in for scratch, outputs and the read-only datasets |
 | `cloud-lint` | `shellcheck` and `shfmt -d` on the cloud scripts, and the cloud settings JSON |
 | `cloud-test` | `python3 -m unittest discover -s tests/unit`: the entrypoint, SessionStart hook, spawn hook, supervisor, job spec, path map and deploy script, against fakes (`tests/unit/fake_gcp.py` for the GCP APIs). Linux only |
-| `cloud-ci` | `cloud-lint`, `cloud-test`, then a build of every cloud image with no output: the pull request check (`cloud-build.yml`) |
+| `cloud-ci` | `cloud-lint`, `cloud-test`, then a build of every cloud image with no output: what the pull request check (`cloud-build.yml`) runs, there split across runners |
 | `cloud-status` | `scripts/cloud/deploy.sh status`, with your gcloud login: each job's image, deployed commit and last execution, and the orchestrator VM's `orchestrator-image` |
 
 | Variable | Default | Used by |
@@ -220,7 +220,7 @@ Where things live:
 | --- | --- |
 | `.github/workflows/ci.yml` | `make init`, `make ci` on `macos-latest` |
 | `.github/workflows/android-image-smoke.yml` | Manual only: runs `images/android/scripts` on `ubuntu-24.04` (which has KVM) and boots the emulator |
-| `.github/workflows/cloud-build.yml` | `make cloud-ci` on `ubuntu-24.04`, for pull requests touching the cloud paths; no GCP credentials |
+| `.github/workflows/cloud-build.yml` | `make cloud-lint cloud-test`, then each cloud image built on its own `ubuntu-24.04` runner (they don't fit on one), for pull requests touching the cloud paths; no GCP credentials |
 | `.github/workflows/cloud-deploy.yml` | Push to `main` or dispatch: builds, pushes, smoke-tests and promotes what changed, in environment `production` |
 
 Image builds don't run in hosted CI: GitHub's macOS runners can't nest Tart VMs, and
