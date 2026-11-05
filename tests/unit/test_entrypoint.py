@@ -224,5 +224,48 @@ class SmokeTests(EntrypointCase):
         self.assertIn("isn't writable", line)
 
 
+
+class ProfileTests(unittest.TestCase):
+    """profile.sh puts the session's tools first however the shell started."""
+
+    HOME = "/home/ubuntu"
+    BREW = "/opt/brew"
+
+    def path_after(self, start_path, *, shell="sh", times=1, bash_env=False):
+        script = ". \"$PROFILE\"; " * times + 'printf %s "$PATH"'
+        env = {"HOME": self.HOME, "HOMEBREW_PREFIX": self.BREW, "PATH": start_path,
+               "PROFILE": str(PROFILE), "AGENT_SCRATCH": "/scratch"}
+        command = [f"/bin/{shell}", "-c", script]
+        if bash_env:
+            env["BASH_ENV"] = str(PROFILE)
+            command = ["/bin/bash", "-c", 'printf %s "$PATH"']
+        result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.split(":")
+
+    def assert_front(self, path):
+        front = [f"{self.HOME}/bin", f"{self.HOME}/.local/bin", f"{self.BREW}/opt/rustup/bin",
+                 f"{self.BREW}/bin", f"{self.BREW}/sbin"]
+        self.assertEqual(path[: len(front)], front)
+        self.assertEqual(len(path), len(set(path)), f"duplicates in {path}")
+        self.assertEqual(path[-1], "/scratch/cache/cargo/bin")
+
+    def test_adds_homebrew_when_home_bin_is_already_there(self):
+        # The first session's case: ~/bin on PATH, Homebrew not.
+        self.assert_front(self.path_after(f"{self.HOME}/bin:/usr/bin:/bin"))
+
+    def test_moves_homebrew_ahead_of_the_system(self):
+        path = self.path_after(f"/usr/bin:{self.BREW}/bin:/bin")
+        self.assert_front(path)
+        self.assertLess(path.index(f"{self.BREW}/bin"), path.index("/usr/bin"))
+
+    def test_sourcing_again_changes_nothing(self):
+        once = self.path_after("/usr/bin:/bin")
+        self.assertEqual(self.path_after("/usr/bin:/bin", times=3), once)
+        self.assert_front(once)
+
+    def test_non_interactive_bash_gets_it_through_bash_env(self):
+        self.assert_front(self.path_after("/usr/bin:/bin", bash_env=True))
+
 if __name__ == "__main__":
     unittest.main()

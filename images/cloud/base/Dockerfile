@@ -49,6 +49,10 @@ done
 jq -s '.[0] * .[1]' "$shared/claude/settings.json" "$cloud/base/claude/settings.json" >"$HOME/.claude/settings.json"
 install -m 644 "$cloud/base/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
 sudo install -m 644 "$cloud/base/profile.sh" /etc/profile.d/agent-images.sh
+# Interactive shells that aren't login shells read only ~/.bashrc, so it sources
+# the profile too, above Ubuntu's early return for non-interactive shells.
+{ printf '# agent-images: PATH, scratch and caches (images/cloud/base/profile.sh)\n. /etc/profile.d/agent-images.sh\n\n'; cat "$HOME/.bashrc"; } >"$HOME/.bashrc.new"
+mv "$HOME/.bashrc.new" "$HOME/.bashrc"
 sudo install -m 755 "$cloud/entrypoint.sh" /usr/local/bin/agent-cloud-entrypoint
 # Mount points: Cloud Run mounts over them; a local docker volume (make
 # cloud-smoke) takes their owner, so the session user can write scratch and outputs.
@@ -57,6 +61,9 @@ sudo install -d -m 755 /mnt/datasets
 SCRIPT
 
 # profile.sh's PATH: Homebrew (and rustup's proxies) ahead of the system.
+# Non-interactive bash (`bash -c`, scripts) reads neither profile nor bashrc,
+# only BASH_ENV.
+ENV BASH_ENV=/etc/profile.d/agent-images.sh
 ENV PATH=/home/ubuntu/bin:/home/ubuntu/.local/bin:/home/linuxbrew/.linuxbrew/opt/rustup/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Claude Code with its native installer (~/.local/bin/claude): an exact version,
