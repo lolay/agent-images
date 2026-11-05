@@ -33,11 +33,24 @@ scipy = "*"
 matplotlib = "*"
 requests = "*"
 
-# Pinned on breakage (specs/gcp.md, "Pinning a dependency"), 2026-11-05:
-# conda-forge's newest builds disagree. tiledb 2.30.1 (and PDAL 2.10.2's TileDB
-# plugin with it) links libaws-c-s3.so.1.1, while hdf5 2.2 and aws-crt-cpp hold
-# aws-c-s3 below 1.1, and PDAL 2.10.2's HDF plugins need hdf5 2.x: no set
-# satisfies both, and `import pdal` printed load errors for whichever plugin lost.
-# tiledb below 2.30.1 solves to builds that agree (PDAL 2.10.0, hdf5 1.14).
-# Remove it when an unpinned solve passes the gis bindings check.
-tiledb = "<2.30.1"
+# Cloud-native formats and scale: GeoParquet and Arrow (DuckDB's spatial
+# extension and geopandas read and write them), Zarr and Dask for arrays and
+# frames bigger than memory, STAC search loaded straight into xarray.
+pyarrow = "*"
+geoarrow-pyarrow = "*"
+polars = "*"
+zarr = "*"
+dask = "*"
+dask-geopandas = "*"
+odc-stac = "*"
+planetary-computer = "*"
+rio-cogeo = "*"
+# Point clouds as COPC (cloud-optimized LAZ), which PDAL reads; untwine writes it.
+untwine = "*"
+# Web maps and indexing: vector tiles (tippecanoe), PMTiles archives, H3 hexagons,
+# OpenStreetMap extracts.
+tippecanoe = "*"
+pmtiles = "*"
+h3-py = "*"
+osmium-tool = "*"
+pyosmium = "*"

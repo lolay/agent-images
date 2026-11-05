@@ -230,10 +230,14 @@ Steps for [gcp.md](gcp.md) m2, ahead of `gis` and `android`:
 - s6: `gis` on toolsets, as in the m2 plan, and the cloud images restructured
   around it (Build wiring, above). The `gis` environment's activation is recorded as
   static exports from `pixi shell-hook --json`: the hook's own script sources
-  completion files that fail under the entrypoint's `set -u`. One pin, on breakage:
-  `tiledb < 2.30.1` in `gis/pixi.toml`. conda-forge's newest TileDB, HDF5 and AWS
-  builds disagree on `aws-c-s3`, so some PDAL plugin always failed to load; the pin
-  costs PDAL 2.10.0 instead of 2.10.2. The `gis` smoke check fails if an import
-  prints errors, so the next unpinned solve says when it can go.
+  completion files that fail under the entrypoint's `set -u`. No pins: when
+  conda-forge's newest builds disagree (2026-11-05: GDAL's and PDAL's TileDB
+  plugins and QGIS's MDAL provider link library versions the rest of the solve
+  doesn't have), the build drops the plugins that can't load and lists them in
+  `/opt/gis/dropped-plugins.txt`, rather than pin everything back a release (a
+  `tiledb` pin cost QGIS 4 for 3.44, GDAL 3.13 for 3.12). The smoke check reports
+  the count, and once the builds agree nothing is dropped. The environment also
+  carries the cloud-native stack: GeoParquet and Arrow, polars, Zarr, Dask,
+  odc-stac, COPC through untwine, tippecanoe and PMTiles, H3, osmium.
 
 `linux-gpu` and `3d-gpu` follow in m3 on the same structure.

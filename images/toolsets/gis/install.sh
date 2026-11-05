@@ -21,6 +21,22 @@ log "solving and installing $root/pixi.toml from conda-forge"
 # pixi reports progress on stderr, which a green build doesn't allow.
 pixi install --manifest-path "$root/pixi.toml" 2>&1
 
+# Plugins whose libraries don't resolve are dropped and listed in
+# dropped-plugins.txt. conda-forge's builds don't always agree (2026-11-05: the
+# TileDB plugins of GDAL and PDAL link an aws-c-s3 newer than hdf5 and
+# aws-crt-cpp allow, and QGIS's MDAL provider an older hdf5), and a plugin that
+# can't load makes PDAL print errors on every import. Dropping them keeps every
+# other package at its newest; when the builds agree, nothing is dropped.
+: >"$root/dropped-plugins.txt"
+for plugin in "$env"/lib/libpdal_plugin_*.so "$env"/lib/gdalplugins/*.so "$env"/lib/qgis/plugins/*.so; do
+	[[ -f "$plugin" && ! -L "$plugin" ]] || continue
+	missing="$(LD_LIBRARY_PATH="$env/lib" ldd "$plugin" 2>/dev/null | awk '/not found/ {print $1}' | sort -u | paste -sd ' ')"
+	[[ -n "$missing" ]] || continue
+	log "dropping ${plugin#"$env"/}: missing $missing"
+	printf '%s: missing %s\n' "${plugin#"$env"/}" "$missing" >>"$root/dropped-plugins.txt"
+	rm -f "$plugin" "${plugin%.so}".so.*
+done
+
 # The activated environment as plain exports: what pixi shell-hook --json
 # reports, from a minimal environment, less what that environment already had,
 # PATH (gis.path covers it) and pixi's own shell state. Static values, so every
