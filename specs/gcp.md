@@ -79,12 +79,22 @@ build parents, `agent-base` and `agent-base-gpu`, aren't types and never deploy 
 their own. (`agent-linux` here is a Cloud Run image; the Linux host's LXD alias of
 the same name is the Android image, and would be clearer renamed `agent-android`.)
 
-**One worker pool for all orchestrators.** An orchestrator serves one environment,
-but it's a small stateless process. Instead of a worker pool per type, one pool (one
-instance, no GPU) runs a supervisor that starts an orchestrator per
+**One host for all orchestrators, one orchestrator per type.** An orchestrator
+registers with one environment's secret, so it serves exactly one type; there's no
+single orchestrator for all of GCP. But each is a small stateless polling process, so
+one always-on instance runs them all: a supervisor starts an orchestrator per
 `infra/gcp/*.env` file, each with its own secret, hooks directory and `RUNNER_TYPE`.
 Adding a type is a new env file, a new image directory and a new environment in
 claude.ai; the push to `main` deploys it.
+
+**Standbys can be zero; orchestrators can't.** `--min-idle 0` (the default) keeps no
+runner waiting: a runner starts only when a session queues, and the session waits for
+the cold start (image pull and boot, minutes for a large GPU image). That's the
+setting for every `-gpu` type, and for any type where a wait is fine. The
+orchestrators themselves must stay up: they poll Anthropic for work, and nothing
+calls in, so with none running, sessions sit in the queue. The host is the one fixed
+cost: one Cloud Run worker pool instance, or a Compute Engine `e2-micro`, which is in
+GCP's free tier in `us-central1` and holds a few orchestrators in its 1 GB.
 
 **Choosing by repo instead (not proposed).** The hook gets
 `CLAUDE_RUNNER_PRIMARY_REPO_URL`, so one environment could pick the image from the
