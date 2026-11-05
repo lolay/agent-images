@@ -135,7 +135,8 @@ non-secret values are committed, Terraform stays the source):
 `PROJECT_ID`, `PROJECT_NUMBER`, `REGION`, `ZONE`, `ARTIFACT_REGISTRY`
 (`us-central1-docker.pkg.dev/lolay-agents/agent-images`), `WIF_PROVIDER` (full
 resource name), `CI_SERVICE_ACCOUNT`, `ORCHESTRATOR_SERVICE_ACCOUNT`,
-`RUNNER_SERVICE_ACCOUNT`, `ORDER_BUCKET`, `ORCHESTRATOR_INSTANCE`.
+`RUNNER_SERVICE_ACCOUNT`, `ORDER_BUCKET`, `ORCHESTRATOR_INSTANCE`, `NETWORK`,
+`SUBNET` (for the `android` VMs and Packer's build VM).
 
 ## Not in this repo (on purpose)
 
@@ -145,8 +146,10 @@ resource name), `CI_SERVICE_ACCOUNT`, `ORCHESTRATOR_SERVICE_ACCOUNT`,
 - The GitHub side (the lock-bot App, the `production` and `lock-bot` environments,
   the `main` ruleset): GitHub's own settings. The `integrations/github` provider could
   manage the environments and ruleset later; the App itself is created by hand.
-- The Android runner's Compute Engine template: later, if the GCP Android path
-  happens at all.
+- The `android` runner VMs and their image: agent-images' hook creates each VM from
+  the `agent-android` image family with settings from its own `infra/gcp/android.env`,
+  and its CI builds the image with Packer. Terraform supplies the network, NAT, IAP
+  rule and permissions they use.
 
 ## Open decisions for Gary
 
