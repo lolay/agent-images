@@ -81,6 +81,9 @@ prepare_scratch() {
 
 smoke() {
 	local failed=0
+	# check runs each probe inside an `if`, which turns errexit off for it, so a
+	# probe's steps must be chained (`|| return 1`): only the last command decides
+	# otherwise.
 	check() {
 		local name="$1"
 		shift
@@ -104,24 +107,32 @@ smoke() {
 			echo "tmpfs: in memory"
 			return 1
 		}
-		prepare_scratch >/dev/null
-		dd if=/dev/zero of="$TMPDIR/smoke" bs=1M count=64 status=none
-		rm -f "$TMPDIR/smoke"
+		prepare_scratch >/dev/null || return 1
+		dd if=/dev/zero of="$TMPDIR/smoke" bs=1M count=64 status=none || {
+			rm -f "$TMPDIR/smoke"
+			echo "can't write $TMPDIR/smoke"
+			return 1
+		}
+		rm -f "$TMPDIR/smoke" || return 1
 		printf '%s, %s free' "$fstype" "$(df -h --output=avail "$AGENT_SCRATCH" | tail -n 1 | tr -d ' ')"
 	}
 	# shellcheck disable=SC2317,SC2329 # called through check
 	outputs_round_trip() {
 		local dir="$AGENT_OUTPUTS_ROOT/_smoke" file
 		file="$dir/${CLOUD_RUN_EXECUTION:-local}-$$"
-		mkdir -p "$dir"
-		printf 'smoke\n' >"$file"
-		[[ "$(cat "$file")" == "smoke" ]]
-		rm -f "$file"
+		mkdir -p "$dir" && printf 'smoke\n' >"$file" && [[ "$(cat "$file")" == "smoke" ]] || {
+			echo "can't write, then read $file"
+			return 1
+		}
+		rm -f "$file" || return 1
 		echo "wrote, read and deleted $file"
 	}
 	# shellcheck disable=SC2317,SC2329 # called through check
 	datasets_read_only() {
-		ls "$AGENT_DATASETS" >/dev/null
+		ls "$AGENT_DATASETS" >/dev/null || {
+			echo "can't list $AGENT_DATASETS"
+			return 1
+		}
 		if touch "$AGENT_DATASETS/.smoke-write" 2>/dev/null; then
 			rm -f "$AGENT_DATASETS/.smoke-write"
 			echo "a write succeeded"
