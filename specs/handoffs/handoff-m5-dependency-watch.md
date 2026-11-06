@@ -3,9 +3,9 @@
 Written 2026-11-06, at the end of m4. The design is [specs/gcp.md](../gcp.md)
 "m5 - Dependency watch"; m4's design and results are just above it.
 
-Review: pending, after m4's PR (lolay/agent-images#48) merges. Run an incremental
-review of `main` from r1's anchor first (`specs/reviews/`), and fold its high
-findings into m5's plan.
+Review: r2 (`specs/reviews/2026-11-06-r2-incremental.md`, lolay/agent-images#50)
+found nothing high. Its medium and decisions are folded into the plan,
+[plan-m5-sextant.md](plan-m5-sextant.md).
 
 ## What m4 gives m5
 
@@ -23,17 +23,14 @@ findings into m5's plan.
 
 ## Still open from m4 (shown only from `main`)
 
-- The first deploy's `-next` smoke lines in Cloud Run (linux, gis). The smoke
-  execution now has `--task-timeout=1800s` (r1.f8).
-- The android binary checks and smoke tests on the smoke VM. android-go and
-  android-rust have never run anywhere, and the android versions report appears
-  in the Packer log. Expect them at the next weekly android deploy (Sunday 05:37
-  Pacific), or start one with a manual `cloud-deploy` dispatch with targets
-  `android` (about 45 min, $0.50).
+m4's first deploy (run 42283134638) showed `-next` passing in Cloud Run for
+`linux` and `gis`, and every android binary check and smoke test on the smoke VM,
+android-go and android-rust included (gcp.md, "m4 results"). Left:
+
 - gpu's live smoke test, once `linux-gpu`'s quota lands and `DEPLOY=false` goes
   (lolay/agent-images#47).
 
-If any of these fails, the `/agent-toolset-checks` skill in a session on that image
+If it fails, the `/agent-toolset-checks` skill in a session on that image
 reruns it and offers to file an issue.
 
 ## Gotchas

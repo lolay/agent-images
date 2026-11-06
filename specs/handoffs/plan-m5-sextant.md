@@ -1,6 +1,7 @@
 # Plan: m5, the dependency watch
 
-Status: planned 2026-11-06, waiting on Gary's review. Nothing built yet.
+Status: approved as written (owner, 2026-11-06), D1 to D9 as recommended, and the
+draft PR for s4. s1 done.
 Branch `claude/admiring-bell-0c7a1d` (assigned by the harness), from `main` at
 `ba55d96`.
 
@@ -126,7 +127,7 @@ Makefile and the watch all call it. Nothing else parses the lock.
 
 ### Group 1 `[exec]`: groundwork and the gate
 
-#### s1 - Record m4's leftovers `[fast]`
+#### s1 - Record m4's leftovers `[fast]` (done)
 
 Add the run 42283134638 lines to gcp.md's "m4 results" (the android smoke VM's
 checks and smoke tests, and `-next` passing and promoting for `linux` and `gis`).

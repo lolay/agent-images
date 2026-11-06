@@ -1219,14 +1219,17 @@ Pull request lolay/agent-images#48, 2026-11-06.
 - **The first run found two faults.** `make cloud-smoke` had never run in CI, and
   Docker refuses a read-only anonymous volume, so datasets is now a read-only tmpfs.
   `Xvfb -version` prints no version line, so its binary check is now `command -v`.
-- **Not yet shown; they run only from `main`:**
-  - the `-next` lines in Cloud Run, at the first deploy;
-  - the android binary checks and smoke tests (android-go and android-rust run for
-    the first time) on the smoke VM, at the next weekly deploy or a manual
-    `cloud-deploy` dispatch with `android`;
-  - the deploy summary's report;
-  - gpu's live smoke test, which waits on `linux-gpu`'s quota (`DEPLOY=false`) or a
-    session on an L4.
+- **The first deploy from `main`** (run 42283134638, 36 min, green) showed the rest
+  but one:
+  - `-next` in Cloud Run: `linux`'s smoke execution (`agent-linux-next-qsbv7`)
+    and `gis`'s passed, and both were promoted.
+  - The android smoke VM ran every binary check and smoke test, android-go and
+    android-rust for the first time (a cgo hello and a cargo-ndk cdylib for
+    arm64), then booted the emulator in 27.3 s cold and 6.2 s warm (API 37,
+    x86_64).
+  - Each Cloud Run type's report is in the deploy summary and kept as an artifact.
+  - Not yet shown: gpu's live smoke test, which waits on `linux-gpu`'s quota
+    (`DEPLOY=false`) or a session on an L4.
 
 ### m5 - Dependency watch
 
