@@ -1198,6 +1198,36 @@ shows the same lines at `-next` in Cloud Run, and the next `android` deploy (or 
 manual dispatch of it) shows the android binary checks and smoke tests on its smoke
 VM. Results go under this milestone.
 
+#### m4 results
+
+Pull request lolay/agent-images#48, 2026-11-06.
+
+- **The pull request check.** Every runner type is loaded and smoked on a hosted
+  runner. After `--load`, 95 GB was free for `linux`, 89 GB for `gis` and 78 GB for
+  `linux-gpu` (13.8 GB of images and 16.5 GB of build cache), so no type needs the
+  no-output build. Job times: `linux` 9 min, `gis` 10.5 min, `linux-gpu` 14 min,
+  `orchestrator` 2 min.
+- **The smoke in the image** takes 7 s on `linux` (go's smoke test is the slowest,
+  at 4.6 s) and 8 s on `gis`. Every binary check passes at build time and on the
+  hosted runner. `linux-gpu` shows `skip smoke-gpu (live only: needs a GPU)`.
+- **A failing smoke test turns the check red and names itself.** A scratch commit
+  with `exit 1` in go's test turned `build (linux)` red with `smoke: FAIL smoke-go`.
+  Every other check still ran and passed, and the versions report still uploaded.
+- **The versions report** for `linux` is about 500 lines: 33 binary checks, 68
+  Homebrew formulae with dependencies, and 370 apt packages. It's in each run's
+  summary and kept as an artifact for 90 days.
+- **The first run found two faults.** `make cloud-smoke` had never run in CI, and
+  Docker refuses a read-only anonymous volume, so datasets is now a read-only tmpfs.
+  `Xvfb -version` prints no version line, so its binary check is now `command -v`.
+- **Not yet shown; they run only from `main`:**
+  - the `-next` lines in Cloud Run, at the first deploy;
+  - the android binary checks and smoke tests (android-go and android-rust run for
+    the first time) on the smoke VM, at the next weekly deploy or a manual
+    `cloud-deploy` dispatch with `android`;
+  - the deploy summary's report;
+  - gpu's live smoke test, which waits on `linux-gpu`'s quota (`DEPLOY=false`) or a
+    session on an L4.
+
 ### m5 - Dependency watch
 
 The lock files (Homebrew recorded, never pinned; the base digest, the apt snapshot,
@@ -1207,6 +1237,8 @@ narrowed lock bot, the scheduled rebuilds building from the lock, the cleanup po
 out of dry run, and `make cloud-lock`; with the watch in place, turn off Claude's
 self-update at start (`CLAUDE_UPGRADE=false`) on the `nightly` types only
 ([Rebuild cadence](#rebuild-cadence)). The schedules themselves already run. Needs m4.
+
+- Handoff: [handoffs/handoff-m5-dependency-watch.md](handoffs/handoff-m5-dependency-watch.md).
 
 ## Open items
 
