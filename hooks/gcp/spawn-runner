@@ -173,31 +173,15 @@ create_instance() {
 	instance="${instance%-}"
 	zone_url="$GCP_COMPUTE_URL/compute/v1/projects/$PROJECT_ID/zones/$ZONE"
 	gcp_call "$token" POST "$zone_url/instances" - < <(
-		jq -cn --rawfile order "$CLAUDE_RUNNER_WORK_ORDER_FILE" --arg runner_env "$(runner_env)" \
-			--arg name "$instance" --arg type "$RUNNER_TYPE" --arg order_label "${safe_order:0:63}" \
-			--arg project "$PROJECT_ID" --arg zone "$ZONE" --arg machine "$MACHINE_TYPE" \
-			--arg family "$IMAGE_FAMILY" --arg disk_gb "$DISK_GB" --arg disk_type "$DISK_TYPE" \
-			--arg network "$NETWORK" --arg subnet "$SUBNET" --arg account "$RUNNER_SERVICE_ACCOUNT" \
-			--arg max_run "$MAX_RUN_DURATION_SEC" '
-			{
-				name: $name,
-				machineType: "zones/\($zone)/machineTypes/\($machine)",
-				labels: {"managed-by": "agent-images", "agent-images-type": $type, "agent-images-order": $order_label},
-				disks: [{boot: true, autoDelete: true, initializeParams: {
-					sourceImage: "projects/\($project)/global/images/family/\($family)",
-					diskSizeGb: $disk_gb, diskType: "zones/\($zone)/diskTypes/\($disk_type)"}}],
-				networkInterfaces: [{network: $network, subnetwork: $subnet}],
-				serviceAccounts: [{email: $account, scopes: ["https://www.googleapis.com/auth/cloud-platform"]}],
-				advancedMachineFeatures: {enableNestedVirtualization: true},
-				scheduling: {provisioningModel: "STANDARD", automaticRestart: false,
-					maxRunDuration: {seconds: $max_run}, instanceTerminationAction: "DELETE"},
-				metadata: {items: [
+		gcp_instance_body "$instance" "projects/$PROJECT_ID/global/images/family/$IMAGE_FAMILY" \
+			"$RUNNER_TYPE" "$MAX_RUN_DURATION_SEC" "$RUNNER_SERVICE_ACCOUNT" |
+			jq -c --rawfile order "$CLAUDE_RUNNER_WORK_ORDER_FILE" --arg runner_env "$(runner_env)" \
+				--arg order_label "${safe_order:0:63}" '
+				.labels["agent-images-order"] = $order_label
+				| .metadata.items = [
 					{key: "work-order", value: ($order | rtrimstr("\n"))},
-					{key: "runner-env", value: $runner_env},
-					{key: "enable-guest-attributes", value: "TRUE"},
-					{key: "serial-port-logging-enable", value: "TRUE"}
-				]}
-			}'
+					{key: "runner-env", value: $runner_env}
+				] + .metadata.items'
 	)
 	case "$GCP_STATUS" in
 	2*) ;;

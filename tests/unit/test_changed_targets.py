@@ -89,7 +89,7 @@ class ChangedTargetsTests(unittest.TestCase):
         return self.targets()
 
     def test_docs_deploy_nothing(self):
-        self.assertEqual(self.change("specs/gcp.md"), {"types": [], "orchestrator": False, "prune": False})
+        self.assertEqual(self.change("specs/gcp.md"), {"types": [], "vms": [], "orchestrator": False, "prune": False})
 
     def test_shared_files_rebuild_every_type(self):
         result = self.change("images/shared/agent-runner.sh")
@@ -124,7 +124,7 @@ class ChangedTargetsTests(unittest.TestCase):
     def test_a_toolset_no_cloud_type_installs_deploys_nothing(self):
         self.assertEqual(
             self.change("images/toolsets/android/packages.txt"),
-            {"types": [], "orchestrator": False, "prune": False},
+            {"types": [], "vms": [], "orchestrator": False, "prune": False},
         )
 
     def test_the_toolset_scripts_rebuild_every_type(self):
@@ -135,13 +135,13 @@ class ChangedTargetsTests(unittest.TestCase):
 
     def test_the_android_images_toolset_list_deploys_nothing(self):
         self.assertEqual(
-            self.change("images/android/toolsets.txt"), {"types": [], "orchestrator": False, "prune": False}
+            self.change("images/android/toolsets.txt"), {"types": [], "vms": [], "orchestrator": False, "prune": False}
         )
 
     def test_a_types_directory_rebuilds_only_it(self):
         result = self.change("images/cloud/linux/Dockerfile")
         self.assertEqual(
-            result, {"types": [{"type": "linux", "build": True}], "orchestrator": False, "prune": False}
+            result, {"types": [{"type": "linux", "build": True}], "vms": [], "orchestrator": False, "prune": False}
         )
 
     def test_a_build_parent_rebuilds_its_children_up_the_chain(self):
@@ -158,7 +158,7 @@ class ChangedTargetsTests(unittest.TestCase):
     def test_an_env_file_rewrites_the_job_and_the_orchestrator(self):
         result = self.change("infra/gcp/linux.env")
         self.assertEqual(
-            result, {"types": [{"type": "linux", "build": False}], "orchestrator": True, "prune": False}
+            result, {"types": [{"type": "linux", "build": False}], "vms": [], "orchestrator": True, "prune": False}
         )
 
     def test_project_env_redeploys_everything(self):
@@ -168,7 +168,7 @@ class ChangedTargetsTests(unittest.TestCase):
         self.assertTrue(result["orchestrator"])
 
     def test_the_hook_redeploys_the_orchestrator_only(self):
-        self.assertEqual(self.change("hooks/gcp/spawn-runner"), {"types": [], "orchestrator": True, "prune": False})
+        self.assertEqual(self.change("hooks/gcp/spawn-runner"), {"types": [], "vms": [], "orchestrator": True, "prune": False})
 
     def test_the_job_spec_rewrites_every_job(self):
         result = self.change("scripts/cloud/job-spec.sh")
@@ -189,6 +189,7 @@ class ChangedTargetsTests(unittest.TestCase):
             result,
             {
                 "types": [{"type": "linux", "build": True}, {"type": "linux-gpu", "build": True}],
+                "vms": [],
                 "orchestrator": True,
                 "prune": True,
             },
@@ -201,6 +202,80 @@ class ChangedTargetsTests(unittest.TestCase):
         self.assertTrue(result["prune"])
         self.assertTrue(result["orchestrator"])
         self.assertEqual(result["types"], [])
+
+
+class ComputeTypeTests(ChangedTargetsTests):
+    """With a Compute Engine type (BACKEND=compute): android, built by Packer from images/android."""
+
+    def setUp(self):
+        super().setUp()
+        self.write("infra/gcp/android.env", "BACKEND=compute\nMACHINE_TYPE=n2-standard-8\n")
+        self.write("images/android/toolsets.txt", "# a comment\ncore\nandroid  # the SDK\n")
+        self.write("images/android/gce/build.pkr.hcl", "build {}\n")
+        self.write("images/android/scripts/setup-user.sh", "#!/bin/bash\n")
+        self.commit("android")
+        self.base = self.head()
+
+    ANDROID = [{"type": "android"}]
+
+    def test_shared_files_rebuild_every_type(self):
+        result = self.change("images/shared/agent-runner.sh")
+        self.assertEqual(len(result["types"]), 2)
+        self.assertEqual(result["vms"], self.ANDROID)
+
+    def test_its_own_directory_rebuilds_its_image_only(self):
+        for name in ("images/android/gce/build.pkr.hcl", "images/android/scripts/setup-user.sh",
+                     "images/android/toolsets.txt"):
+            with self.subTest(name=name):
+                self.assertEqual(
+                    self.change(name), {"types": [], "vms": self.ANDROID, "orchestrator": False, "prune": False}
+                )
+                self.base = self.head()
+
+    def test_its_toolsets_rebuild_it(self):
+        self.assertEqual(self.change("images/toolsets/android/packages.txt")["vms"], self.ANDROID)
+        self.base = self.head()
+        result = self.change("images/toolsets/core/packages.txt")
+        self.assertEqual(result["vms"], self.ANDROID)
+        self.assertEqual(len(result["types"]), 2)
+
+    def test_a_toolset_it_does_not_install_leaves_it(self):
+        result = self.change("images/toolsets/go/Brewfile")
+        self.assertEqual(result["types"], [{"type": "linux", "build": True}])
+        self.assertEqual(result["vms"], [])
+
+    def test_the_cloud_run_images_leave_it(self):
+        for name in ("images/cloud/runner/Dockerfile", "images/cloud/entrypoint.sh", "scripts/cloud/job-spec.sh"):
+            with self.subTest(name=name):
+                self.assertEqual(self.change(name)["vms"], [])
+                self.base = self.head()
+
+    def test_its_env_file_redeploys_the_orchestrator_only(self):
+        self.assertEqual(
+            self.change("infra/gcp/android.env"), {"types": [], "vms": [], "orchestrator": True, "prune": False}
+        )
+
+    def test_project_env_redeploys_everything(self):
+        result = self.change("infra/gcp/project.env")
+        self.assertEqual(len(result["types"]), 2)
+        self.assertEqual(result["vms"], self.ANDROID)
+
+    def test_all(self):
+        result = self.targets("--all")
+        self.assertEqual(result["vms"], self.ANDROID)
+        self.assertNotIn("android", [entry["type"] for entry in result["types"]])
+
+    # Inherited ones whose fixture now includes android's toolsets.
+    def test_a_toolset_no_cloud_type_installs_deploys_nothing(self):
+        self.assertEqual(self.change("images/toolsets/display/packages.txt")["vms"], [])
+
+    @unittest.skip("with android as a compute type it rebuilds android; test_its_own_directory_rebuilds_its_image_only")
+    def test_the_android_images_toolset_list_deploys_nothing(self):
+        pass
+
+    def test_no_usable_base_means_everything(self):
+        result = self.targets("", self.head())
+        self.assertEqual(result["vms"], self.ANDROID)
 
 
 if __name__ == "__main__":

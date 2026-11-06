@@ -1,6 +1,6 @@
 # Plan: m2, `android` on Compute Engine
 
-Status: s1 to s4 done; s2 to s6 approved 2026-11-06 (no GCP spend), s7 waits for a second go.
+Status: s1 to s5 done; s2 to s6 approved 2026-11-06 (no GCP spend), s7 waits for a second go.
 Branch `claude/youthful-dijkstra-09v7kk` (assigned by the harness), cut
 from `main` at `ecc54c2`, after lolay/agent-images#18, #19 and #20.
 
@@ -31,7 +31,7 @@ supervisor reaper, every 60 s:
   remove the work-order key from instances whose guest attribute says read
 ```
 
-Deploy, on `main` only: `changed-targets.sh` marks `android` as `backend: compute`;
+Deploy, on `main` only: `changed-targets.sh` lists `android` under `vms`;
 a new `vm-images` job runs Packer (image `agent-android-<date>-<sha>` in family
 `agent-android-next`), boots a smoke VM from it, then patches its family to
 `agent-android` (images.patch accepts `family`) and deletes the older images in
@@ -123,9 +123,12 @@ both families, keeping one.
   stall the loop beyond its `--max-time`.
 - Tests in `test_supervisor.py`.
 
-#### s5 - Deploy wiring [deep]
+#### s5 - Deploy wiring [deep] (done)
 
-- `changed-targets.sh`: each entry gains `backend`. A compute type's image paths are
+- `changed-targets.sh`: `types` stays the Cloud Run list as it was, and a new
+  `vms` list names the compute types whose image needs a build (kept apart rather
+  than a `backend` field on every entry, so the existing contract and tests didn't
+  change shape). A compute type's image paths are
   `images/android/**`, `images/shared/**`, the two toolset scripts, and the toolsets
   in `images/android/toolsets.txt`; its env file alone rebuilds nothing (the hook
   reads it, so the orchestrator redeploys, as today).

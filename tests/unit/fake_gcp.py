@@ -270,7 +270,15 @@ def route_compute(state: State, request: Request):
 
     if rest[:1] == ["images"]:
         if len(rest) == 1 and request.method == "GET":
-            return 200, {"items": list(state.images.values())} if state.images else {}
+            wanted = request.query.get("filter", "")
+            items = [i for i in state.images.values() if all(
+                term in _filter_terms(i) for term in wanted.split(" AND ") if term)]
+            return 200, {"items": items} if items else {}
+        if rest[1] == "family" and request.method == "GET":
+            family = [i for i in state.images.values() if i.get("family") == rest[2]]
+            if not family:
+                return 404, {"error": {"message": f"no image in family {rest[2]}"}}
+            return 200, sorted(family, key=lambda i: i.get("creationTimestamp", ""))[-1]
         name = rest[1]
         if name not in state.images:
             return 404, {"error": {"message": f"image {name} not found"}}
