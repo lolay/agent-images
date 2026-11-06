@@ -14,7 +14,7 @@ Researched 2026-09-28 from Anthropic's cloud and self-hosted environment docs.
 | Environment variables (`.env` on the environment) | No: "Every member's sessions in a shared environment read its variables, so don't include secrets in them" | Non-secret `KEY=value` lines in `vms/<vm>.env`. `vm-configure` writes them into `runner.env`, which `agent-runner` exports, and sessions inherit the runner's environment |
 | Setup script | No | The image's Brewfile; sessions can `brew install` more, discarded with the VM |
 | GitHub proxy | Git only | `--use-anthropic-git-proxy` (on by default) |
-| API credentials (a key the proxy attaches; sessions never see it) | Yes | None. Pro and Max only, not Team or Enterprise, and "a self-hosted environment doesn't have API credentials" |
+| Network secrets (a key the proxy attaches to requests for listed hosts; sessions never see it) | Yes | None. Pro, Max, Ultra, Team and Enterprise as of 2026-11-06 (earlier, Pro and Max only), and "a self-hosted environment doesn't have network secrets" |
 
 Self-hosted environments carry neither environment variables nor a setup script from
 the admin page; tooling goes in the runner image. Anthropic's guidance for credentials
