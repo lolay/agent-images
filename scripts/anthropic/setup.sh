@@ -67,14 +67,47 @@ cat >/opt/agent-images/bin/brew <<EOF
 exec sudo -u $user -H /home/linuxbrew/.linuxbrew/bin/brew "\$@"
 EOF
 chmod 755 /opt/agent-images/bin/brew
-cat >/etc/profile.d/zz-agent-images.sh <<'EOF'
+# The toolchains the user installed are the ones root's sessions use:
+# Anthropic sets RUSTUP_HOME=/root/.rustup, which would send Homebrew's rustup
+# to root's older toolchain, and tenv keeps its selected Terraform per user.
+cat >/etc/profile.d/zz-agent-images.sh <<EOF
 # agent-images toolsets (scripts/anthropic/setup.sh): Homebrew's tools ahead of
-# the image's own runtimes, as in agent-linux.
+# the image's own runtimes, as in agent-linux. Sourced by login shells, root's
+# ~/.bashrc and, through a SessionStart hook, every Bash tool command.
 export HOMEBREW_PREFIX=/home/linuxbrew/.linuxbrew HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_ENV_HINTS=1
-export PATH="/opt/agent-images/bin:$HOMEBREW_PREFIX/opt/rustup/bin:$HOMEBREW_PREFIX/bin:$HOMEBREW_PREFIX/sbin:$PATH"
+export RUSTUP_HOME=/home/$user/.rustup TENV_ROOT=/home/$user/.tenv TENV_AUTO_INSTALL=true
+case ":\$PATH:" in
+*":/opt/agent-images/bin:"*) ;;
+*) export PATH="/opt/agent-images/bin:\$HOMEBREW_PREFIX/opt/rustup/bin:\$HOMEBREW_PREFIX/bin:\$HOMEBREW_PREFIX/sbin:\$PATH" ;;
+esac
 EOF
-# Non-login shells read ~/.bashrc only.
+# Interactive shells that aren't login shells read ~/.bashrc only.
 grep -qF zz-agent-images.sh /root/.bashrc ||
 	printf '\n. /etc/profile.d/zz-agent-images.sh\n' >>/root/.bashrc
+
+# Claude Code's Bash tool reads neither: its shell snapshot ends by exporting
+# Claude Code's own PATH. A SessionStart hook can add to a session's
+# environment through CLAUDE_ENV_FILE, which every Bash tool command sources, so
+# root's user settings get one that sources the profile fragment. Anthropic's
+# own hooks are in launcher-settings.json, not here.
+install -d -m 755 /opt/agent-images/libexec
+cat >/opt/agent-images/libexec/session-env <<'EOF'
+#!/bin/sh
+# SessionStart hook (scripts/anthropic/setup.sh): every Bash tool command
+# sources the agent-images profile fragment.
+cat >/dev/null
+[ -n "${CLAUDE_ENV_FILE:-}" ] || exit 0
+grep -qF zz-agent-images.sh "$CLAUDE_ENV_FILE" 2>/dev/null ||
+	printf '. /etc/profile.d/zz-agent-images.sh\n' >>"$CLAUDE_ENV_FILE"
+EOF
+chmod 755 /opt/agent-images/libexec/session-env
+settings=/root/.claude/settings.json
+install -d -m 755 /root/.claude
+[[ -s "$settings" ]] || printf '{}\n' >"$settings"
+jq '.hooks.SessionStart = ((.hooks.SessionStart // [])
+	| map(select(any(.hooks[]?; .command == "/opt/agent-images/libexec/session-env") | not))
+	+ [{hooks: [{type: "command", command: "/opt/agent-images/libexec/session-env"}]}])' \
+	"$settings" >"$settings.new"
+mv "$settings.new" "$settings"
 
 mark setup end "$(now)"

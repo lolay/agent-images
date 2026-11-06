@@ -215,7 +215,7 @@ agent-images must be one of the session's repositories:
 bash agent-images/scripts/anthropic/setup.sh
 ```
 
-Two things differ from `agent-linux`, both forced by Anthropic's image:
+Four things differ from `agent-linux`, all forced by Anthropic's image:
 
 - **Homebrew belongs to `ubuntu`, not root.** Homebrew won't run as root outside a
   container it recognizes (`/.dockerenv`, `/run/.containerenv`, or a docker or
@@ -224,6 +224,29 @@ Two things differ from `agent-linux`, both forced by Anthropic's image:
 - **The proxy's CA variables aren't passed to `ubuntu`.** `SSL_CERT_FILE` and the
   rest name `/root/.ccr/ca-bundle.crt`, which `ubuntu` can't read (curl exits 77).
   The system store has the proxy's CA already, so Homebrew works without them.
+- **Root uses `ubuntu`'s Rust and Terraform.** Anthropic sets
+  `RUSTUP_HOME=/root/.rustup`, which sends Homebrew's rustup to root's older
+  toolchain (1.97 against 1.99), and tenv keeps the selected Terraform per user,
+  so root had none. `/etc/profile.d/zz-agent-images.sh` sets `RUSTUP_HOME` and
+  `TENV_ROOT` to `ubuntu`'s.
+- **A SessionStart hook carries PATH into the Bash tool.** Claude Code's shell
+  snapshot ends by exporting Claude Code's own PATH, so neither `/etc/profile.d`
+  nor `~/.bashrc` reaches the commands a session runs. The script adds a
+  SessionStart hook to `/root/.claude/settings.json` (Anthropic's own hooks are
+  in `launcher-settings.json`) that appends `. /etc/profile.d/zz-agent-images.sh`
+  to `$CLAUDE_ENV_FILE`, which every Bash tool command sources.
+
+The 2026-11-06 report from a cached session, before the last two existed: the
+sudoers drop-in, the `brew` wrapper and the profile fragment were in place,
+`brew install hello` worked as root in 9.3 s with the files owned by `ubuntu`, and
+login and interactive shells had every `agent-linux` tool at `agent-linux`'s
+version. The Bash tool's shell had Anthropic's PATH: eight smoke checks failed
+there (sops, actionlint, shellcheck, pre-commit, protoc, buf, grpcurl,
+terraform), Rust was root's 1.97, and Terraform failed as root. Both fixes were
+checked here by hand (root running the user's toolchains gets Rust 1.99.1 and
+Terraform 1.17.1); the hook is untested in a session until the cache rebuilds.
+`java -version` passes its smoke check on Anthropic's image but prints the
+`JAVA_TOOL_OPTIONS` notice first, so the reported version line is that notice.
 
 Measured 2026-11-06 in a `cloud_default` session, running the same toolsets the
 same way as the image's `claude` user (which has passwordless sudo already). The
