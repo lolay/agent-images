@@ -43,7 +43,8 @@ datasets buckets, no egress proxy, and full control of the image on ours.
 | System packages | `apt-get install` works | Not possible; Homebrew, or a Compute Engine type |
 | Docker | `docker`, `dockerd`, compose. The daemon isn't running at start; `dockerd &` brings it up (overlayfs, cgroup v1) | None; Cloud Run can't run containers in a session |
 | KVM | No `/dev/kvm` | No `/dev/kvm` |
-| GPU, display | None | None (the `-gpu` types are m3) |
+| GPU | None | None (the `-gpu` types are m3) |
+| Display | None | Xvfb at `:99` with software OpenGL (the `display` toolset): headed browsers and desktop apps run and can be screenshotted |
 | Session limits | Reclaimed after inactivity; reopening provisions a fresh VM with the conversation | 60 min idle, 8 h hard limit, both in the session notice |
 | Persistence outside git | None | `$AGENT_OUTPUTS` (GCS, 30 days) and read-only `$AGENT_DATASETS` |
 
