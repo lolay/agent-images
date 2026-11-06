@@ -65,7 +65,8 @@ class ToolsetChecksTests(unittest.TestCase):
 
     def test_live_reads_only_the_header(self):
         self.smoke_test("gpu", "true\n", header="# smoke: live (needs a GPU)\n")
-        self.smoke_test("go", "echo '# smoke: live (not a header)'\n" * 12)
+        # A real marker comment, but on line 15: past the header.
+        self.smoke_test("go", "true\n" * 12 + "# smoke: live (not a header)\ntrue\n")
         gpu = self.run_checks("live", "gpu")
         self.assertEqual((gpu.returncode, gpu.stdout), (0, "needs a GPU\n"))
         self.assertEqual(self.run_checks("live", "go").returncode, 1)
