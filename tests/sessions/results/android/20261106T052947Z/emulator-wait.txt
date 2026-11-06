@@ -1,0 +1,2 @@
+2026-11-06T05:30:01Z agent-emulator: emulator-5554 booted (Android 17)
+exit=0 elapsed=.249186137s

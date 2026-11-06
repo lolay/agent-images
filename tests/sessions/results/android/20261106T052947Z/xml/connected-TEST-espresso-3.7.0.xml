@@ -1,0 +1,9 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="1" failures="0" errors="0" skipped="0" time="0.000" timestamp="2026-11-06T05:35:18" hostname="localhost">
+  <testsuite name="com.example.counter.MainActivityTest" tests="1" failures="0" errors="0" skipped="0" time="3.896" timestamp="2026-11-06T05:35:18" hostname="localhost">
+    <properties>
+      <property name="device" value="emulator-5554" />
+    </properties>
+    <testcase name="tappingButtonThreeTimesShowsThree" classname="com.example.counter.MainActivityTest" time="3.896" />
+  </testsuite>
+</testsuites>

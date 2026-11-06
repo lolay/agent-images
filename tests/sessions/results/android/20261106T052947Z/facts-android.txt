@@ -1,0 +1,66 @@
+## uname
+Linux agent-android-8967d666-6914-570a-a321-dd3ab0c0522b 7.0.0-1014-gcp #14~24.04.1-Ubuntu SMP PREEMPT Thu Sep 17 19:52:35 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+## os-release
+PRETTY_NAME="Ubuntu 24.04.5 LTS"
+NAME="Ubuntu"
+VERSION_ID="24.04"
+VERSION="24.04.5 LTS (Noble Numbat)"
+VERSION_CODENAME=noble
+ID=ubuntu
+ID_LIKE=debian
+HOME_URL="https://www.ubuntu.com/"
+SUPPORT_URL="https://help.ubuntu.com/"
+BUG_REPORT_URL="https://bugs.launchpad.net/ubuntu/"
+PRIVACY_POLICY_URL="https://www.ubuntu.com/legal/terms-and-policies/privacy-policy"
+UBUNTU_CODENAME=noble
+LOGO=ubuntu-logo
+## nproc
+8
+## free
+               total        used        free      shared  buff/cache   available
+Mem:            31Gi       5.0Gi        22Gi       972Ki       4.2Gi        26Gi
+Swap:             0B          0B          0B
+## df
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/root        96G   21G   76G  22% /
+/dev/root        96G   21G   76G  22% /
+## user
+uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu),4(adm),24(cdrom),27(sudo),30(dip),105(lxd),993(kvm)
+agent-android-8967d666-6914-570a-a321-dd3ab0c0522b
+## sudo -n true
+sudo ok
+## claude
+2.1.318 (Claude Code)
+## published latest
+2.1.318
+## DISPLAY=:99
+## kvm-ok
+INFO: /dev/kvm exists
+KVM acceleration can be used
+## java
+openjdk version "21.0.12.1" 2026-08-18
+OpenJDK Runtime Environment (build 21.0.12.1+1-1-24.04.4-Ubuntu)
+OpenJDK 64-Bit Server VM (build 21.0.12.1+1-1-24.04.4-Ubuntu, mixed mode, sharing)
+JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+## android env
+ANDROID_HOME=/opt/android-sdk NDK=/opt/android-sdk/ndk/30.0.16248370
+## android CLI
+1.1.16717390
+## sdk installed
+android-37.0
+37.0.0
+NOTICE.txt
+adb
+etc1tool
+## emulator
+Android emulator version 37.2.13.0 (build_id 16740729) (CL:N/A)
+Copyright (C) 2006-2024 The Android Open Source Project and many others.
+This program is a derivative of the QEMU CPU emulator (www.qemu.org).
+## agent-emulator status
+emulator  running (agent)
+adb       emulator-5554 booted
+accel     KVM (version 12) is installed and usable.
+## adb devices
+List of devices attached
+emulator-5554	device
+

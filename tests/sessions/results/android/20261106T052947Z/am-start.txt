@@ -1,0 +1,7 @@
+Starting: Intent { cmp=com.example.counter/.MainActivity }
+Status: ok
+LaunchState: COLD
+Activity: com.example.counter/.MainActivity
+TotalTime: 1938
+WaitTime: 1954
+Complete
