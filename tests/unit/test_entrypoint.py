@@ -256,6 +256,33 @@ class SmokeTests(EntrypointCase):
         self.assertIn("isn't writable", line)
 
 
+    def check_line(self, result, name):
+        return next(line for line in result.stdout.splitlines() if f" {name} " in line)
+
+    def test_an_unwritable_outputs_root_fails_the_smoke(self):
+        # A path under /dev/null can't be created, even by root.
+        result = self.run_entrypoint("smoke", AGENT_OUTPUTS_ROOT="/dev/null/broken")
+        self.assertEqual(result.returncode, 1)
+        line = self.check_line(result, "outputs")
+        self.assertTrue(line.startswith("smoke: FAIL outputs"), line)
+        self.assertNotIn("wrote, read and deleted", line)
+
+    def test_a_missing_datasets_mount_fails_the_smoke(self):
+        result = self.run_entrypoint("smoke", AGENT_DATASETS=str(self.tmp / "missing"))
+        self.assertEqual(result.returncode, 1)
+        line = self.check_line(result, "datasets")
+        self.assertTrue(line.startswith("smoke: FAIL datasets"), line)
+        self.assertNotIn("a write was refused", line)
+
+    def test_a_scratch_disk_that_cant_be_written_fails_the_check(self):
+        # dd's failure mid-function must decide the check (the mount is faked).
+        write_executable(self.fake_bin / "mountpoint", "exit 0\n")
+        write_executable(self.fake_bin / "findmnt", "echo ext4\n")
+        write_executable(self.fake_bin / "dd", "echo 'dd: no space left' >&2\nexit 1\n")
+        result = self.run_entrypoint("smoke")
+        line = self.check_line(result, "scratch")
+        self.assertTrue(line.startswith("smoke: FAIL scratch"), line)
+
 
 class DisplayTests(EntrypointCase):
     """Images with the display toolset get Xvfb on $DISPLAY before the runner or smoke."""

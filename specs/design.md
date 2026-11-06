@@ -45,9 +45,12 @@ merging only on a green build and smoke. Homebrew stays unpinned there too: the 
 records its versions and a change triggers a build, but a build installs whatever is
 current.
 
-The CI gate is the exception. GitHub Actions stay on release tags (a supply-chain
-guard), and CI installs the Packer version that `required_version` asks for, so a
-failing `make ci` points at a change in this repo rather than a tool update.
+The CI gate is the exception. GitHub Actions are pinned to full commit SHAs, with the
+release tag in a comment: a tag can be moved, and the deploy jobs run these actions
+holding the production identity. Renovate (`.github/renovate.json`) bumps them in one
+weekly pull request that merges once CI passes; majors wait for review. CI installs the
+Packer version that `required_version` asks for, so a failing `make ci` points at a
+change in this repo rather than a tool update.
 
 ## 2. Constraints
 

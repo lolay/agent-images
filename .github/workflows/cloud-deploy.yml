@@ -58,7 +58,7 @@ jobs:
       prune: ${{ steps.targets.outputs.prune }}
       claude-version: ${{ steps.claude.outputs.version }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Targets
@@ -123,14 +123,14 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.types) }}
     name: type (${{ matrix.type }})
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Project settings
         run: grep -E '^[A-Z_]+=' infra/gcp/project.env >>"$GITHUB_ENV"
-      - uses: google-github-actions/auth@v3.0.0
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.CI_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v3.0.1
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
       - name: Registry login
         if: matrix.build
         run: gcloud auth configure-docker "${ARTIFACT_REGISTRY%%/*}" --quiet
@@ -145,7 +145,7 @@ jobs:
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
-      - uses: docker/setup-buildx-action@v4.4.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         if: matrix.build
       # The Actions cache holds 10 GB per repo, shared by every type, and a GPU
       # type's cache would carry CUDA's 4 GB of layers, evicting linux's and
@@ -171,7 +171,7 @@ jobs:
       - name: Build and push
         id: bake
         if: matrix.build
-        uses: docker/bake-action@v7.5.0
+        uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
         env:
           REGISTRY: ${{ env.ARTIFACT_REGISTRY }}
           TAG: ${{ steps.tag.outputs.tag }}
@@ -230,23 +230,25 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.vms) }}
     name: vm image (${{ matrix.type }})
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Project settings
         run: grep -E '^[A-Z_]+=' infra/gcp/project.env >>"$GITHUB_ENV"
-      - uses: google-github-actions/auth@v3.0.0
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.CI_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v3.0.1
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
       # Keep in step with required_version in images/<type>/gce/plugins.pkr.hcl.
-      - uses: hashicorp/setup-packer@v3.4.0
+      - uses: hashicorp/setup-packer@ce93c3c08a6c2ff2275bf4b54ff0d9a75f6c9789 # v3.4.0
         with:
           version: "1.16.2"
       - name: Image name
         id: name
         env:
           TYPE: ${{ matrix.type }}
-        run: echo "image=agent-$TYPE-$(date -u +%Y%m%d)-${GITHUB_SHA::12}" >>"$GITHUB_OUTPUT"
+        # Unique per run: a same-day rebuild of a commit must not share a name
+        # with the live image. Name limit is 63; this is ~50 with a 14-digit run id.
+        run: echo "image=agent-$TYPE-$(date -u +%Y%m%d)-${GITHUB_SHA::12}-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >>"$GITHUB_OUTPUT"
       - name: Build
         env:
           TYPE: ${{ matrix.type }}
@@ -277,23 +279,23 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Project settings
         run: grep -E '^[A-Z_]+=' infra/gcp/project.env >>"$GITHUB_ENV"
-      - uses: google-github-actions/auth@v3.0.0
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.CI_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v3.0.1
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
       - name: Registry login
         run: gcloud auth configure-docker "${ARTIFACT_REGISTRY%%/*}" --quiet
       - name: Tag
         id: tag
         run: echo "tag=$(date -u +%Y%m%d)-${GITHUB_SHA::12}" >>"$GITHUB_OUTPUT"
-      - uses: docker/setup-buildx-action@v4.4.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build and push
         id: bake
-        uses: docker/bake-action@v7.5.0
+        uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
         env:
           REGISTRY: ${{ env.ARTIFACT_REGISTRY }}
           TAG: ${{ steps.tag.outputs.tag }}
@@ -333,13 +335,13 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Project settings
         run: grep -E '^[A-Z_]+=' infra/gcp/project.env >>"$GITHUB_ENV"
-      - uses: google-github-actions/auth@v3.0.0
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.CI_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v3.0.1
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
       - name: Delete jobs and images whose type is gone
         run: scripts/cloud/deploy.sh prune
