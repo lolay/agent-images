@@ -105,14 +105,40 @@ grep -qF zz-agent-images.sh /root/.bashrc ||
 # root's user settings get one that sources the profile fragment. Anthropic's
 # own hooks are in launcher-settings.json, not here.
 install -d -m 755 /opt/agent-images/libexec
+
+# Anthropic rebuilds its environment cache only when the environment's own
+# setup script changes, not when this repo's does, so a session can start from
+# a build of an older setup.sh or older toolsets. The build records a
+# fingerprint of both, from git's blob hashes, and the hook compares it with the
+# session's fresh checkout.
+cat >/opt/agent-images/libexec/build-fingerprint <<'EOF'
+#!/bin/sh
+# Prints the fingerprint of an agent-images checkout's setup inputs.
+git -C "$1" ls-files -s scripts/anthropic/setup.sh images/toolsets 2>/dev/null |
+	sha256sum | cut -d' ' -f1
+EOF
+chmod 755 /opt/agent-images/libexec/build-fingerprint
+printf '%s %s\n' "$(/opt/agent-images/libexec/build-fingerprint "$here")" "$here" \
+	>/opt/agent-images/build-fingerprint
+
 cat >/opt/agent-images/libexec/session-env <<'EOF'
 #!/bin/sh
 # SessionStart hook (scripts/anthropic/setup.sh): every Bash tool command
-# sources the agent-images profile fragment.
+# sources the agent-images profile fragment, and the session hears when its
+# environment was built from an older setup.sh or older toolsets than its
+# checkout's.
 cat >/dev/null
-[ -n "${CLAUDE_ENV_FILE:-}" ] || exit 0
-grep -qF zz-agent-images.sh "$CLAUDE_ENV_FILE" 2>/dev/null ||
-	printf '. /etc/profile.d/zz-agent-images.sh\n' >>"$CLAUDE_ENV_FILE"
+if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
+	grep -qF zz-agent-images.sh "$CLAUDE_ENV_FILE" 2>/dev/null ||
+		printf '. /etc/profile.d/zz-agent-images.sh\n' >>"$CLAUDE_ENV_FILE"
+fi
+[ -r /opt/agent-images/build-fingerprint ] || exit 0
+read -r built checkout </opt/agent-images/build-fingerprint || exit 0
+[ -d "$checkout/.git" ] || exit 0
+now="$(/opt/agent-images/libexec/build-fingerprint "$checkout")"
+[ -n "$now" ] && [ "$now" != "$built" ] || exit 0
+message="agent-images: this environment was built from an older scripts/anthropic/setup.sh or images/toolsets than this checkout's, and Anthropic's cache won't rebuild on its own. To update it, edit the environment's setup script (a comment line is enough); the next session reruns it."
+printf '{"systemMessage":"%s","hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s Tell the user this before starting work."}}\n' "$message" "$message"
 EOF
 chmod 755 /opt/agent-images/libexec/session-env
 settings=/root/.claude/settings.json

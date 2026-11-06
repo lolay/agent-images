@@ -79,7 +79,11 @@ when that line, the allowed hosts or the week change, so a merged change to
 2026-11-06 a session started at 04:47 UTC from a snapshot built at 04:34 to
 04:37 had none of #31's `/usr/local/bin` links, which merged at 04:46. To pick
 up a change at once, edit the environment's setup script (a comment line is
-enough); the next session rebuilds.
+enough); the next session rebuilds. So a session says when it's behind: the
+script records a fingerprint of `scripts/anthropic/setup.sh` and
+`images/toolsets` (`git ls-files -s`, so committed content only) with the
+checkout's path, and the SessionStart hook compares it with the session's fresh
+checkout. On a mismatch it shows a notice and tells the session to pass it on.
 
 246.5 s leaves under a minute of the five-minute budget. A slow day for
 Homebrew's bottles could push a rebuild past it, and then every session pays the
