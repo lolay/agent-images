@@ -61,6 +61,12 @@ backend_of() { (
 	printf '%s' "${BACKEND:-run}"
 ); }
 
+# family_of <type>: a compute type's image family.
+family_of() { (
+	gcp_load_env "$1" || exit 0
+	printf '%s' "${IMAGE_FAMILY:-}"
+); }
+
 # wait_operation <token>: wait for the long-running operation in GCP_BODY.
 wait_operation() {
 	local token="$1" operation is_done deadline
@@ -319,7 +325,7 @@ cmd_status() {
 	while read -r type; do
 		if [[ "$(backend_of "$type")" == compute ]]; then
 			local family
-			family="$( (gcp_load_env "$type" && printf '%s' "$IMAGE_FAMILY") )"
+			family="$(family_of "$type")"
 			gcp_call "$token" GET "$compute_api/global/images/family/$family"
 			if [[ "$GCP_STATUS" != 200 ]]; then
 				printf '%-22s no image in family %s (HTTP %s)\n' "$type" "$family" "$GCP_STATUS"
