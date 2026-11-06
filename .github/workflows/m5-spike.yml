@@ -59,11 +59,17 @@ jobs:
             # $1: a snapshot id, or empty for today's archive.
             docker run --rm --entrypoint /bin/bash -e SNAP="$1" -e PACKAGES="$packages" "$ref" -c '
               set -euo pipefail
-              { echo "--- sources"; ls /etc/apt/sources.list.d/; cat /etc/apt/sources.list.d/*.sources 2>/dev/null | grep -v "^#"; { grep -v "^#" /etc/apt/sources.list 2>/dev/null | grep . ; } || true; apt-get -v | sed -n 1p; echo "---"; } >&2
-              [[ -z "$SNAP" ]] || printf "APT::Snapshot \"%s\";\n" "$SNAP" >/etc/apt/apt.conf.d/50agent-snapshot
+              # The build path: certificates from the live archive first (the
+              # snapshot server is HTTPS only), then the snapshot for the rest.
+              if [[ -n "$SNAP" ]]; then
+                apt-get update -q >/dev/null 2>&1
+                DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends ca-certificates >/dev/null 2>&1
+                dpkg-query -W -f "bootstrap: \${Package} \${Version}\n" ca-certificates openssl >&2
+                printf "APT::Snapshot \"%s\";\n" "$SNAP" >/etc/apt/apt.conf.d/50agent-snapshot
+              fi
               apt-get update >/tmp/update.log 2>&1 || { cat /tmp/update.log >&2; exit 1; }
-              { echo "--- update"; grep -E "^(Get|Hit|Ign|Err|W:|E:)" /tmp/update.log | sed -E "s/ \[[0-9.]+ [kMG]?B\]//" | sed -n 1,40p; echo "---"; } >&2
               grep -E "^(Get|Hit|Ign|Err|W:|E:)" /tmp/update.log | sed -E "s/ \[[0-9.]+ [kMG]?B\]//" | sort -u >&2
+              ! grep -qE "^(Err|W:)" /tmp/update.log || { echo "update had errors" >&2; exit 1; }
               apt-get install --simulate --no-install-recommends $PACKAGES >/tmp/sim.txt 2>&1 || { cat /tmp/sim.txt >&2; exit 1; }
               sed -n "s/^Inst //p" /tmp/sim.txt'
           }
