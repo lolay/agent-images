@@ -8,6 +8,7 @@ on:
   pull_request:
     paths:
       - images/cloud/**
+      - images/android/**
       - images/shared/**
       - images/toolsets/**
       - hooks/gcp/**
@@ -29,7 +30,17 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - name: Install tools
         run: sudo apt-get install -y --no-install-recommends shellcheck shfmt
+      # The android image's Packer template is validated here; the image itself
+      # builds only on main, in GCP (cloud-deploy.yml). Keep in step with
+      # required_version in images/android/gce/plugins.pkr.hcl.
+      - uses: hashicorp/setup-packer@v3.4.0
+        with:
+          version: "1.16.2"
       - name: Lint and unit tests
+        # packer init looks the plugin up through GitHub's API; the job's token
+        # gets the repository's own rate limit (see ci.yml).
+        env:
+          PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: make cloud-lint cloud-test
 
   # One image per runner: together they don't fit on one. A build with no

@@ -1,6 +1,6 @@
 # Plan: m2, `android` on Compute Engine
 
-Status: s1 done; s2 to s6 approved 2026-11-06 (no GCP spend), s7 waits for a second go.
+Status: s1 and s2 done; s2 to s6 approved 2026-11-06 (no GCP spend), s7 waits for a second go.
 Branch `claude/youthful-dijkstra-09v7kk` (assigned by the harness), cut
 from `main` at `ecc54c2`, after lolay/agent-images#18, #19 and #20.
 
@@ -92,7 +92,7 @@ both families, keeping one.
   written mode 600 and owned by the guest user, runner.env contents, guest attribute
   set, work order never on stdout or stderr, smoke results.
 
-#### s2 - Packer template [deep]
+#### s2 - Packer template [deep] (done)
 
 - `images/android/gce/{plugins,variables,build}.pkr.hcl` as above; staging mirrors
   `scripts/linux/build-image.sh`; each script's stderr is collected and the build
