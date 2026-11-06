@@ -7,6 +7,12 @@
 # with images/cloud/docker-bake.hcl, which supplies agent-linux.
 FROM agent-linux
 
+# CUDA's image asks the container runtime for compute and utility only, which
+# under NVIDIA's container toolkit leaves out the graphics libraries (EGL, GLX,
+# Vulkan) the gpu toolset routes to. Ask for everything; Cloud Run documents
+# mounting all the driver's libraries anyway, so at worst this changes nothing.
+ENV NVIDIA_DRIVER_CAPABILITIES=all
+
 ARG APT_DROP_LISTS=true
 RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
 	--mount=type=bind,source=images/toolsets/gpu,target=/tmp/toolsets/gpu \
