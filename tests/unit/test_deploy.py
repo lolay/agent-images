@@ -213,6 +213,14 @@ class DeployTests(unittest.TestCase):
 
 FAKE_PACKER = """
 printf '%s\\n' "$*" >>"$FAKE_OUT/packer.log"
+# The real build downloads the versions report to -var versions_file (the file
+# provisioner), and fails if the destination's directory can't be written.
+for arg; do
+  case "$arg" in versions_file=*) file="${arg#versions_file=}" ;; esac
+done
+if [ "${FAKE_PACKER_REPORT:-1}" = 1 ] && [ -n "${file:-}" ]; then
+  printf '# agent-android\\n' >"$file" || exit 1
+fi
 exit "${FAKE_PACKER_STATUS:-0}"
 """
 
@@ -264,6 +272,7 @@ class VmDeployTests(DeployTests):
             "-var commit=abc123def456",
             "-var machine_type=n2-standard-8",
             "-var disk_size_gb=100",
+            f"-var versions_file={REPO}/out/versions/android/versions.md",
         ):
             self.assertIn(expected, build)
         self.assertTrue(build.endswith(f"{REPO}/images/android/gce"))
@@ -276,6 +285,19 @@ class VmDeployTests(DeployTests):
         name = f"agent-android-20261106-abc123def456-{2**53}-99"
         self.assertLessEqual(len(name), 63)
         self.assertEqual(self.deploy("vm-build", "android", name, "abc123def456").returncode, 0)
+
+    def test_vm_build_keeps_the_versions_report_where_the_workflow_reads_it(self):
+        report = REPO / "out/versions/android/versions.md"
+        self.addCleanup(report.unlink, missing_ok=True)
+        self.assertEqual(self.deploy("vm-build", "android", ANDROID_IMAGE, "abc").returncode, 0)
+        self.assertTrue(report.read_text().startswith("# agent-android"))
+        workflow = (REPO / ".github/workflows/cloud-deploy.yml").read_text()
+        self.assertIn("out/versions/$TYPE/versions.md", workflow)
+
+    def test_vm_build_fails_without_a_versions_report(self):
+        result = self.deploy("vm-build", "android", ANDROID_IMAGE, "abc", FAKE_PACKER_REPORT="0")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no versions report", result.stderr)
 
     def test_vm_build_fails_with_packer(self):
         result = self.deploy("vm-build", "android", ANDROID_IMAGE, "abc", FAKE_PACKER_STATUS="1")

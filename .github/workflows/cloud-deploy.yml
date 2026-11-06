@@ -283,6 +283,7 @@ jobs:
         # with the live image. Name limit is 63; this is ~50 with a 14-digit run id.
         run: echo "image=agent-$TYPE-$(date -u +%Y%m%d)-${GITHUB_SHA::12}-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >>"$GITHUB_OUTPUT"
       - name: Build
+        id: build
         env:
           TYPE: ${{ matrix.type }}
           IMAGE: ${{ steps.name.outputs.image }}
@@ -296,6 +297,30 @@ jobs:
         run: |
           scripts/cloud/deploy.sh vm-promote "$TYPE" "$IMAGE" "$GITHUB_SHA"
           echo "agent-$TYPE: $IMAGE" >>"$GITHUB_STEP_SUMMARY"
+      # The report Packer downloaded from the build VM (deploy.sh vm-build), as
+      # the types job does for its images. Whether or not the smoke passed: a
+      # failed one is when the report helps most.
+      - name: Versions report
+        id: versions
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        env:
+          TYPE: ${{ matrix.type }}
+          IMAGE: ${{ steps.name.outputs.image }}
+        run: |
+          set -euo pipefail
+          report="out/versions/$TYPE/versions.md"
+          name="versions-$IMAGE.md"
+          cp "$report" "out/$name"
+          echo "name=$name" >>"$GITHUB_OUTPUT"
+          { printf '\nagent-%s `%s` at `%s`:\n\n' "$TYPE" "$IMAGE" "$GITHUB_SHA"
+            cat "$report"; } >>"$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() && steps.versions.outputs.name != '' }}
+        with:
+          name: ${{ steps.versions.outputs.name }}
+          path: out/${{ steps.versions.outputs.name }}
+          retention-days: 90
+          if-no-files-found: error
 
   # After the types and VM images, so a first deploy creates the job or image
   # before the orchestrator can spawn into it; skipped if one failed, and the

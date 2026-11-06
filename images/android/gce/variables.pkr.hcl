@@ -55,3 +55,9 @@ variable "guest_user" {
   description = "The user that runs the runner and its sessions, with passwordless sudo, as in the LXD image."
   default     = "ubuntu"
 }
+
+variable "versions_file" {
+  type        = string
+  description = "Where the build downloads the image's versions report (/etc/agent-images/versions.md); the deploy workflow reads it from there. The deploy passes an absolute path under out/versions/android."
+  default     = "out/versions/android/versions.md"
+}
