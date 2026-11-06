@@ -44,6 +44,7 @@ class ChangedTargetsTests(unittest.TestCase):
             "images/toolsets/android/packages.txt": "cpu-checker\n",
             "images/toolsets/install-toolset.sh": "#!/bin/bash\n",
             "images/toolsets/write-claude-md.sh": "#!/bin/bash\n",
+            "images/toolsets/toolset-checks.sh": "#!/bin/bash\n",
             "images/android/toolsets.txt": "core\n",
             "hooks/gcp/spawn-runner": "#!/bin/bash\n",
             "scripts/cloud/job-spec.sh": "#!/bin/bash\n",
@@ -133,6 +134,8 @@ class ChangedTargetsTests(unittest.TestCase):
         self.assertEqual(self.change("images/toolsets/install-toolset.sh")["types"], both)
         self.base = self.head()
         self.assertEqual(self.change("images/toolsets/write-claude-md.sh")["types"], both)
+        self.base = self.head()
+        self.assertEqual(self.change("images/toolsets/toolset-checks.sh")["types"], both)
 
     def test_the_android_images_toolset_list_deploys_nothing(self):
         self.assertEqual(
@@ -258,6 +261,14 @@ class ComputeTypeTests(ChangedTargetsTests):
                 self.assertEqual(
                     self.change(name), {"types": [], "vms": self.ANDROID, "orchestrator": False, "prune": False}
                 )
+                self.base = self.head()
+
+    def test_the_toolset_scripts_rebuild_it_and_every_type(self):
+        for name in ("images/toolsets/install-toolset.sh", "images/toolsets/toolset-checks.sh"):
+            with self.subTest(name=name):
+                result = self.change(name)
+                self.assertEqual(result["vms"], self.ANDROID)
+                self.assertEqual(len(result["types"]), 2)
                 self.base = self.head()
 
     def test_its_toolsets_rebuild_it(self):

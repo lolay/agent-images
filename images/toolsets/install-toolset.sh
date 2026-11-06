@@ -4,7 +4,9 @@
 # (installing Homebrew first if it isn't there yet), then its install.sh. A
 # toolset has any of the three, and optionally:
 #   CLAUDE.md    its lines for the session's CLAUDE.md (write-claude-md.sh);
-#   check.txt    its smoke checks, `label: command` (images/cloud/entrypoint.sh);
+#   check.txt    its binary checks, `label: command` (toolset-checks.sh);
+#   smoke.sh     its smoke test, the least real work that shows the toolchain
+#                works (toolset-checks.sh; specs/gcp.md, m4);
 #   profile.sh   environment for every session shell, sourced by the cloud
 #                profile after its own;
 #   path.txt     directories for the front of every session's PATH, after ~/bin
@@ -52,14 +54,14 @@ install_apt() {
 }
 
 # Records an installed toolset: its name once in toolsets.txt, in install order,
-# and its CLAUDE.md, check.txt, profile.sh and path.txt as <name>.md,
-# <name>.check, <name>.profile.sh and <name>.path.
+# and its CLAUDE.md, check.txt, smoke.sh, profile.sh and path.txt as <name>.md,
+# <name>.check, <name>.smoke.sh, <name>.profile.sh and <name>.path.
 record() {
 	local name="$1" dir="$2" file suffix
 	sudo install -d -m 755 "$record_dir"
 	sudo touch "$record_dir/toolsets.txt"
 	grep -qxF "$name" "$record_dir/toolsets.txt" || printf '%s\n' "$name" | sudo tee -a "$record_dir/toolsets.txt" >/dev/null
-	for file in CLAUDE.md:md check.txt:check profile.sh:profile.sh path.txt:path; do
+	for file in CLAUDE.md:md check.txt:check smoke.sh:smoke.sh profile.sh:profile.sh path.txt:path; do
 		suffix="${file#*:}" file="${file%%:*}"
 		[[ ! -f "$dir/$file" ]] || sudo install -m 644 "$dir/$file" "$record_dir/$name.$suffix"
 	done

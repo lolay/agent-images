@@ -54,6 +54,8 @@ log "installing the Compute Engine guest pieces"
 install -d -m 755 "$libexec_dir" /etc/systemd/journald.conf.d
 install -m 755 "$STAGING_DIR/gce/agent-gce-order.sh" "$libexec_dir/agent-gce-order"
 install -m 755 "$STAGING_DIR/gce/agent-gce-smoke.sh" "$libexec_dir/agent-gce-smoke"
+# On PATH, so sessions can run a toolset's checks too, as on the Cloud Run images.
+install -m 755 "$STAGING_DIR/toolsets/toolset-checks.sh" /usr/local/bin/agent-toolset-checks
 install -m 644 "$STAGING_DIR/gce/agent-gce-order.service" /etc/systemd/system/agent-gce-order.service
 install -m 644 "$STAGING_DIR/gce/journald-serial.conf" /etc/systemd/journald.conf.d/agent-images-serial.conf
 install -m 644 "$STAGING_DIR/gce/profile-gce.sh" /etc/profile.d/agent-images-gce.sh

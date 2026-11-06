@@ -91,11 +91,11 @@ image_paths() {
 }
 
 # What every type is built from. A toolset's own directory rebuilds only the
-# types that install it (image_paths); the two scripts beside them, every type.
+# types that install it (image_paths); the scripts beside them, every type.
 # (A * in these patterns also matches /, so the scripts are named outright.)
 readonly every_type=(
 	"images/shared/*" "images/toolsets/install-toolset.sh" "images/toolsets/write-claude-md.sh"
-	"images/cloud/entrypoint.sh" "images/cloud/runner/*"
+	"images/toolsets/toolset-checks.sh" "images/cloud/entrypoint.sh" "images/cloud/runner/*"
 	"images/cloud/docker-bake.hcl" ".dockerignore" "infra/gcp/project.env"
 )
 
@@ -119,6 +119,7 @@ vm_image_paths() {
 # What every Compute Engine image is built from, besides its own paths.
 readonly every_vm=(
 	"images/shared/*" "images/toolsets/install-toolset.sh" "images/toolsets/write-claude-md.sh"
+	"images/toolsets/toolset-checks.sh"
 	"infra/gcp/project.env"
 )
 

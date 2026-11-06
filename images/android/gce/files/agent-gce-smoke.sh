@@ -5,6 +5,11 @@
 # ANDROID_HOME are a session's. Installed as
 # /usr/local/libexec/agent-images/agent-gce-smoke.
 #
+# The toolsets' binary checks and smoke tests come from the image's record, through
+# agent-toolset-checks (images/toolsets/toolset-checks.sh), as in the Cloud Run
+# images' smoke; what's checked here by hand is only what the VM adds: sudo, KVM,
+# scratch and the emulator, whose boot is the android toolset's smoke test.
+#
 # Prints one line per check and key=value lines for the timings, which
 # agent-gce-order publishes as guest attributes; exits 1 if any check failed.
 # The emulator boots twice from the image's quickboot snapshot: the first boot
@@ -45,13 +50,21 @@ check "sudo" sudo -n true
 # runuser -l gives the guest user login.defs's PATH, which has no /usr/sbin;
 # sessions get systemd's, which does.
 check "kvm" /usr/sbin/kvm-ok
-check "java" java -version
-check "adb" adb version
 check "scratch writable" test -w "${AGENT_SCRATCH:-/scratch}"
-check "display" xdpyinfo -display "${DISPLAY:-:99}"
-check "gradle" gradle --version
-check "cargo-ndk" cargo ndk --version
-check "gomobile" command -v gomobile
+
+# Every binary check's line, under one result.
+if binaries="$(agent-toolset-checks versions 2>&1)"; then
+	printf 'ok    binary checks\n'
+else
+	printf 'FAIL  binary checks\n'
+	failed=1
+fi
+while IFS= read -r line; do
+	printf '        %s\n' "$line"
+done <<<"$binaries"
+while read -r name; do
+	check "smoke-$name" agent-toolset-checks smoke "$name" --brief
+done < <(agent-toolset-checks smoke-list 2>/dev/null)
 
 boot_seconds emulator-boot-sec-cold
 check "api level" adb -s emulator-5554 shell getprop ro.build.version.sdk

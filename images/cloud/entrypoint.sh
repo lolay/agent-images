@@ -8,6 +8,9 @@
 #   agent-cloud-entrypoint          run the runner (what every execution does)
 #   agent-cloud-entrypoint smoke    check the image and its mounts, then exit
 #                                   0 or 1 (the deploy runs it on agent-<type>-next)
+#   agent-cloud-entrypoint smoke pr the same on a GitHub hosted runner (make
+#                                   cloud-smoke): smoke tests that need what it
+#                                   lacks, a GPU, are skipped, saying so
 #
 # From the job (scripts/cloud/job-spec.sh renders these from infra/gcp/<type>.env):
 #   AGENT_TYPE, AGENT_TASK_TIMEOUT_SEC, AGENT_RETIRE_MARGIN_SEC, AGENT_NOTICE_TZ,
@@ -34,6 +37,8 @@ set -euo pipefail
 : "${AGENT_DISPLAY_SCREEN:=1920x1080x24}"
 : "${AGENT_DISPLAY_WAIT_SEC:=10}"
 : "${AGENT_RETIRE_MARGIN_SEC:=900}"
+# images/toolsets/toolset-checks.sh, which the runner Dockerfile installs.
+: "${AGENT_TOOLSET_CHECKS:=agent-toolset-checks}"
 export AGENT_SCRATCH AGENT_OUTPUTS_ROOT AGENT_DATASETS AGENT_TYPE
 
 log() { printf '%s agent-cloud-entrypoint: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
@@ -80,7 +85,7 @@ prepare_scratch() {
 }
 
 smoke() {
-	local failed=0
+	local scope="${1:-}" failed=0 name why
 	# check runs each probe inside an `if`, which turns errexit off for it, so a
 	# probe's steps must be chained (`|| return 1`): only the last command decides
 	# otherwise.
@@ -150,35 +155,17 @@ smoke() {
 		}
 		printf '%s, %s writable' "$(brew --version | head -n 1)" "$prefix"
 	}
-	# shellcheck disable=SC2317,SC2329 # called through check
-	toolchains() {
-		# Every installed toolset's checks (install-toolset.sh records them), in
-		# install order: `label: command`, which must exit 0. A proxy (cargo from
-		# rustup, terraform from tenv) fails if its toolchain wasn't installed.
-		local versions=() failed=0 name line label command output
-		[[ -s "$AGENT_TOOLSETS_DIR/toolsets.txt" ]] || {
-			printf 'no toolsets recorded in %s\n' "$AGENT_TOOLSETS_DIR"
-			return 1
-		}
-		while read -r name; do
-			[[ -f "$AGENT_TOOLSETS_DIR/$name.check" ]] || continue
-			while IFS= read -r line; do
-				[[ -n "$line" && "$line" != \#* ]] || continue
-				label="${line%%: *}" command="${line#*: }"
-				if output="$(CHECKPOINT_DISABLE=1 bash -c "$command" 2>&1 </dev/null)"; then
-					versions+=("$label: $(head -n 1 <<<"$output")")
-				else
-					# The check's last line says why (a missing proxy, a failed command).
-					versions+=("$label: missing (${output##*$'\n'})")
-					failed=1
-				fi
-			done <"$AGENT_TOOLSETS_DIR/$name.check"
-		done <"$AGENT_TOOLSETS_DIR/toolsets.txt"
-		printf '%s\n' "${versions[@]}"
-		return "$failed"
-	}
 	check claude claude --version
-	check toolchains toolchains
+	# Every installed toolset's binary checks, then each smoke test as its own
+	# check, in install order (toolset-checks.sh runs both).
+	check binaries "$AGENT_TOOLSET_CHECKS" versions
+	while read -r name; do
+		if [[ "$scope" == pr ]] && why="$("$AGENT_TOOLSET_CHECKS" live "$name")"; then
+			printf 'smoke: skip smoke-%s (live only: %s)\n' "$name" "$why"
+			continue
+		fi
+		check "smoke-$name" "$AGENT_TOOLSET_CHECKS" smoke "$name" --brief
+	done < <("$AGENT_TOOLSET_CHECKS" smoke-list 2>/dev/null)
 	check scratch scratch_disk
 	check outputs outputs_round_trip
 	check datasets datasets_read_only
@@ -189,6 +176,7 @@ smoke() {
 }
 
 if [[ "${1:-}" == "smoke" ]]; then
+	[[ "${2:-}" == "" || "${2:-}" == pr ]] || die "usage: agent-cloud-entrypoint smoke [pr]"
 	# Checks run as sessions do: with TMPDIR and the caches on scratch, which
 	# Cloud Run mounts empty (the display toolset's screenshot check uses mktemp
 	# before the scratch check would have made them). The scratch check still
@@ -196,7 +184,7 @@ if [[ "${1:-}" == "smoke" ]]; then
 	mkdir -p "$TMPDIR" "$XDG_CACHE_HOME" 2>/dev/null || true
 	# The display toolset's checks need the display running, as sessions get it.
 	start_display || true
-	if smoke; then
+	if smoke "${2:-}"; then
 		log "smoke passed"
 		exit 0
 	fi

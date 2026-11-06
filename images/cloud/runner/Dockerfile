@@ -9,11 +9,13 @@ FROM agent-tools
 
 # The runner (images/shared), the Claude Code settings the runner seeds into
 # every session (the shared Stop hook plus the cloud SessionStart hook), the
-# cloud CLAUDE.md, the login environment and the entrypoint.
+# cloud CLAUDE.md, the login environment, the entrypoint and the runner of the
+# toolsets' binary checks and smoke tests (on PATH, so sessions can run them too).
 RUN --mount=type=bind,source=images/shared,target=/tmp/images/shared \
 	--mount=type=bind,source=images/cloud/runner,target=/tmp/images/runner \
 	--mount=type=bind,source=images/cloud/entrypoint.sh,target=/tmp/images/entrypoint.sh \
 	--mount=type=bind,source=images/toolsets/write-claude-md.sh,target=/tmp/images/write-claude-md.sh \
+	--mount=type=bind,source=images/toolsets/toolset-checks.sh,target=/tmp/images/toolset-checks.sh \
 	<<'SCRIPT'
 set -eu
 shared=/tmp/images/shared
@@ -38,6 +40,7 @@ sudo install -m 644 "$runner/profile.sh" /etc/profile.d/agent-images.sh
 { printf '# agent-images: PATH, scratch and caches (images/cloud/runner/profile.sh)\n. /etc/profile.d/agent-images.sh\n\n'; cat "$HOME/.bashrc"; } >"$HOME/.bashrc.new"
 mv "$HOME/.bashrc.new" "$HOME/.bashrc"
 sudo install -m 755 /tmp/images/entrypoint.sh /usr/local/bin/agent-cloud-entrypoint
+sudo install -m 755 /tmp/images/toolset-checks.sh /usr/local/bin/agent-toolset-checks
 # Mount points: Cloud Run mounts over them; a local docker volume (make
 # cloud-smoke) takes their owner, so the session user can write scratch and outputs.
 sudo install -d -m 755 -o ubuntu -g ubuntu /scratch /mnt/outputs

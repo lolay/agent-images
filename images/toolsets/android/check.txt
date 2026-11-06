@@ -1,0 +1,5 @@
+# Binary checks (toolset-checks.sh): label: command, which must exit 0; its first
+# line of output is the reported version. The smoke VM's emulator boot
+# (agent-gce-smoke) is this toolset's smoke test.
+adb: adb version | head -n 1
+gradle: gradle --version | grep -m1 '^Gradle'

@@ -11,6 +11,7 @@ from pathlib import Path
 from support import REPO, base_env, read_env_file, write_executable
 
 ENTRYPOINT = REPO / "images/cloud/entrypoint.sh"
+TOOLSET_CHECKS = REPO / "images/toolsets/toolset-checks.sh"
 PROFILE = REPO / "images/cloud/runner/profile.sh"
 TOOLCHAINS = (
     "node", "pnpm", "python3", "uv", "go", "cargo", "rustc", "protoc", "buf",
@@ -76,6 +77,7 @@ class EntrypointCase(unittest.TestCase):
             "AGENT_OUTPUTS_ROOT": str(self.outputs),
             "AGENT_PROFILE": str(PROFILE),
             "AGENT_TOOLSETS_DIR": str(self.toolsets),
+            "AGENT_TOOLSET_CHECKS": str(TOOLSET_CHECKS),
             "AGENT_RUNNER_COMMAND": str(self.runner),
             "AGENT_WATCHDOG_COMMAND": str(self.watchdog),
             # The loop outlives the runner by at most one interval, holding the pipe.
@@ -212,10 +214,10 @@ class SmokeTests(EntrypointCase):
         checks = {line.split()[2]: line.split()[1] for line in lines}
         self.assertEqual(
             set(checks),
-            {"claude", "toolchains", "scratch", "outputs", "datasets", "homebrew"},
+            {"claude", "binaries", "scratch", "outputs", "datasets", "homebrew"},
         )
         self.assertEqual(checks["claude"], "pass")
-        self.assertEqual(checks["toolchains"], "pass")
+        self.assertEqual(checks["binaries"], "pass")
         self.assertEqual(checks["outputs"], "pass")
         self.assertEqual(checks["homebrew"], "pass")
         self.assertEqual(checks["scratch"], "FAIL")
@@ -225,15 +227,15 @@ class SmokeTests(EntrypointCase):
 
     def test_a_toolchain_that_fails_fails_the_check(self):
         result = self.run_entrypoint("smoke", FAKE_BROKEN_TOOL="cargo")
-        line = next(line for line in result.stdout.splitlines() if " toolchains " in line)
-        self.assertTrue(line.startswith("smoke: FAIL toolchains"), line)
+        line = next(line for line in result.stdout.splitlines() if " binaries " in line)
+        self.assertTrue(line.startswith("smoke: FAIL binaries"), line)
         self.assertIn("cargo: missing", line)
         self.assertIn("node: node 9.9", line)
 
     def test_a_failed_check_says_why(self):
         (self.toolsets / "first.check").write_text("node: echo 'node: not found' >&2; exit 1\n")
         result = self.run_entrypoint("smoke")
-        line = next(line for line in result.stdout.splitlines() if " toolchains " in line)
+        line = next(line for line in result.stdout.splitlines() if " binaries " in line)
         self.assertIn("node: missing (node: not found)", line)
 
     def test_checks_can_use_tmpdir_on_an_empty_scratch(self):
@@ -245,8 +247,8 @@ class SmokeTests(EntrypointCase):
         )
         self.assertFalse((self.scratch / "tmp").exists())
         result = self.run_entrypoint("smoke")
-        line = next(line for line in result.stdout.splitlines() if " toolchains " in line)
-        self.assertTrue(line.startswith("smoke: pass toolchains"), line)
+        line = next(line for line in result.stdout.splitlines() if " binaries " in line)
+        self.assertTrue(line.startswith("smoke: pass binaries"), line)
         self.assertIn(f"screenshot: wrote {self.scratch}/tmp/", line)
 
     def test_homebrew_must_be_writable_by_the_session_user(self):
@@ -282,6 +284,68 @@ class SmokeTests(EntrypointCase):
         result = self.run_entrypoint("smoke")
         line = self.check_line(result, "scratch")
         self.assertTrue(line.startswith("smoke: FAIL scratch"), line)
+
+
+class SmokeTestTests(EntrypointCase):
+    """Each recorded smoke test (<name>.smoke.sh) is its own check, after the binary checks."""
+
+    def record(self, name, body, *, live=None):
+        header = f"# smoke: live ({live})\n" if live else ""
+        (self.toolsets / f"{name}.smoke.sh").write_text("#!/bin/bash\n" + header + "set -euo pipefail\n" + body)
+
+    def smoke_lines(self, result):
+        return [line for line in result.stdout.splitlines() if line.startswith("smoke: ")]
+
+    def test_a_passing_test_reports_its_last_line(self):
+        self.record("first", 'echo "building"\necho "first: built and ran hello"\n')
+        result = self.run_entrypoint("smoke")
+        lines = self.smoke_lines(result)
+        self.assertIn("smoke: pass smoke-first (first: built and ran hello)", lines)
+        names = [line.split()[2] for line in lines]
+        self.assertLess(names.index("binaries"), names.index("smoke-first"))
+        self.assertLess(names.index("smoke-first"), names.index("scratch"))
+
+    def test_tests_run_in_install_order_and_toolsets_without_one_are_skipped(self):
+        self.record("second", 'echo "second: ok"\n')
+        self.record("first", 'echo "first: ok"\n')
+        result = self.run_entrypoint("smoke")
+        names = [line.split()[2] for line in self.smoke_lines(result) if " smoke-" in line]
+        self.assertEqual(names, ["smoke-first", "smoke-second"])
+
+    def test_a_failing_test_fails_the_smoke_and_says_why(self):
+        self.record("first", 'echo "compiling"\necho "first: hello.c:1: error" >&2\nexit 1\n')
+        result = self.run_entrypoint("smoke")
+        self.assertEqual(result.returncode, 1)
+        line = next(line for line in self.smoke_lines(result) if " smoke-first " in line)
+        self.assertTrue(line.startswith("smoke: FAIL smoke-first"), line)
+        self.assertIn("hello.c:1: error", line)
+
+    def test_a_hung_test_times_out_and_fails(self):
+        self.record("first", "sleep 30\n")
+        started = time.monotonic()
+        result = self.run_entrypoint("smoke", AGENT_SMOKE_TIMEOUT_SEC="1")
+        self.assertLess(time.monotonic() - started, 15)
+        line = next(line for line in self.smoke_lines(result) if " smoke-first " in line)
+        self.assertTrue(line.startswith("smoke: FAIL smoke-first"), line)
+        self.assertIn("timed out after 1s", line)
+
+    def test_pr_skips_live_tests_and_says_why(self):
+        self.record("first", 'echo "first: ok"\n')
+        self.record("second", "exit 1\n", live="needs a GPU")
+        result = self.run_entrypoint("smoke", "pr")
+        lines = self.smoke_lines(result)
+        self.assertIn("smoke: pass smoke-first (first: ok)", lines)
+        self.assertIn("smoke: skip smoke-second (live only: needs a GPU)", lines)
+
+    def test_without_pr_live_tests_run(self):
+        self.record("second", "exit 1\n", live="needs a GPU")
+        result = self.run_entrypoint("smoke")
+        self.assertTrue(any(line.startswith("smoke: FAIL smoke-second") for line in self.smoke_lines(result)))
+
+    def test_refuses_an_unknown_scope(self):
+        result = self.run_entrypoint("smoke", "everything")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("usage", result.stderr)
 
 
 class DisplayTests(EntrypointCase):
