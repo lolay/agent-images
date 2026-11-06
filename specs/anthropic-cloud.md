@@ -60,16 +60,21 @@ What a session waits for between the click and Claude's first command.
 | Repeats when | Every session | The script runs again when the script or the allowed hosts change, or the cache expires (about 7 days) | Every session: no standby (`MIN_IDLE=0`); one would cost about $270 a month |
 
 The cache is the thing to watch. Anthropic caches a setup script only when it
-finishes in roughly five minutes; past that, every session runs it. On 2026-11-06 it was, but not at once. The second session, started a
-few minutes after the first, ran the script again, though the first had exited 0
-in well under the limit: no `setup-script-failed`, 166 s of script, setup ending
-40 ms before `CCR_SPAWN_TIMESTAMP_MS`. The third, about 20 minutes later, started
-in about 12 s, the same as an environment with no setup script. So the snapshot
-seems to build in the background after a successful run, and a session that
-starts before it's ready pays for the script again (an inference; the docs don't
-say). Per-toolset seconds in the second session: core 55.1, native 6.4, jvm 2.1,
-browser 2.0, node 32.4, python 10.2, go 10.0, rust 27.4, proto 10.0, terraform
-10.5. If the report shows sessions paying the install every time, run
+finishes in roughly five minutes; past that, every session runs it. On 2026-11-06 it was, from the first session's run. That run
+took 246.5 s (01:25:00 to 01:29:06 UTC; core 82.1, native 5.8, jvm 3.5, browser
+3.4, node 52.3, python 14.3, go 14.2, rust 42.7, proto 14.4, terraform 13.8) and
+exited 0. The second session started 17 s after it ended, too soon for the
+snapshot, and ran the script again (01:29:23 to 01:32:09, 166 s, exit 0). The
+third, 54 minutes later, started in about 12 s, and its
+`/var/log/agent-images-setup.tsv` was the first run's: the snapshot is of the
+first successful run, and a session whose setup log predates its
+`CCR_SPAWN_TIMESTAMP_MS` came from the cache. How long the snapshot takes to
+become usable isn't measured; somewhere between 17 s and 54 minutes.
+
+246.5 s leaves under a minute of the five-minute budget. A slow day for
+Homebrew's bottles could push a rebuild past it, and then every session pays the
+script until it fits again. If that happens, run the Homebrew toolsets in
+parallel or drop `node` and `rust` (about 95 s together) for Anthropic's own. If the report shows sessions paying the install every time, run
 the toolsets in parallel or drop the ones Anthropic already covers.
 
 `EXPECTED_SPAWN_SECONDS` is 180 for `linux`, three times the measured cold start,
