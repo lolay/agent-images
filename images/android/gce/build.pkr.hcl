@@ -49,6 +49,11 @@ source "googlecompute" "android" {
   max_run_duration_in_seconds = 7200
   instance_termination_action = "DELETE"
 
+  # Packer's wait for state changes, image creation included. Its 5 minute
+  # default is shorter than capturing a 100 GB disk, so the first build that
+  # got that far timed out while the image was still being made.
+  state_timeout = "30m"
+
   image_name              = var.image_name
   image_family            = var.image_family
   image_description       = "agent-images android runner, from ${var.commit}"
