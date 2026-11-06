@@ -1,8 +1,8 @@
 # Plan: m3, the GPU types on GCP
 
 Status: s1 done 2026-11-06 ([infra-ask-m3-gpu.md](infra-ask-m3-gpu.md)). Layout
-decided (owner, 2026-11-06). s2 in progress: files committed (`59231b3`), the
-local `linux-gpu-tools` build not yet verified.
+decided (owner, 2026-11-06). s2 done 2026-11-06, built and checked locally; s3
+next.
 Branch `claude/vigilant-tesla-m2ipbw` (assigned by the harness), from `main` at
 `154787f`.
 
@@ -76,7 +76,7 @@ the two claude.ai environments and their secrets. Everything from s6 waits on th
 Written to [infra-ask-m3-gpu.md](infra-ask-m3-gpu.md): the first GPU deploy gets 3 L4
 and 3 RTX PRO 6000 automatically, so the quota likely needs no Terraform.
 
-#### s2 - `base-gpu` and the `gpu` toolset [deep]
+#### s2 - `base-gpu` and the `gpu` toolset [deep] (done)
 
 - `ARG BASE_IMAGE` in `images/cloud/base/Dockerfile`; bake target `base-gpu`.
   The CUDA image is built on `ubuntu:24.04`, so its `ubuntu` user (uid 1000)
@@ -89,6 +89,26 @@ and 3 RTX PRO 6000 automatically, so the quota likely needs no Terraform.
 - `images/cloud/linux-gpu/Dockerfile` (`FROM` `linux-tools-gpu`, then `gpu`) and
   its bake targets, so s2 builds a whole `linux-gpu-tools` image.
 - Build it locally or in CI without a GPU; nothing in it may need one.
+
+Done: built `linux-gpu-tools` locally on CUDA 13.0.3 devel and checked it. The
+CUDA image has the `ubuntu` user (uid 1000); nvcc 13.0; `agent-cuda-probe` carries
+sm_89 and sm_120 SASS and sm_120 PTX, and without a GPU fails cleanly ("driver
+version is insufficient"); VirtualGL 3.1.5 (`/usr/bin/vglrun`); both vendor files;
+the report-only checks name llvmpipe for EGL and Vulkan without a GPU. Found on
+the way:
+
+- CUDA's image sets `NVIDIA_DRIVER_CAPABILITIES=compute,utility`, which under
+  NVIDIA's container toolkit leaves out the graphics libraries; the `linux-gpu`
+  Dockerfile sets `all`. `3d-gpu`'s Dockerfile needs the same line (s10).
+- CUDA's image has its own `ENTRYPOINT` (a banner script); the runner stage's
+  replaces it, so nothing to do.
+- Size: Docker reports 16.3 GB locally for `linux-gpu-tools`, unpacked. s5's
+  hosted-runner disk question is real.
+- Building locally in a Claude cloud session needs its TLS proxy's CA in the
+  base (a scratch image, passed with `--set base-gpu.args.BASE_IMAGE=...`); CI
+  doesn't. The `core` toolset then fails late and unclearly: Homebrew's
+  installer's curl error doesn't stop `install-toolset.sh`, which dies on the
+  missing `brew` (a pre-existing gap, not fixed here).
 
 #### s3 - GPU in the job spec [exec]
 
@@ -103,7 +123,10 @@ and 3 RTX PRO 6000 automatically, so the quota likely needs no Terraform.
 The entrypoint's `smoke` mode, when `nvidia-smi` exists: GPU name, driver and
 compute capability; the libraries under `/usr/local/nvidia/lib64`; a small CUDA
 device probe (built into the `gpu` toolset at image time); `eglinfo -B` and
-`vulkaninfo --summary` against Xvfb, logged as report-only.
+`vulkaninfo --summary` against Xvfb, logged as report-only. Mostly done in s2:
+the `gpu` toolset's `check.txt` has all of these, and the entrypoint already runs
+them. What's left is checking the driver mount's contents (which graphics
+libraries Cloud Run actually mounts), the most useful fact for s7.
 
 #### s5 - `linux-gpu` type and its build [deep]
 
