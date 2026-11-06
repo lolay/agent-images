@@ -355,10 +355,15 @@ tooling as PyO3 extensions, or Rust splatting like Brush). If that becomes true,
   layer per toolset, slowest-moving first, and the shared `images/cloud/runner`
   stage (target `<type>`) adds the runner files, the session files and Claude Code
   last, so a Claude release rebuilds one layer and never a type's toolsets. Toolsets
-  can also carry smoke checks (`check.txt`), environment (`profile.sh`) and PATH
-  entries (`path.txt`), which `install-toolset.sh` records: the smoke runs the
-  image's own checks, and the cloud profile puts toolset paths after `~/bin` and
-  ahead of Homebrew.
+  can also carry smoke checks (`check.txt`), a functional smoke test (`smoke.sh`),
+  environment (`profile.sh`) and PATH entries (`path.txt`), which
+  `install-toolset.sh` records: the smoke runs the image's own checks, and the cloud
+  profile puts toolset paths after `~/bin` and ahead of Homebrew. `check.txt` proves
+  a tool is there (its version); `smoke.sh` (from
+  [gcp.md m4](gcp.md#m4---functional-smoke-and-versions-report)) proves it works: a
+  short bash script that builds or runs one small thing with the toolset's main
+  tools, offline, in a fresh temp directory, in under 30 s, and ends with a one-line
+  summary.
 - **LXD and Compute Engine `android`:** `build-image.sh` and the Packer
   `googlecompute` build run `install-toolset.sh` over the same list.
 - **macOS:** `install-packages.sh` runs `brew bundle` on `core/Brewfile`, then the

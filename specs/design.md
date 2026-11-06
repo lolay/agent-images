@@ -35,6 +35,16 @@ base image digest, with a comment saying why and linking the upstream issue. Rem
 the pin once upstream is fixed. The README's version table records what was current at
 the last lookup; it doesn't pin anything.
 
+On the GCP runners, "latest" is recorded and gated rather than taken on faith
+([gcp.md](gcp.md), m4 and m5). From m4, every image carries a versions report
+(`/etc/agent-images/versions.md`: Claude, each toolset, all of Homebrew, apt) that
+also lands in its deploy's summary, and each toolset's functional smoke test
+(`smoke.sh`) must pass before an image is promoted. From m5, a lock in git records
+what each type is built from, and a bot's pull request moves it when upstream does,
+merging only on a green build and smoke. Homebrew stays unpinned there too: the lock
+records its versions and a change triggers a build, but a build installs whatever is
+current.
+
 The CI gate is the exception. GitHub Actions are pinned to full commit SHAs, with the
 release tag in a comment: a tag can be moved, and the deploy jobs run these actions
 holding the production identity. Renovate (`.github/renovate.json`) bumps them in one

@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "GitHub Actions only, pinned to commit SHAs (specs/design.md, the CI gate). Image contents track latest through the lock and m4's watch, not Renovate (specs/gcp.md).",
+  "description": "GitHub Actions only, pinned to commit SHAs (specs/design.md, the CI gate). Image contents track latest through the lock and m5's watch, not Renovate (specs/gcp.md).",
   "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
   "enabledManagers": ["github-actions"],
   "timezone": "America/Los_Angeles",
