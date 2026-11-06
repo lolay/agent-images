@@ -95,6 +95,42 @@ class JobSpecTests(unittest.TestCase):
             result = render("linux", IMAGE, env_dir=env_dir)
         self.assertEqual(json.loads(result.stdout)["launchStage"], "BETA")
 
+    def gpu_job(self, gpu_type):
+        with tempfile.TemporaryDirectory() as tmp:
+            env_dir = Path(tmp)
+            (env_dir / "project.env").write_text((REPO / "infra/gcp/project.env").read_text())
+            (env_dir / "linux-gpu.env").write_text(
+                (REPO / "infra/gcp/linux.env").read_text() + f"GPU_TYPE={gpu_type}\n"
+            )
+            return render("linux-gpu", IMAGE, env_dir=env_dir)
+
+    def test_a_cpu_type_asks_for_no_gpu(self):
+        task = self.job()["template"]["template"]
+        self.assertNotIn("nodeSelector", task)
+        self.assertNotIn("gpuZonalRedundancyDisabled", task)
+        self.assertNotIn("nvidia.com/gpu", task["containers"][0]["resources"]["limits"])
+
+    def test_gpu_type_adds_one_gpu_without_zonal_redundancy(self):
+        for gpu_type in ("nvidia-l4", "nvidia-rtx-pro-6000"):
+            with self.subTest(gpu_type=gpu_type):
+                result = self.gpu_job(gpu_type)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                task = json.loads(result.stdout)["template"]["template"]
+                self.assertEqual(task["nodeSelector"], {"accelerator": gpu_type})
+                self.assertIs(task["gpuZonalRedundancyDisabled"], True)
+                self.assertEqual(
+                    task["containers"][0]["resources"]["limits"],
+                    {"cpu": "4", "memory": "16Gi", "nvidia.com/gpu": "1"},
+                )
+                # The rest of the task is the CPU type's.
+                self.assertEqual(task["maxRetries"], 0)
+                self.assertEqual(len(task["volumes"]), 3)
+
+    def test_refuses_an_unknown_gpu_type(self):
+        result = self.gpu_job("nvidia-14")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("GPU_TYPE nvidia-14", result.stderr)
+
     def test_refuses_a_tag(self):
         result = render("linux", IMAGE.split("@")[0] + ":latest")
         self.assertEqual(result.returncode, 2)

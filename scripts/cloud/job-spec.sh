@@ -8,6 +8,12 @@
 # REST rather than `gcloud run jobs deploy`: gcloud's --add-volume has no
 # disk-backed type, and scratch must not be memory. The API's emptyDir takes
 # medium DISK.
+#
+# GPU_TYPE in the type's env file (nvidia-l4, nvidia-rtx-pro-6000) adds one GPU:
+# the accelerator node selector, the nvidia.com/gpu limit (1 is the only value
+# Cloud Run takes) and zonal redundancy off, which GPU jobs require. CPU and
+# MEMORY must meet that GPU's minimums (L4: 4 and 16Gi; RTX PRO 6000: 20 and
+# 80Gi); the API refuses the job otherwise.
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -42,6 +48,15 @@ gcp_load_env "$type" || {
 	printf 'job-spec: no infra/gcp/%s.env\n' "$type" >&2
 	exit 2
 }
+# The accelerator names are easy to get wrong (an L4 is a lowercase L, not 14),
+# and the API's error comes only at deploy.
+case "${GPU_TYPE:-}" in
+"" | nvidia-l4 | nvidia-rtx-pro-6000) ;;
+*)
+	printf 'job-spec: GPU_TYPE %s is not nvidia-l4 or nvidia-rtx-pro-6000\n' "$GPU_TYPE" >&2
+	exit 2
+	;;
+esac
 
 jq -n \
 	--arg name "projects/$PROJECT_ID/locations/$REGION/jobs/$name" \
@@ -54,6 +69,7 @@ jq -n \
 	--arg scratch "${SCRATCH_GIB:?}Gi" \
 	--arg timeout "${TASK_TIMEOUT_SEC:?}s" \
 	--arg launch_stage "${LAUNCH_STAGE:-}" \
+	--arg gpu_type "${GPU_TYPE:-}" \
 	--arg outputs_bucket "$OUTPUTS_BUCKET" \
 	--arg datasets_bucket "$DATASETS_BUCKET" \
 	--arg task_timeout "$TASK_TIMEOUT_SEC" \
@@ -71,7 +87,7 @@ jq -n \
 		template: {
 			taskCount: 1,
 			parallelism: 1,
-			template: {
+			template: ({
 				serviceAccount: $service_account,
 				executionEnvironment: "EXECUTION_ENVIRONMENT_GEN2",
 				# A retried task would come back with a spent work order.
@@ -80,7 +96,8 @@ jq -n \
 				containers: [{
 					name: "runner",
 					image: $image,
-					resources: {limits: {cpu: $cpu, memory: $memory}},
+					resources: {limits: ({cpu: $cpu, memory: $memory}
+						+ (if $gpu_type == "" then {} else {"nvidia.com/gpu": "1"} end))},
 					env: ({
 						AGENT_TYPE: $type,
 						AGENT_TASK_TIMEOUT_SEC: $task_timeout,
@@ -107,6 +124,10 @@ jq -n \
 						mountOptions: ["implicit-dirs"]}}
 				]
 			}
+			+ (if $gpu_type == "" then {} else {
+				nodeSelector: {accelerator: $gpu_type},
+				gpuZonalRedundancyDisabled: true
+			} end))
 		}
 	}
 	+ (if $launch_stage == "" then {} else {launchStage: $launch_stage} end)'

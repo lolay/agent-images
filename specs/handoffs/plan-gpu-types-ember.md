@@ -1,8 +1,7 @@
 # Plan: m3, the GPU types on GCP
 
 Status: s1 done 2026-11-06 ([infra-ask-m3-gpu.md](infra-ask-m3-gpu.md)). Layout
-decided (owner, 2026-11-06). s2 done 2026-11-06, built and checked locally; s3
-next.
+decided (owner, 2026-11-06). s2 and s3 done 2026-11-06; s4 next.
 Branch `claude/vigilant-tesla-m2ipbw` (assigned by the harness), from `main` at
 `154787f`.
 
@@ -32,7 +31,7 @@ mirror.gcr.io/nvidia/cuda:13.0.x-devel-ubuntu24.04
       3d-gpu          the shared runner stage
 
 infra/gcp/linux-gpu.env, 3d-gpu.env
-  GPU_TYPE=nvidia-l4 | nvidia-rtx-pro-6000, GPU_COUNT=1, CPU, MEMORY
+  GPU_TYPE=nvidia-l4 | nvidia-rtx-pro-6000, CPU, MEMORY
   -> job-spec.sh: accelerator node selector, nvidia.com/gpu limit,
      zonal redundancy off
 ```
@@ -110,13 +109,20 @@ the way:
   installer's curl error doesn't stop `install-toolset.sh`, which dies on the
   missing `brew` (a pre-existing gap, not fixed here).
 
-#### s3 - GPU in the job spec [exec]
+#### s3 - GPU in the job spec [exec] (done)
 
 - `job-spec.sh`: `GPU_TYPE` and `GPU_COUNT` from the env file; when set, the
   accelerator node selector, the `nvidia.com/gpu` limit and zonal redundancy off.
   Field names and the L4's minimums from Cloud Run's current docs, not from memory.
 - Its tests: a CPU type's spec is unchanged byte for byte; a GPU type's has the
   fields.
+
+Done: `GPU_TYPE` alone (no `GPU_COUNT`: Cloud Run takes only one GPU per
+instance) adds `nodeSelector.accelerator`, `gpuZonalRedundancyDisabled: true`
+and `nvidia.com/gpu: "1"`, the v2 REST names from Cloud Run's API reference.
+An unknown `GPU_TYPE` exits 2 (the docs warn that `nvidia-l4` is easy to mistype).
+`linux` and `gis` render byte for byte as before; three new tests; the full unit
+suite passes.
 
 #### s4 - GPU smoke checks [exec]
 
