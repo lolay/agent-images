@@ -1,7 +1,8 @@
 # Plan: m3, the GPU types on GCP
 
 Status: s1 done 2026-11-06 ([infra-ask-m3-gpu.md](infra-ask-m3-gpu.md)). Layout
-decided (owner, 2026-11-06). s2 to s4 done 2026-11-06; s5 next.
+decided (owner, 2026-11-06). s2 to s4 done 2026-11-06; s5 in progress (env file
+and bake target done; the deploy's cache waits on the owner).
 Branch `claude/vigilant-tesla-m2ipbw` (assigned by the harness), from `main` at
 `154787f`.
 

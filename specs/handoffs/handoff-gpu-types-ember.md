@@ -15,8 +15,14 @@ from `main` at `154787f`. Plan: [plan-gpu-types-ember.md](plan-gpu-types-ember.m
 Layout decided (owner): one base Dockerfile with `BASE_IMAGE`, `linux-gpu` reusing
 `linux`'s Dockerfile, and a `gpu` toolset on top of each GPU type.
 
-s2 to s4 done (see the plan's notes). Next: s5, the `linux-gpu` type, its env
-file and the deploy's disk, after the owner reviews s4.
+s2 to s4 done (see the plan's notes). s5 in progress: `infra/gcp/linux-gpu.env`
+(L4) and the `linux-gpu` bake target are committed; `changed-targets.sh` lists
+`linux-gpu` with no change. Disk turned out fine (about 44 GB free after "Free
+disk", the image about 10.8 GB unpacked). Pending question to the owner: the
+deploy's Actions cache for the GPU parents (`base-gpu`, `linux-tools-gpu`) when the
+repo's cache is 10 GB and CUDA alone is 4 GB of it. Options asked: cache them like
+the other types and accept eviction; cache nothing for GPU parents; or raise the
+repo's cache limit.
 
 The owner chose to skip the review gate: the full review of `main` covering m1 and
 m2 runs later, and its high findings become steps in this plan.
