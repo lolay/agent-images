@@ -44,7 +44,10 @@ case "$1 $2" in
 			fi
 		done
 		exit "${{FAKE_SMOKE_STATUS:-0}}" ;;
-	executions) allow --job --project --region --sort-by --limit --format; echo agent-linux-next-p5rqf ;;
+	executions)
+		[[ "$4" == list ]] || {{ echo "ERROR: (gcloud.run.jobs.executions) invalid choice: '$4'" >&2; exit 2; }}
+		allow --job --project --region --sort-by --limit --format; echo agent-linux-next-p5rqf ;;
+	*) echo "ERROR: (gcloud.run.jobs) Invalid choice: '$3'" >&2; exit 2 ;;
 	esac ;;
 "logging read")
 	allow --project --order --limit --format
@@ -56,6 +59,7 @@ case "$1 $2" in
 	describe)
 		allow --project --zone --format
 		echo '{{"metadata": {{"items": [{{"key": "orchestrator-image", "value": "{REGISTRY}/agent-orchestrator@sha256:cc"}}]}}}}' ;;
+	*) echo "ERROR: (gcloud.compute.instances) Invalid choice: '$3'" >&2; exit 2 ;;
 	esac ;;
 *) echo "ERROR: (gcloud) the fake doesn't know $*" >&2; exit 2 ;;
 esac
