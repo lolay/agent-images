@@ -11,7 +11,10 @@
 # green.
 #
 #   AGENT_TOOLSET_CHECKS   the binary checks' runner (default agent-toolset-checks)
-#   AGENT_GIS_MANIFEST     gis's pixi manifest (default /opt/gis/pixi.toml)
+#   AGENT_GIS_MANIFEST     gis's pixi manifest (default $GIS_MANIFEST, which the gis
+#                          toolset's profile exports; both builds run this with
+#                          the profile loaded, through BASH_ENV or a login shell.
+#                          Without either, the pixi section is left out)
 set -euo pipefail
 
 (($# == 2)) || {
@@ -20,7 +23,7 @@ set -euo pipefail
 }
 readonly type="$1" commit="$2"
 readonly checks="${AGENT_TOOLSET_CHECKS:-agent-toolset-checks}"
-readonly gis_manifest="${AGENT_GIS_MANIFEST:-/opt/gis/pixi.toml}"
+readonly gis_manifest="${AGENT_GIS_MANIFEST:-${GIS_MANIFEST:-}}"
 
 readonly fence='```'
 
@@ -56,7 +59,7 @@ fi
 if has tenv; then
 	block "Terraform (tenv)" tenv tf list
 fi
-if has pixi && [[ -f "$gis_manifest" ]]; then
+if has pixi && [[ -n "$gis_manifest" && -f "$gis_manifest" ]]; then
 	block "pixi environment ($(dirname "$gis_manifest"))" pixi list --manifest-path "$gis_manifest"
 fi
 if has dpkg-query; then

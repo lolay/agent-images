@@ -48,6 +48,8 @@ minimal=(env -i "HOME=$HOME" "PATH=/usr/bin:/bin")
 	printf '# The gis toolset environment (images/toolsets/gis/install.sh), from\n'
 	printf '# pixi shell-hook --json at build time.\n'
 	printf 'export GIS_ENV=%s\n' "$env"
+	# Where the manifest is, for write-versions.sh's pixi section.
+	printf 'export GIS_MANIFEST=%s\n' "$root/pixi.toml"
 	# QGIS needs a display; sessions have none. Written literally, for the
 	# session's shell to expand.
 	# shellcheck disable=SC2016
