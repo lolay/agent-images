@@ -42,7 +42,9 @@ boot_seconds() {
 
 check "claude" claude --version
 check "sudo" sudo -n true
-check "kvm" kvm-ok
+# runuser -l gives the guest user login.defs's PATH, which has no /usr/sbin;
+# sessions get systemd's, which does.
+check "kvm" /usr/sbin/kvm-ok
 check "java" java -version
 check "adb" adb version
 check "scratch writable" test -w "${AGENT_SCRATCH:-/scratch}"
