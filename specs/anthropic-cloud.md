@@ -121,6 +121,90 @@ way to close that gap is Homebrew's `core`, `proto` and `terraform` Brewfiles fr
 this repo in the setup script, at the cost of a slower session start (Homebrew's
 install alone is a minute or more).
 
+## Matching agent-linux on Anthropic's cloud
+
+An experiment, not a decision: give an Anthropic environment agent-linux's tools
+and compare how fast sessions start and what they get. If the start cost is
+tolerable, it's a way to run Lolay sessions with the same tools without our GCP
+backend, and with Docker and root besides.
+
+`scripts/anthropic/setup.sh` installs agent-linux's toolsets, in agent-linux's order,
+with the same `install-toolset.sh`, timing each into
+`/var/log/agent-images-setup.tsv`. The environment's setup script is one line, and
+agent-images must be one of the session's repositories:
+
+```bash
+bash agent-images/scripts/anthropic/setup.sh
+```
+
+Two things differ from agent-linux, both forced by Anthropic's image:
+
+- **Homebrew belongs to `ubuntu`, not root.** Homebrew won't run as root outside a
+  container it recognizes (`/.dockerenv`, `/run/.containerenv`, or a docker or
+  kubepods cgroup), and Anthropic's VM has none of them. Sessions are root, so a
+  `brew` wrapper in `/opt/agent-images/bin` runs it as `ubuntu`.
+- **The proxy's CA variables aren't passed to `ubuntu`.** `SSL_CERT_FILE` and the
+  rest name `/root/.ccr/ca-bundle.crt`, which `ubuntu` can't read (curl exits 77).
+  The system store has the proxy's CA already, so Homebrew works without them.
+
+Measured in this session (as the image's `claude` user, without the sudoers and
+profile changes, which this session wasn't allowed to make): see the table below.
+
+<!-- timing -->
+
+### The report prompt
+
+Start a session in the environment and give it this. Run it once on an environment
+with the setup script, once on plain `cloud_default` for a baseline, and once on
+`linux` for agent-linux's side. Note the time you click start and put it in the
+prompt.
+
+```text
+I started this session at <HH:MM:SS, your time zone>. Don't install, fix or
+change anything: this is a measurement. Write report.md at the root of the
+agent-images checkout, commit it and push it to this session's branch. Report
+facts only; where something can't be measured from inside the session, say so
+rather than estimate.
+
+1. Environment. Which one this is: Anthropic cloud_default with the agent-images
+   setup script, without it, or agent-images' own linux type (Cloud Run; look for
+   /etc/agent-images/toolsets and $AGENT_TYPE). User, nproc, memory, free disk,
+   Claude Code version, whether sudo and apt-get work, whether /dev/kvm exists,
+   whether `dockerd` can start (start it in the background, check `docker info`,
+   stop it).
+
+2. Start time. Every timestamp you can find, converted to the same time zone as
+   my click time, in order: my click time; the container's spawn
+   (CCR_SPAWN_TIMESTAMP_MS if set, else the start time of PID 1 from
+   `ps -o lstart= -p 1`); the setup script's start and end and each toolset's
+   seconds (/var/log/agent-images-setup.tsv, if present); the Claude Code process
+   start (`ps -o lstart= -p $CLAUDE_PID`, or the oldest `claude` process); and now,
+   at your first command. Give the gap between each pair, and the total from my
+   click to your first command. If the setup script failed, quote
+   /root/.claude/environment-manager/setup-script-output.
+
+3. Tools. For every toolset in agent-images/images/toolsets that has a check.txt,
+   run each check (format `label: command`, must exit 0, first line of output is
+   the version) and report pass or fail and the version. Then for go, node,
+   python3, cargo, rustc, java, gh, git, jq, rg, terraform and protoc, give
+   `command -v` and `type -a` so it's clear whose copy wins (Homebrew's under
+   /home/linuxbrew, Anthropic's under /usr/local, /opt or /root, or Ubuntu's in
+   /usr/bin). Say whether PATH has /home/linuxbrew/.linuxbrew/bin ahead of
+   /usr/local/bin in your Bash tool's shell, and in `bash -lc 'echo $PATH'`.
+
+4. Homebrew from the session. `brew --version`, then time `brew install hello`
+   and run `hello`. Report who owns /home/linuxbrew and its size (`du -sh`).
+
+5. Doctor. Quote verbatim any SessionStart hook output headed "Environment
+   doctor" that you received, or say there was none. Then run `make doctor` in
+   agent-images and give its summary line.
+
+6. A table comparing this run's results with agent-linux's, from
+   agent-images/specs/anthropic-cloud.md (the Machine, Toolchains and Session
+   tools tables) and gcp.md's "m1 results" (cold start about 55 s): what's
+   missing, what's older, what's extra.
+```
+
 ## What breaks moving a repo between them
 
 From Anthropic's to `linux`:
