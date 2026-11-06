@@ -200,7 +200,7 @@ Choices, carried over from [design.md](design.md):
   service account gets logging and the two buckets (below) only.
 - **Claude upgrades itself at start, on the weekly types for good.** A `nightly`
   type ([Rebuild cadence](#rebuild-cadence)) is at most a day behind today, and
-  within the hour once m4's watch rebuilds it on a release; m4 then turns its
+  within the hour once m5's watch rebuilds it on a release; m5 then turns its
   self-update off. A `weekly` type can be a week behind, so it keeps
   `CLAUDE_UPGRADE=true` (the shared default): about 6 s per start, against a rebuild
   that costs up to 45 minutes. The image still installs Claude in its own last layer.
@@ -215,7 +215,7 @@ type toolsets             one layer each: apt at the locked snapshot, Brewfile,
                           install.sh (images/cloud/<type>)
 images/shared files       and the session files (images/cloud/runner)
 Claude Code               ARG CLAUDE_VERSION; RUN install that exact version
-manifest                  /etc/agent-images/manifest.json, also an OCI label
+versions report           /etc/agent-images/versions.md (m4)
 ```
 
 Claude goes last because it moves most often (most weekdays): a new release rebuilds
@@ -281,13 +281,29 @@ image.
 | Homebrew, dependencies and `lolay/tap` included | Each formula and cask with its version and revision | `brew info --json=v2` on the runner's own Homebrew (preinstalled on Ubuntu runners), after `brew tap lolay/tap` |
 | Claude Code | Version | `https://downloads.claude.ai/claude-code-releases/latest` |
 | Type tools (COLMAP, ...) | Version | The project's latest GitHub release |
+| Rust toolchain | Version | rustup's `stable` channel manifest |
+| Terraform | Version | `tenv tf list-remote`, newest stable |
 
 The build consumes the lock: `FROM` the locked digest, `apt-get --snapshot` at the
-locked timestamp, `CLAUDE_VERSION` from the lock. apt's snapshot makes the apt layer
-reproducible, old versions included, which plain `pkg=version` can't promise because
-Ubuntu's update pockets keep only the newest. Homebrew is the exception: it only
-installs current versions, so its lock entries are a record and a change detector,
-not a pin.
+locked timestamp, `CLAUDE_VERSION` from the lock, and the rust and terraform toolsets'
+`install.sh` install the locked version (`rustup toolchain install <x.y.z>`,
+`tenv tf install <x.y.z>`) instead of `stable` and `latest`. apt's snapshot makes the
+apt layer reproducible, old versions included, which plain `pkg=version` can't promise
+because Ubuntu's update pockets keep only the newest.
+
+Homebrew is the exception, and stays that way (owner, 2026-11-06): it only installs
+current versions, so its lock entries are a record and a change trigger, never a pin.
+A moved formula is what makes the watch propose a lock and so a build, but the build
+installs whatever Homebrew has when it runs. Two consequences follow. The lock pull
+request's build and the deploy's build can see different Homebrew versions if one
+moved in between; the deploy's `-next` smoke is the gate for that. And a revert of
+the lock brings apt, the base image, Claude, Rust and Terraform back exactly, but
+Homebrew back current.
+
+What an image actually got is its versions report
+([m4](#m4---functional-smoke-and-versions-report)), `/etc/agent-images/versions.md`,
+read from inside the built image. The lock says what was asked for; the report says
+what landed, and the two differ only where Homebrew moved between them.
 
 The watch never touches GCP, so there's no egress. The stock Ubuntu image it starts
 is about 30 MB, from a public registry.
@@ -295,50 +311,56 @@ is about 30 MB, from a public registry.
 ### Watch: hourly, 08:00 to 22:00 Pacific
 
 `cron: '17 8-22 * * *'` with `timezone: America/Los_Angeles` (schedules take a time
-zone since March 2026). It never deploys; it only proposes a commit:
+zone since March 2026). It never deploys; it only proposes a pull request:
 
 1. Resolve everything as above into a candidate lock, per type.
 2. Same as the lock on `main`: done, a minute or two of runner time.
-3. Different: commit the candidate lock to `main` with a message naming what moved
-   (`lock(3d-gpu): claude 2.1.318, apt 3 packages`). That push starts the deploy.
+3. Different: push the candidate locks to the bot's branch, `lock/watch`, and open
+   one pull request for the run (or refresh the open one), titled for what moved
+   (`lock(linux): claude 2.1.318, go 1.26.1, apt 3 packages`), with auto-merge on.
+4. The pull request's required checks are `cloud-build`: the build of each type
+   whose lock moved, then `make cloud-smoke` on it, the functional smoke from
+   [m4](#m4---functional-smoke-and-versions-report). Green merges it (squash), and
+   that push to `main` starts the deploy, which smokes once more at `-next` in Cloud
+   Run before promoting.
+
+A version that breaks something never reaches `main`: its pull request stays open
+and red, which is the notification, and the next run refreshes the same pull request
+rather than opening another. Fix forward (a toolset change on its own pull request)
+or pin ([below](#pinning-a-dependency)); either way the next watch run rebases the
+lock onto it.
 
 The lock on `main` is the desired state, and the deploy makes Cloud Run match it. If
-a deploy fails, `main` is ahead of what's live until it's fixed: the failed run
-notifies, the watch doesn't re-propose a lock that's already on `main`, and the
-nightly build retries.
+a deploy fails after merge (the Cloud Run smoke catching what the hosted runner
+couldn't, such as the GPU or the mounts), `main` is ahead of what's live until it's
+fixed: the failed run notifies, and the nightly build retries.
 
-The commit needs a GitHub App token (`actions/create-github-app-token`), not
-`GITHUB_TOKEN`: a push made with `GITHUB_TOKEN` doesn't start other workflows, so the
-deploy would never run. Direct commit, not a pull request: deploys follow upstream
-within the hour, and the lock bot below is what keeps that safe.
+The pull request needs a GitHub App token (`actions/create-github-app-token`), not
+`GITHUB_TOKEN`: a pull request opened with `GITHUB_TOKEN` doesn't start other
+workflows, so its checks would never run. A pull request rather than a direct commit
+(owner, 2026-11-06): the smoke gates the version before it lands, and `main`'s rules
+apply to the bot like anyone else, so it needs no bypass.
 
 ### The lock bot
 
-A GitHub App's permissions are per repo and per kind (contents, pull requests, ...),
-not per path, and the rule that restricts file paths on push (push rulesets) is
-Enterprise Cloud only, for private and internal repos. So "it can only change
-`versions.lock`" is built from layers:
+With pull requests, the bot never writes `main`: it writes its own branch and asks,
+and `main`'s ruleset (pull requests required, squash only, no force pushes or
+deletions, no bypass actors) holds for it as for anyone. What's left to guard is
+what it can push to its branch, and that only lands through the required checks:
 
 | Layer | What it stops |
 | --- | --- |
-| Installed on `lolay/agent-images` only; permissions Contents write and Metadata read, nothing else | Any other repo; issues, pull requests, settings, secrets |
-| No Workflows permission | GitHub refuses any change from the App to `.github/workflows/`, so it can't rewrite the workflows that guard it |
-| Each run's token narrowed further (`permission-contents: write` on `actions/create-github-app-token`), valid one hour | A leaked token outliving its run |
+| Installed on `lolay/agent-images` only; permissions Contents write, Pull requests write and Metadata read, nothing else | Any other repo; issues, settings, secrets |
+| No Workflows permission | GitHub refuses any change from the App to `.github/workflows/`, so it can't rewrite the checks that gate it |
+| Each run's token narrowed further (`permission-contents: write`, `permission-pull-requests: write` on `actions/create-github-app-token`), valid one hour | A leaked token outliving its run |
 | The App's private key is a secret of a GitHub environment, `lock-bot`, that only `main` can use | Any branch, pull request or fork using the key; only reviewed code on `main` runs with it |
-| `main` ruleset: pull requests required, squash only, the App as the only bypass actor, no force pushes or deletions | Anyone else committing directly; the App rewriting history |
-| The watch checks its own diff before pushing: only `images/cloud/*/versions.lock`, fast-forward only | A bug in the resolver writing anything else |
-| An audit workflow on every push to `main` by the App: any path outside the lock files fails the run and notifies | Anything that slips past the above, caught within minutes |
+| The watch checks its own diff before pushing: only `images/cloud/*/versions.lock` | A bug in the resolver writing anything else, which would otherwise sit in an auto-merging pull request |
 
 Commits made through the API (`createCommitOnBranch`) are signed by GitHub, so a
 "require signed commits" rule works with the bot too.
 
-Strongest option if that's not enough: put the locks in a separate repo
-(`lolay/agent-images-locks`) with the App installed only there, and have it notify
-this repo (`repository_dispatch`) to deploy. The App then can't touch this repo at
-all. More moving parts; not worth it for a lock file.
-
-Expect one or two deploys a day: Claude most weekdays, apt security updates a few
-times a week, Homebrew less.
+Expect one or two lock pull requests a day, each merging itself within the build's
+time: Claude most weekdays, apt security updates a few times a week, Homebrew less.
 
 ### Deploy: build, smoke, promote
 
@@ -386,7 +408,7 @@ no-cache build promoted the same way as a push's. A type without `REBUILD` is
 
 | Image | Rebuild cost | `REBUILD` | Claude between builds |
 | --- | --- | --- | --- |
-| `linux` | Minutes; Claude is the last layer | `nightly`: 04:07 Pacific, Tuesday to Saturday, after the weekday's Claude releases | Self-updates until m4's watch |
+| `linux` | Minutes; Claude is the last layer | `nightly`: 04:07 Pacific, Tuesday to Saturday, after the weekday's Claude releases | Self-updates until m5's watch |
 | Orchestrator | A minute or two | Rides `nightly` (not a type, so no env file) | Baked in; rebuilt nightly |
 | `gis` | 9 GB, most of the Actions cache's 10 GB; conda-forge moves slowly | `weekly`: 05:37 Pacific, Sunday | Self-updates |
 | `android` | About 45 min of Packer with no layer cache, the disk capture and a smoke VM; about $0.50 in GCP | `weekly` | Self-updates |
@@ -402,10 +424,11 @@ rebuilds on any push that touches its inputs ([above](#what-a-push-to-main-deplo
 the cheap ones.
 
 A scheduled run catches what the lock can't see (a curl installer), retries a failed
-deploy, and keeps the "track latest" promise even if a check is wrong. Before m4 it's
+deploy, and keeps the "track latest" promise even if a check is wrong. Before m5 it's
 the only way apt and Homebrew updates reach an image that nothing has pushed to.
-With m4, the nightly builds `--pull` from the lock on `main`, and the hourly watch
-covers `nightly` types only; a `weekly` type's lock updates on its schedule.
+With m5, the nightly builds `--pull` from the lock on `main`, and the hourly watch
+covers `nightly` types only; a `weekly` type's lock pull request opens on its
+schedule.
 
 A scheduled run can displace a push run waiting in the deploy's `concurrency` queue
 (GitHub keeps one pending run); the next push covers it, since `plan` diffs against
@@ -432,30 +455,33 @@ type already), so a standby is never more than an hour older than the newest ima
 - **Two images per type.** An Artifact Registry cleanup policy keeps the two most
   recent versions and deletes the rest, untagged layers included (still a dry run).
   Two, because after a push whose smoke test fails, the live digest is no longer the
-  newest. Rollback is a `git revert`
-  of the lock on `main`, which deploys like any other commit: apt and the base come
-  back exactly (snapshot and digest), Homebrew comes back current. A revert alone
-  lasts only until the next watch re-proposes the newer version, so pair it with a pin
-  on whatever broke (below).
-- **History in git, logs on GitHub.** The lock's history is the permanent record of
-  what every image contained, and `git log -p images/cloud/3d-gpu/versions.lock` shows
-  what changed and when. Build logs, with the full `dpkg-query -W` and
-  `brew list --versions` output, keep 90 days in Actions (a public repo's maximum) and
-  are public, which is fine: builds hold no secrets.
+  newest. Rollback is a pull request reverting the lock on `main`, which deploys like
+  any other commit: apt, the base, Claude, Rust and Terraform come back exactly
+  (snapshot, digest, versions), Homebrew comes back current. A revert alone lasts
+  only until the next watch re-proposes the newer version, so pair it with a pin on
+  whatever broke (below).
+- **History in git, reports on GitHub.** The lock's history is the permanent record
+  of what every image was built from, and `git log -p images/cloud/3d-gpu/versions.lock`
+  shows what changed and when. Each deploy's versions report
+  ([m4](#m4---functional-smoke-and-versions-report)) is what it actually got, Homebrew
+  included, in the run's summary and as an artifact for 90 days (a public repo's
+  maximum), and in the image itself for as long as the registry keeps it. All public,
+  which is fine: builds hold no secrets.
 
 Make targets in the same vocabulary as the rest: `make cloud-build` (build the
 images locally), `make cloud-smoke` (run the entrypoint's smoke mode against local
 directories), `make cloud-test` (the unit tests), `make cloud-ci` (what the pull
 request check runs), `make cloud-status` (read-only: what each job and the host run),
-and from m4 `make cloud-lock TYPE=3d-gpu` (resolve locally, show the diff). No
+and from m5 `make cloud-lock TYPE=3d-gpu` (resolve locally, show the diff). No
 publish or promote target: only `main` deploys, and a local one would be a second
 path around the federation condition.
 
 Off the shelf instead: Renovate (as a GitHub Action) handles the base digest, GitHub
-releases and a custom source for Claude, with a pull request per change. It doesn't
-resolve an apt dependency closure or Homebrew on Linux, and a pull request per bump
-is a lot of churn for "track latest". One small resolver script and one lock commit
-fit better. Dependabot still suits the pinned GitHub Actions versions.
+releases, Rust, Terraform and a custom source for Claude, with grouped pull requests
+and auto-merge. It doesn't resolve an apt dependency closure or snapshot, or Homebrew
+on Linux, so the resolver script has to exist anyway, and two bump systems feeding
+one lock is worse than one (owner, 2026-11-06). Dependabot still suits the pinned
+GitHub Actions versions.
 
 ## Pinning a dependency
 
@@ -470,6 +496,8 @@ it's fixed. How, per source:
 | Homebrew formula | A versioned formula if one exists (`python@3.12`), else `brew extract --version=X <formula> lolay/tap` and name `lolay/tap/<formula>@X` in the Brewfile | `brew pin` doesn't help a fresh build. An extracted formula has no bottle, so it builds from source |
 | `lolay/tap` formula | Revert in the tap, or add a versioned formula there | It's ours |
 | Claude Code | `CLAUDE_VERSION=2.1.317` (a version) or `stable` (the channel) | The watch then skips Claude; set the runner's `CLAUDE_UPGRADE=false` so it doesn't update itself past the pin |
+| Rust toolchain | `RUST_TOOLCHAIN=1.91.0` (a version) or `1.91` (a minor line) in `images/toolsets/rust/install.sh` | The watch resolves within it: a minor line still takes patch releases |
+| Terraform | `TERRAFORM_VERSION=1.14.2` or `~> 1.14` in `images/toolsets/terraform/install.sh` | tenv takes the constraint as is |
 | Type tool from a release | Its version in the Dockerfile | |
 
 Pins live where the dependency is declared, each with `# pinned: <issue URL>`, and the
@@ -981,14 +1009,141 @@ What the deploys found:
   12.0. Done when [tests/sessions/3d-gpu.md](../tests/sessions/3d-gpu.md) passes.
 - Handoff: [handoffs/handoff-m3-gpu-types.md](handoffs/handoff-m3-gpu-types.md).
 
-### m4 - Dependency watch
+### m4 - Functional smoke and versions report
 
-The lock files, the hourly watch (for `nightly` types), the lock bot, the scheduled
-rebuilds building from the lock, the cleanup policy out of dry run, and manifests;
-with the watch in place, turn off Claude's self-update at start
-(`CLAUDE_UPGRADE=false`) on the `nightly` types only
-([Rebuild cadence](#rebuild-cadence)). The schedules themselves already run. Independent of the types; it can start
-any time after m1.
+Two gaps the images have today, closed before the watch, since m5 depends on both. The
+smoke checks (`check.txt`, run by the entrypoint's `smoke`) only run `--version`: they
+prove a binary is there, not that the toolchain builds anything, so a release that
+breaks Go or Cargo promotes. And nothing records what an image contains:
+`install-toolset.sh` logs each Brewfile's top-level formulae, not their dependencies,
+and only in a layer that actually ran, so a cached layer leaves nothing; apt isn't
+recorded at all; the deploy's summary holds only the digest. Independent of the
+types and of m5.
+
+**Smoke contract.** A toolset can ship `smoke.sh` next to its `check.txt`
+([image-toolsets.md](image-toolsets.md)). `install-toolset.sh` records it as
+`<name>.smoke.sh` with the toolset's other files. The entrypoint's `smoke`, after the
+`toolchains` check, runs each recorded one in install order as its own check
+(`smoke: pass smoke-go (go: built and ran hello, vet clean)`): in a fresh temp
+directory under `$TMPDIR`, removed afterward, under `timeout 120`, with the network
+off for the toolchains (`GOPROXY=off`, `GOFLAGS=-mod=mod`, `CARGO_NET_OFFLINE=true`,
+`UV_OFFLINE=1`, `npm_config_offline=true`, `CHECKPOINT_DISABLE=1`). The android
+smoke VM's `agent-gce-smoke.sh` runs the same recorded scripts. Unit tests in
+`tests/unit/test_entrypoint.py` cover a script that passes, one that fails, one that
+hangs past a shortened timeout, and a toolset without one.
+
+**The pull request gate.** `cloud-build.yml` builds each runner target with `--load`
+and runs `make cloud-smoke TYPE=<target>` on it, which already stands in local
+volumes for the mounts. Not `orchestrator`, which isn't a runner type. If `gis`
+(9 GB) or `linux-gpu` can't be loaded within a hosted runner's disk, they keep the
+no-output build and their functional smoke runs at `-next` only, said in the
+workflow's comment. This is the check m5's lock pull requests merge on.
+
+**Versions report.** One script, `images/toolsets/write-versions.sh`, writes
+`/etc/agent-images/versions.md`: the image type and build date, Claude Code's
+version, each recorded `check.txt` label with its version line, all of
+`brew list --versions` (dependencies and `lolay/tap` included), `rustup toolchain
+list`, `tenv tf list`, `pixi list` for `/opt/gis` on `gis`, and
+`dpkg-query -W -f '${Package} ${Version}\n'` inside a collapsed `<details>`. A
+section whose tool isn't installed is left out.
+
+- The cloud images write it in the last `RUN` of `images/cloud/runner/Dockerfile`,
+  after Claude. It's the top layer, so it reruns whenever anything under it changed,
+  and a cached copy is still accurate. `android` writes it at the end of
+  `images/android/gce/provision.sh` and prints it into the Packer log.
+- It leaves the build without a pull from Artifact Registry: a `versions-<type>` bake
+  target, `FROM scratch` with only that file copied from the type's image, built in
+  the same `bake` call as the push with a `type=local` output, so it reuses the
+  layers just built.
+- `cloud-deploy.yml` appends it to `$GITHUB_STEP_SUMMARY` under the commit and the
+  pushed digest, and uploads it as an artifact, `versions-<type>-<tag>.md`, with
+  `retention-days: 90`. `cloud-build.yml` does the same on pull requests, so a pull
+  request shows what its image would contain.
+- The entrypoint's `smoke` names the file, so the `-next` log and a session can
+  find it.
+
+Until m5 the record is the image itself (the registry keeps two per type) and 90 days
+of Actions; from m5 the lock in git is the permanent one, and the report says what
+each build actually got.
+
+**Per-toolset checks.** Each one does a small piece of real work with its toolset's
+main tools, offline, in under 30 s on a warm image. `check.txt` already covers
+versions.
+
+| Toolset | Check |
+| --- | --- |
+| core | `git init` and a commit; a `jq` transform; `age-keygen` and a `sops` encrypt and decrypt round trip |
+| native | C and C++ hello, compiled and run; a `cmake` and `ninja` build of the same |
+| jvm | `javac` and `java` on a Hello class |
+| node | `node` runs an ES module; `pnpm run` a script in a package with no dependencies |
+| python | `uv venv` on the installed Python, a script run in it; `ruff check` on the script |
+| go | `go mod init`, `go vet`, `go build`, run |
+| rust | `cargo new`, `cargo build --offline`, `cargo clippy -- -D warnings`, `cargo fmt --check` |
+| proto | `protoc` a one-message file to a descriptor set; `buf lint` with a local `buf.yaml` |
+| terraform | `terraform init` and `validate` on a module with no providers; `tflint` on it |
+| gis | `ogr2ogr` or `ogrinfo` on a generated GeoJSON; the pixi environment imports its core modules |
+| gpu | `nvcc` compiles `cuda-probe.cu` without running it: a hosted runner has no GPU, and the existing device probe covers runtime at `-next` |
+| android-go, android-rust | Cross-compile hello for an Android ABI with the NDK |
+| android | `sdkmanager --list_installed` and `aapt2 version`; a Gradle build needs dependencies from the network |
+
+None for `browser` (libraries only; sessions install the browser) or `display`
+(`check.txt` already takes a screenshot).
+
+#### s1 - Smoke framework `[deep]`
+
+`install-toolset.sh` records `smoke.sh`; the entrypoint and `agent-gce-smoke.sh` run
+the recorded scripts; the unit tests; `cloud-build.yml` loads and smokes each target.
+The Makefile's `CLOUD_SCRIPTS` already globs `images/toolsets/*/*.sh`, so shellcheck
+and shfmt cover the new scripts unchanged.
+
+#### s2 - Versions report `[deep]`
+
+`write-versions.sh`, the runner Dockerfile's last layer, `provision.sh`, the
+`versions-<type>` bake targets, and the summary and artifact steps in both workflows.
+
+#### s3 - Per-toolset smoke scripts `[exec]`
+
+One subagent per toolset in the table, on Sonnet, at most six at once, in two waves:
+`linux`'s nine toolsets (core through terraform), then `gis`, `gpu` and the three
+android toolsets. Each gets this contract in its prompt, verbatim:
+
+- Write exactly one file, `images/toolsets/<name>/smoke.sh`, and touch nothing else.
+  Fixtures go in heredocs inside it.
+- `#!/bin/bash` and `set -euo pipefail`. It runs in the current directory, a fresh
+  empty temp directory: no `cd` out of it, no writes elsewhere, no `sudo`.
+- Offline: no registry, proxy, module, crate, provider or package fetches. Only the
+  tools this toolset installs (read its `packages.txt`, `Brewfile`, `install.sh` and
+  `check.txt`) and core's.
+- Real work, not `--version`: build or run one small thing per main tool. At most 40
+  lines, under 30 s on a warm image.
+- The last line of output is a one-line summary (`go: built and ran hello, vet
+  clean`).
+- Passes `shellcheck -x` and `shfmt -d` with the repo's settings. If the toolset's
+  tools are on the session's PATH, run it in a temp directory; otherwise say it
+  wasn't run.
+- Don't commit, push, or change branches. Report the file and what was verified.
+
+The parent reviews each script against the contract, runs `make cloud-lint
+cloud-test`, and commits each wave.
+
+#### s4 - Verify on images `[deep]`
+
+A pull request's `cloud-build` shows a `smoke-<name>` pass line per toolset for each
+type it loads, and a versions report per type in its summary. A scratch commit that
+breaks one script (`exit 1`) turns that check red and names the toolset. The first
+deploy from `main` shows the same lines at `-next` in Cloud Run, and the next
+`android` deploy (or a manual dispatch of it) shows the android three on its smoke VM.
+Results go under this milestone.
+
+### m5 - Dependency watch
+
+The lock files (Homebrew recorded, never pinned; the base digest, the apt snapshot,
+Claude, Rust and Terraform pinned), the hourly watch opening one auto-merging pull
+request per run for `nightly` types, gated by m4's build and functional smoke, the
+narrowed lock bot, the scheduled rebuilds building from the lock, the cleanup policy
+out of dry run, and `make cloud-lock`; with the watch in place, turn off Claude's
+self-update at start (`CLAUDE_UPGRADE=false`) on the `nightly` types only
+([Rebuild cadence](#rebuild-cadence)). The schedules themselves already run. Needs m4.
 
 ## Open items
 
