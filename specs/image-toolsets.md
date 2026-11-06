@@ -135,7 +135,8 @@ Not added:
   from the plugins block.
 - **Flutter:** until a repo uses it.
 
-Compared with the common Android CI images (2026-11-06):
+Compared with the common Android CI images (2026-11-06). "Base" means it comes with
+Ubuntu's 24.04 image, not from a toolset:
 
 | | `android` (this image) | GitHub `ubuntu-24.04` | CircleCI `cimg/android` | `mingc/android-build-box` |
 | --- | --- | --- | --- | --- |
@@ -150,7 +151,7 @@ Compared with the common Android CI images (2026-11-06):
 | Kotlin (standalone) | no (Gradle) | 2.4.21 | no | not listed |
 | bundletool | no (Gradle) | no | no | yes |
 | Node | 26 | 22, 24 | in `-node` | 22 |
-| Python | Ubuntu's 3.12 | 3.12, more cached | not listed (base image) | 3.8 |
+| Python | 3.12 (base) | 3.12 (base), more cached | not listed | 3.8 |
 | Ruby, fastlane | no | yes | yes | yes |
 | Go, gomobile | yes, yes | Go cached, no | no | no |
 | Rust, Android targets | yes, with cargo-ndk | Rust, no targets | no | no |
