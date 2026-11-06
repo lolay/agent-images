@@ -4,11 +4,15 @@
 # (images/cloud/<type>) on agent-base, and <type>, the shared runner stage
 # (images/cloud/runner) on those tools, which adds Claude Code last. Only <type>
 # is tagged and pushed; base and <type>-tools are build parents, passed as named
-# contexts, so their FROM lines never pull.
+# contexts, so their FROM lines never pull. versions-<type> is the type's
+# versions report alone (the runner Dockerfile's versions stage), written to
+# out/versions/<type>/versions.md; the workflows build it in the same bake call
+# as <type>, so it reuses the layers just built (specs/gcp.md, m4).
 #
 # There's no default group: the types are the BACKEND=run files in infra/gcp
-# (scripts/cloud/changed-targets.sh --all), and every one needs its <type> and
-# <type>-tools targets here (tests/unit/test_bake.py). make cloud-ci and the pull
+# (scripts/cloud/changed-targets.sh --all), and every one needs its <type>,
+# <type>-tools and versions-<type> targets here, <type> with its AGENT_TYPE
+# (tests/unit/test_bake.py). make cloud-ci and the pull
 # request check build that list and the orchestrator.
 
 variable "REGISTRY" {
@@ -26,9 +30,19 @@ variable "CLAUDE_VERSION" {
   default = "latest"
 }
 
+variable "COMMIT" {
+  # The commit the versions report names; the workflows pass the one they build.
+  default = "unknown"
+}
+
 function "tags" {
   params = [name]
   result = [REGISTRY == "" ? "agent-${name}:${TAG}" : "${REGISTRY}/agent-${name}:${TAG}"]
+}
+
+function "versions_output" {
+  params = [name]
+  result = ["type=local,dest=out/versions/${name}"]
 }
 
 target "base" {
@@ -41,8 +55,10 @@ target "base" {
 target "_runner" {
   context    = "."
   dockerfile = "images/cloud/runner/Dockerfile"
+  target     = "runner"
   args = {
     CLAUDE_VERSION = CLAUDE_VERSION
+    AGENT_COMMIT   = COMMIT
   }
 }
 
@@ -59,7 +75,17 @@ target "linux" {
   contexts = {
     agent-tools = "target:linux-tools"
   }
+  args = {
+    AGENT_TYPE = "linux"
+  }
   tags = tags("linux")
+}
+
+target "versions-linux" {
+  inherits = ["linux"]
+  target   = "versions"
+  tags     = []
+  output   = versions_output("linux")
 }
 
 # The GPU types' parent: base on CUDA's devel image. CUDA 13.0 to match the
@@ -94,7 +120,17 @@ target "linux-gpu" {
   contexts = {
     agent-tools = "target:linux-gpu-tools"
   }
+  args = {
+    AGENT_TYPE = "linux-gpu"
+  }
   tags = tags("linux-gpu")
+}
+
+target "versions-linux-gpu" {
+  inherits = ["linux-gpu"]
+  target   = "versions"
+  tags     = []
+  output   = versions_output("linux-gpu")
 }
 
 target "gis-tools" {
@@ -110,7 +146,17 @@ target "gis" {
   contexts = {
     agent-tools = "target:gis-tools"
   }
+  args = {
+    AGENT_TYPE = "gis"
+  }
   tags = tags("gis")
+}
+
+target "versions-gis" {
+  inherits = ["gis"]
+  target   = "versions"
+  tags     = []
+  output   = versions_output("gis")
 }
 
 target "orchestrator" {

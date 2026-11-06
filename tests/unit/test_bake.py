@@ -68,6 +68,27 @@ class BakeTests(unittest.TestCase):
                 self.assertEqual(image["dockerfile"], "images/cloud/runner/Dockerfile")
                 self.assertEqual(image["contexts"]["agent-tools"], f"target:{type_}-tools")
                 self.assertEqual(image["tags"], [f"agent-{type_}:local"])
+                self.assertEqual(image["target"], "runner")
+                self.assertEqual(image["args"]["AGENT_TYPE"], type_)
+
+    def test_every_type_has_its_versions_report(self):
+        for type_ in run_types():
+            with self.subTest(type=type_):
+                # The workflows read out/versions/<type>/versions.md after the bake.
+                report = bake_print(f"versions-{type_}")[f"versions-{type_}"]
+                self.assertEqual(report["target"], "versions")
+                self.assertEqual(report["args"]["AGENT_TYPE"], type_)
+                self.assertEqual(report["contexts"]["agent-tools"], f"target:{type_}-tools")
+                self.assertEqual(report["output"], [{"type": "local", "dest": f"out/versions/{type_}"}])
+                self.assertNotIn("tags", report)
+
+    def test_push_and_load_keep_the_reports_local_output(self):
+        # The deploy pushes and the pull request check loads in the same bake call
+        # as the report; neither may turn the report into an image.
+        for flag in ("--push", "--load"):
+            with self.subTest(flag=flag):
+                report = bake_print(flag, "linux", "versions-linux")["versions-linux"]
+                self.assertEqual(report["output"], [{"type": "local", "dest": "out/versions/linux"}])
 
     def test_the_orchestrator_has_its_target(self):
         self.assertEqual(bake_print("orchestrator")["orchestrator"]["tags"], ["agent-orchestrator:local"])

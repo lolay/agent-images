@@ -39,6 +39,8 @@ set -euo pipefail
 : "${AGENT_RETIRE_MARGIN_SEC:=900}"
 # images/toolsets/toolset-checks.sh, which the runner Dockerfile installs.
 : "${AGENT_TOOLSET_CHECKS:=agent-toolset-checks}"
+# What the image contains, written by its last layer (write-versions.sh).
+: "${AGENT_VERSIONS_REPORT:=/etc/agent-images/versions.md}"
 export AGENT_SCRATCH AGENT_OUTPUTS_ROOT AGENT_DATASETS AGENT_TYPE
 
 log() { printf '%s agent-cloud-entrypoint: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
@@ -184,6 +186,7 @@ if [[ "${1:-}" == "smoke" ]]; then
 	mkdir -p "$TMPDIR" "$XDG_CACHE_HOME" 2>/dev/null || true
 	# The display toolset's checks need the display running, as sessions get it.
 	start_display || true
+	[[ ! -f "$AGENT_VERSIONS_REPORT" ]] || log "versions report: $AGENT_VERSIONS_REPORT"
 	if smoke "${2:-}"; then
 		log "smoke passed"
 		exit 0

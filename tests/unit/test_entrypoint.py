@@ -342,6 +342,14 @@ class SmokeTestTests(EntrypointCase):
         result = self.run_entrypoint("smoke")
         self.assertTrue(any(line.startswith("smoke: FAIL smoke-second") for line in self.smoke_lines(result)))
 
+    def test_names_the_versions_report(self):
+        report = self.tmp / "versions.md"
+        result = self.run_entrypoint("smoke", AGENT_VERSIONS_REPORT=str(report))
+        self.assertNotIn("versions report", result.stdout)
+        report.write_text("# agent-linux\n")
+        result = self.run_entrypoint("smoke", AGENT_VERSIONS_REPORT=str(report))
+        self.assertIn(f"versions report: {report}", result.stdout)
+
     def test_refuses_an_unknown_scope(self):
         result = self.run_entrypoint("smoke", "everything")
         self.assertEqual(result.returncode, 1)

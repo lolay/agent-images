@@ -13,3 +13,4 @@ build/
 .scratch/
 version.txt.tmp
 .triage/
+out/

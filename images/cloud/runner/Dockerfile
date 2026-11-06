@@ -4,8 +4,10 @@
 # settings and CLAUDE.md, the login environment and the entrypoint, then Claude
 # Code itself last, since it moves most often: a Claude release rebuilds only
 # that layer, never a type's toolsets. Build it with
-# images/cloud/docker-bake.hcl, which supplies agent-tools per type.
-FROM agent-tools
+# images/cloud/docker-bake.hcl, which supplies agent-tools per type, and the
+# type and commit for the versions report, the last layer; the versions stage
+# is that report alone (bake target versions-<type>).
+FROM agent-tools AS runner
 
 # The runner (images/shared), the Claude Code settings the runner seeds into
 # every session (the shared Stop hook plus the cloud SessionStart hook), the
@@ -59,4 +61,16 @@ ARG CLAUDE_VERSION=latest
 RUN curl -fsSL https://claude.ai/install.sh | bash -s "$CLAUDE_VERSION" \
 	&& claude --version
 
+# What the image contains (specs/gcp.md, m4 "Versions report"). Last, so it
+# reruns whenever any layer under it changed, and a cached copy is still true.
+ARG AGENT_TYPE=unknown
+ARG AGENT_COMMIT=unknown
+RUN --mount=type=bind,source=images/toolsets/write-versions.sh,target=/tmp/images/write-versions.sh \
+	bash -o pipefail -c 'bash /tmp/images/write-versions.sh "$AGENT_TYPE" "$AGENT_COMMIT" | sudo tee /etc/agent-images/versions.md >/dev/null'
+
 ENTRYPOINT ["/usr/local/bin/agent-cloud-entrypoint"]
+
+# The report alone, for the workflows' summaries: built with the image, so it
+# needs no pull from the registry.
+FROM scratch AS versions
+COPY --from=runner /etc/agent-images/versions.md /versions.md
