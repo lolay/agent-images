@@ -1,8 +1,8 @@
 # Plan: m3, the GPU types on GCP
 
 Status: s1 done 2026-11-06 ([infra-ask-m3-gpu.md](infra-ask-m3-gpu.md)). Layout
-decided (owner, 2026-11-06). s2 to s5 done 2026-11-06. Next: open the pull
-request for s2 to s5; its merge starts s6.
+decided (owner, 2026-11-06). s2 to s5 done 2026-11-06, in
+lolay/agent-images#37; its merge starts s6.
 Branch `claude/vigilant-tesla-m2ipbw` (assigned by the harness), from `main` at
 `154787f`.
 

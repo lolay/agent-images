@@ -15,11 +15,11 @@ from `main` at `154787f`. Plan: [plan-gpu-types-ember.md](plan-gpu-types-ember.m
 Layout decided (owner): one base Dockerfile with `BASE_IMAGE`, `linux-gpu` reusing
 `linux`'s Dockerfile, and a `gpu` toolset on top of each GPU type.
 
-s1 to s5 done (see the plan's notes). Next: the pull request for s2 to s5, which
-the owner opens or asks for. Before it merges: `e2-small` for the host and the
-"Agent: Linux (GPU)" environment with `claude-env-linux-gpu`
-([infra-ask-m3-gpu.md](infra-ask-m3-gpu.md)). The merge deploys `linux-gpu` to
-the L4 and starts s6.
+s1 to s5 done (see the plan's notes), in lolay/agent-images#37, which this
+session watches for CI and reviews. The owner merges it, after `e2-small` for the
+host and the "Agent: Linux (GPU)" environment with `claude-env-linux-gpu`
+([infra-ask-m3-gpu.md](infra-ask-m3-gpu.md)). The merge deploys `linux-gpu` to the
+L4 and starts s6: read the smoke's `driver-libs` line first.
 
 The owner chose to skip the review gate: the full review of `main` covering m1 and
 m2 runs later, and its high findings become steps in this plan.
