@@ -103,6 +103,15 @@ class WriteVersionsTests(unittest.TestCase):
         self.assertIn("gpu: missing (no GPU)", result.stdout)
         self.assertIn("agent-toolset-checks versions exited 1.", result.stdout)
 
+    def test_a_failing_apt_listing_is_kept_and_says_so(self):
+        self.fake("dpkg-query", "[[ \"$*\" == '-W -f ${Package} ${Version}\\n' ]]",
+                  "echo 'dpkg-query: error: database is locked' >&2; exit 2")
+        result = self.report()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("## apt", result.stdout)
+        self.assertIn("dpkg-query: error: database is locked", result.stdout)
+        self.assertIn("dpkg-query exited 2.", result.stdout)
+
     def test_refuses_without_type_and_commit(self):
         result = self.report("linux")
         self.assertEqual(result.returncode, 2)

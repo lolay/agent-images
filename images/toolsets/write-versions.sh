@@ -60,7 +60,9 @@ if has pixi && [[ -f "$gis_manifest" ]]; then
 	block "pixi environment ($(dirname "$gis_manifest"))" pixi list --manifest-path "$gis_manifest"
 fi
 if has dpkg-query; then
-	packages="$(dpkg-query -W -f '${Package} ${Version}\n' 2>&1)"
+	apt_status=0
+	packages="$(dpkg-query -W -f '${Package} ${Version}\n' 2>&1)" || apt_status=$?
 	printf '\n## apt\n\n<details>\n<summary>%d packages</summary>\n\n%stext\n%s\n%s\n\n</details>\n' \
 		"$(wc -l <<<"$packages")" "$fence" "$packages" "$fence"
+	((apt_status == 0)) || printf '\ndpkg-query exited %d.\n' "$apt_status"
 fi
