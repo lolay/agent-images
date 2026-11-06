@@ -244,6 +244,7 @@ jobs:
           name="versions-$TYPE-$TAG.md"
           cp "$report" "out/$name"
           echo "name=$name" >>"$GITHUB_OUTPUT"
+          # shellcheck disable=SC2016 # markdown backticks
           { printf '\nagent-%s `%s` at `%s`, `%s`:\n\n' "$TYPE" "$TAG" "$GITHUB_SHA" "$digest"
             cat "$report"; } >>"$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -323,6 +324,7 @@ jobs:
           name="versions-$IMAGE.md"
           cp "$report" "out/$name"
           echo "name=$name" >>"$GITHUB_OUTPUT"
+          # shellcheck disable=SC2016 # markdown backticks
           { printf '\nagent-%s `%s` at `%s`:\n\n' "$TYPE" "$IMAGE" "$GITHUB_SHA"
             cat "$report"; } >>"$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

@@ -256,7 +256,10 @@ updates jobs. Enforced in three places, so one mistake doesn't open it up:
   cloud-targets`) and the orchestrator, so a new env file's image is built before
   it reaches `main`. Each runner type is also loaded and run through `make
   cloud-smoke` (the binary checks and smoke tests, `smoke pr`, as in m4), and its
-  versions report goes to the run's summary and an artifact.
+  versions report goes to the run's summary and an artifact. The check runs on
+  every pull request, and its `gate` job is what `main`'s ruleset requires: it
+  passes when nothing the check covers changed, or when the lint, the tests and
+  every image's build and smoke passed.
 
 ### What a push to `main` deploys
 
@@ -292,7 +295,7 @@ Each Cloud Run type has a lock in git, `images/cloud/<type>/versions.lock`: ever
 dependency resolved to an exact version. It's the record of what the live image was
 built from, and the check compares upstream against it, so nothing ever reads the
 image. `scripts/cloud/lock.sh` is its one reader and writer: `resolve <type>`
-(Linux, with Docker and Homebrew), `bake-args`, `diff` and `summary`. A lock is
+(Linux, with Docker and Homebrew), `bake-args`, `diff`, `summary` and `pins`. A lock is
 `<kind> <name> <value>` lines, sorted, under a header:
 
 ```text
@@ -354,38 +357,55 @@ Homebrew installer (`HEAD`) and `gis`'s conda-forge solve (pixi, with no
 The watch never touches GCP, so there's no egress. The stock Ubuntu image it starts
 is about 30 MB, from a public registry.
 
-### Watch: hourly, 08:00 to 22:00 Pacific
+### Watch: hourly for `nightly` types, weekly for all
 
-`cron: '17 8-22 * * *'` with `timezone: America/Los_Angeles` (schedules take a time
-zone since March 2026). It never deploys; it only proposes a pull request:
+`.github/workflows/lock-watch.yml`. Two schedules, both with `timezone:
+America/Los_Angeles` (schedules take a time zone since March 2026): `17 8-22 * * *`
+resolves the `nightly` types (`linux` today), and `47 4 * * 0`, 50 minutes before
+the weekly rebuild, resolves every type, so a `weekly` type's lock moves once a week.
+A dispatch takes `all`, `nightly` or `weekly`. One run at a time, queued. It never
+deploys; it only proposes a pull request:
 
-1. Resolve everything as above into a candidate lock, per type.
-2. Same as the lock on `main`: done, a minute or two of runner time.
-3. Different: push the candidate locks to the bot's branch, `lock/watch`, and open
-   one pull request for the run (or refresh the open one), titled for what moved
-   (`lock(linux): claude 2.1.318, go 1.26.1, apt 3 packages`), with auto-merge on.
-4. The pull request's required checks are `cloud-build`: the build of each type
-   whose lock moved, then `make cloud-smoke` on it, the functional smoke from
-   [m4](#m4---functional-smoke-and-versions-report). Green merges it (squash), and
-   that push to `main` starts the deploy, which smokes once more at `-next` in Cloud
-   Run before promoting.
+1. `resolve` (read-only `GITHUB_TOKEN`, no secrets) resolves each type in the class
+   with `lock.sh resolve` into a candidate tree that starts as `main`'s locks.
+2. If a lock pull request is open, the locks its branch changed for types this run
+   didn't resolve are carried into the candidate (`lock-watch.sh carry`), so the
+   hourly run never drops the weekly run's `gis` candidate.
+3. Nothing moved: done, green, nothing pushed (an open lock pull request is closed,
+   since `main` already matches upstream). The open pull request already proposes
+   exactly this on `main`'s head (`lock-watch.sh proposed`): done too, so a red
+   candidate isn't rebuilt every hour.
+4. Something moved: `propose` (environment `lock-bot`) commits the moved locks onto
+   `main`'s head as `lock/watch` and opens the pull request, or refreshes the open
+   one, titled from `lock.sh summary` (`lock(linux): claude 2.1.318, go 1.26.1, apt
+   3 packages`; several types read `lock(gis, linux): gis: ...; linux: ...`), with
+   each type's `lock.sh diff` as its description, and turns on auto-merge (squash).
+5. The pull request's required check is `cloud-build`'s `gate`: the build of every
+   type, then `make cloud-smoke` on it, the functional smoke from
+   [m4](#m4---functional-smoke-and-versions-report). Green merges it, and that push
+   to `main` starts the deploy, which smokes once more at `-next` in Cloud Run before
+   promoting.
+
+The job summary lists every pin with its locked value, upstream's newest now and its
+issue's state, read with `GITHUB_TOKEN` (the bot has no Issues permission); a closed
+issue reads **closed**: remove the pin?
 
 A version that breaks something never reaches `main`: its pull request stays open
-and red, which is the notification, and the next run refreshes the same pull request
-rather than opening another. Fix forward (a toolset change on its own pull request)
-or pin ([below](#pinning-a-dependency)); either way the next watch run rebases the
-lock onto it.
+and red, which is the notification, and the next run that sees `main` or upstream
+move refreshes the same pull request rather than opening another. Fix forward (a
+toolset change on its own pull request) or pin ([below](#pinning-a-dependency));
+either way the next watch run rebases the lock onto it.
 
 The lock on `main` is the desired state, and the deploy makes Cloud Run match it. If
 a deploy fails after merge (the Cloud Run smoke catching what the hosted runner
 couldn't, such as the GPU or the mounts), `main` is ahead of what's live until it's
 fixed: the failed run notifies, and the nightly build retries.
 
-The pull request needs a GitHub App token (`actions/create-github-app-token`), not
-`GITHUB_TOKEN`: a pull request opened with `GITHUB_TOKEN` doesn't start other
-workflows, so its checks would never run. A pull request rather than a direct commit
-(owner, 2026-11-06): the smoke gates the version before it lands, and `main`'s rules
-apply to the bot like anyone else, so it needs no bypass.
+The pull request needs a GitHub App token, not `GITHUB_TOKEN`: a pull request opened
+with `GITHUB_TOKEN` doesn't start other workflows, so its checks would never run. A
+pull request rather than a direct commit (owner, 2026-11-06): the smoke gates the
+version before it lands, and `main`'s rules apply to the bot like anyone else, so it
+needs no bypass.
 
 ### The lock bot
 
@@ -398,12 +418,20 @@ what it can push to its branch, and that only lands through the required checks:
 | --- | --- |
 | Installed on `lolay/agent-images` only; permissions Contents write, Pull requests write and Metadata read, nothing else | Any other repo; issues, settings, secrets |
 | No Workflows permission | GitHub refuses any change from the App to `.github/workflows/`, so it can't rewrite the checks that gate it |
-| Each run's token narrowed further (`permission-contents: write`, `permission-pull-requests: write` on `actions/create-github-app-token`), valid one hour | A leaked token outliving its run |
-| The App's private key is a secret of a GitHub environment, `lock-bot`, that only `main` can use | Any branch, pull request or fork using the key; only reviewed code on `main` runs with it |
-| The watch checks its own diff before pushing: only `images/cloud/*/versions.lock` | A bug in the resolver writing anything else, which would otherwise sit in an auto-merging pull request |
+| Each run's token minted by `lock-watch.sh token` for this one repository with Contents and Pull requests write, and revoked when the job ends (valid an hour at most) | A leaked token outliving its run, or reaching another repository the App is later installed on |
+| The App's private key is a secret of a GitHub environment, `lock-bot`, that only `main` can use, and only the `propose` job takes it | Any branch, pull request or fork using the key; and the key sharing a runner with the base images and apt runs `resolve` pulls from upstream |
+| `propose` checks every file it was handed before calling GitHub: only `images/cloud/<type>/versions.lock`, no links (`lock-watch.sh guard`) | A bug in the resolver writing anything else, which would otherwise sit in an auto-merging pull request |
 
 Commits made through the API (`createCommitOnBranch`) are signed by GitHub, so a
-"require signed commits" rule works with the bot too.
+"require signed commits" rule works with the bot too. The commit is made on a
+staging branch (`lock/watch-staging`, at `main`'s head, deleted after), and
+`lock/watch` is then moved to it: moving `lock/watch` to `main` first would put the
+pull request's head inside `main`, and GitHub would mark it merged.
+
+The token is minted in the script (a JWT signed with `openssl`, then
+`POST /app/installations/<id>/access_tokens` naming the repository and the two
+permissions), not by `actions/create-github-app-token`: it's about 30 lines, and it
+keeps the key out of a third-party action.
 
 Expect one or two lock pull requests a day, each merging itself within the build's
 time: Claude most weekdays, apt security updates a few times a week, Homebrew less.
@@ -455,16 +483,18 @@ no-cache build promoted the same way as a push's. A type without `REBUILD` is
 
 | Image | Rebuild cost | `REBUILD` | Claude between builds |
 | --- | --- | --- | --- |
-| `linux` | Minutes; Claude is the last layer | `nightly`: 04:07 Pacific, Tuesday to Saturday, after the weekday's Claude releases | Self-updates until m5's watch |
+| `linux` | Minutes; Claude is the last layer | `nightly`: 04:07 Pacific, Tuesday to Saturday, after the weekday's Claude releases | Locked: the watch moves it within the hour, and sessions don't update it (`CLAUDE_UPGRADE=false`, m5) |
 | Orchestrator | A minute or two | Rides `nightly` (not a type, so no env file) | Baked in; rebuilt nightly |
 | `gis` | 9 GB, most of the Actions cache's 10 GB; conda-forge moves slowly | `weekly`: 05:37 Pacific, Sunday | Self-updates |
 | `android` | About 45 min of Packer with no layer cache, the disk capture and a smoke VM; about $0.50 in GCP | `weekly` | Self-updates |
 | `linux-gpu`, `3d-gpu` (m3) | About 12 to 15 min from scratch; `-gpu` types build without the Actions cache (CUDA is 4 GB of it) | `weekly` | Self-updates |
 
 The trade is build cost against how fast an image's contents move and what being
-behind costs a session. Claude, the thing that moves most, updates itself at runner
-start on every type, so a week-old `android` or `gis` image still runs today's
-Claude; what a week costs it is apt and Homebrew updates, which a session with
+behind costs a session. Claude, the thing that moves most, is locked on `nightly`
+types: the hourly watch proposes each release, and `gcp_runner_settings` sets
+`CLAUDE_UPGRADE=false` for them (read from `REBUILD`, so a type moved to `weekly`
+gets self-update back). On `weekly` types it updates itself at runner start, so a
+week-old `android` or `gis` image still runs today's Claude; what a week costs it is apt and Homebrew updates, which a session with
 `sudo` (`android`) or Homebrew (all) can pull when it needs one. Every type still
 rebuilds on any push that touches its inputs ([above](#what-a-push-to-main-deploys)).
 `android` included: a runner fix in `images/shared` reaches every type, not only
@@ -546,7 +576,7 @@ it's fixed. How, per source:
 | apt package | `name=version` in `packages.txt`, resolved against the locked snapshot | The snapshot keeps old versions installable. To hold all of apt still, freeze the snapshot timestamp in the lock |
 | Homebrew formula | A versioned formula if one exists (`python@3.12`), else `brew extract --version=X <formula> lolay/tap` and name `lolay/tap/<formula>@X` in the Brewfile | `brew pin` doesn't help a fresh build. An extracted formula has no bottle, so it builds from source |
 | `lolay/tap` formula | Revert in the tap, or add a versioned formula there | It's ours |
-| Claude Code | `CLAUDE_VERSION=2.1.317` (a version) or `stable` (the channel) | The watch then skips Claude; set the runner's `CLAUDE_UPGRADE=false` so it doesn't update itself past the pin |
+| Claude Code | `CLAUDE_VERSION=2.1.317` (a version) or `stable` (the channel) | The watch then skips Claude. `nightly` types already run with `CLAUDE_UPGRADE=false`; a `weekly` type still updates itself at start, past the pin, and has no setting to stop it yet: add one (an env file key read by `gcp_runner_settings`) if a weekly pin is ever needed |
 | Rust toolchain | `RUST_TOOLCHAIN=1.91.0` (a version) or `1.91` (a minor line) in `images/toolsets/rust/install.sh` | The watch resolves within it: a minor line still takes patch releases |
 | Terraform | `TERRAFORM_VERSION=1.14.2` or `~> 1.14` in `images/toolsets/terraform/install.sh` | tenv takes the constraint as is |
 | Type tool from a release | Its version in the Dockerfile | |
