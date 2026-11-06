@@ -69,8 +69,10 @@ images/toolsets/
 | `terraform` | tenv with the latest Terraform, tflint | |
 | `jvm` | OpenJDK 21 | Android, Kotlin and Gradle builds, the Firebase emulators |
 | `browser` | Chromium's runtime libraries and fonts (Playwright's list) | apt-only, so a Playwright session on Cloud Run can't add them |
-| `android` | Emulator runtime libraries, cpu-checker, the SDK with the newest NDK, Gradle, the AVD and its snapshot, `agent-emulator` | Needs KVM, so VM types only |
+| `android` | Emulator runtime libraries, cpu-checker, JDK 17 beside `jvm`'s 21, the SDK with the newest NDK, Gradle, the AVD and its snapshot, `agent-emulator` | Needs KVM, so VM types only |
 | `android-rust` | Rust's Android targets (aarch64, armv7, x86_64) and cargo-ndk | Rust libraries for an Android app, against the `android` toolset's NDK. Needs `rust` and `android` |
+| `android-go` | gomobile and gobind | Go libraries for an Android app (`.aar`), against the same NDK. Needs `go` and `android` |
+| `fastlane` | Ruby (Ubuntu's, with bundler) and fastlane | What every common Android CI image carries |
 | `gis` | uv, and a pixi environment from conda-forge: GDAL, PDAL with python-pdal, QGIS with PyQGIS, rasterio, geopandas, shapely, pyproj, pystac-client, rioxarray, DuckDB with its spatial extension | Below |
 | `cuda` | Nothing installed: a marker that the base is NVIDIA's CUDA devel image | Below |
 | `display` | Xvfb (the entrypoint, or `agent-xvfb.service` on the VM types, starts it at `:99`, 1920x1080), Mesa's software OpenGL (llvmpipe), x11-utils, mesa-utils, ImageMagick for screenshots | A virtual display: headed browsers and desktop apps (QGIS) run and can be screenshotted without a GPU. apt-only, so baked in. GPU types add GPU rendering (VirtualGL, Vulkan) on top in m3 |
@@ -81,7 +83,7 @@ images/toolsets/
 | Type | Base | Toolsets |
 | --- | --- | --- |
 | `linux` | `ubuntu:24.04` | core, native, node, python, go, rust, proto, terraform, jvm, browser, display |
-| `android` (LXD and Compute Engine) | Ubuntu 24.04 VM image | core, native, jvm, display, android, node, rust, android-rust |
+| `android` (LXD and Compute Engine) | Ubuntu 24.04 VM image | core, native, jvm, display, android, node, go, rust, android-go, android-rust, fastlane |
 | `gis` | `ubuntu:24.04` | core, native, display, node, gis |
 | `linux-gpu` | `nvidia/cuda:13.0.x-devel-ubuntu24.04` | everything `linux` has, then cuda, display |
 | `3d-gpu` | the same CUDA image | core, native, display, 3d |
@@ -93,10 +95,10 @@ Two patterns fall out of this:
   with a display. A future `gis-gpu` is `gis` the same way. That's what the naming
   in [gcp.md](gcp.md) already promises; toolsets make it literal.
 - **`android` is what Android development uses**, on the LXD host and on Compute
-  Engine alike, provisioned by the same scripts: the JDK, the SDK with the NDK and
-  Gradle, an emulator, Rust with cargo-ndk for native libraries, Node for React
-  Native, Expo and the Firebase CLI, and the display. Not everything `linux` has
-  (below).
+  Engine alike, provisioned by the same scripts: JDKs 21 and 17, the SDK with the
+  NDK and Gradle, an emulator, Rust with cargo-ndk and Go with gomobile for native
+  libraries, Node for React Native, Expo and the Firebase CLI, fastlane, and the
+  display. Not everything `linux` has (below).
 
 ### `android` is not `linux` plus Android
 
@@ -107,17 +109,53 @@ anything else is an `apt-get` or `brew install` away:
 | Toolset | In `android` | Why |
 | --- | --- | --- |
 | core, native, jvm | yes | The session tools; the headers a native build or `cargo build` needs; the JDK Gradle runs on |
-| android | yes | The SDK, emulator and AVD, now with the newest stable NDK (about 2 GB, too big to fetch per session) and Gradle for starting a project. The Android Gradle plugin still fetches the NDK a project pins, if it's another one |
+| android | yes | The SDK, emulator and AVD, now with the newest stable NDK (about 2 GB, too big to fetch per session), Gradle for starting a project, and JDK 17 for projects that pin `jvmToolchain(17)` (all three CI images below ship 17). The Android Gradle plugin still fetches the NDK a project pins, if it's another one |
 | display | yes | Desktop apps and screenshots of them; the emulator itself stays windowless, and the `android` CLI screenshots the device |
 | node | yes | React Native and Expo, and the Firebase CLI |
 | rust, android-rust | yes | Rust libraries for Android (UniFFI, or JNI through cargo-ndk) |
+| go, android-go | yes | Go libraries for Android through gomobile, which upstream still calls experimental and has never tagged; none of the CI images below ships it |
+| fastlane | yes | All three CI images below ship it. Lanes that publish run in CI; there are no store credentials here |
 | python | no | Ubuntu's `python3` stays, which is enough for SDK and build scripts |
-| go, proto, terraform | no | Not Android work; the protobuf Gradle plugin brings its own protoc |
+| proto, terraform | no | Not Android work; the protobuf Gradle plugin brings its own protoc |
 | browser | no | Playwright's libraries; Android has no headless-browser tests to run |
 
-Not added, for the same reason: standalone Kotlin, ktlint and bundletool, which a
-project gets through Gradle (Homebrew's builds each bring their own JDK), and
-Flutter, until a repo uses it.
+Not added:
+
+- **Play publishing:** Google has no CLI for the Play Developer API (it publishes
+  Java and Python client libraries), and the `android` CLI has no Play commands.
+  Projects publish through the Gradle Play Publisher plugin or fastlane's `supply`,
+  both per project. Play services, Play Core and Play Integrity are Maven
+  dependencies from Google's repository, not SDK packages.
+- **Kotlin/Native:** the Kotlin Multiplatform Gradle plugin downloads the toolchain
+  matching the project's Kotlin version, so a baked one would rarely be the right
+  version. A Linux host builds the `androidNative*` and `linux*` targets, not Apple
+  ones (those need the Mac image).
+- **Standalone Kotlin, ktlint and bundletool:** a project gets them through Gradle,
+  and Homebrew's builds each bring their own JDK.
+- **Flutter:** until a repo uses it.
+
+Compared with the common Android CI images (2026-11-06):
+
+| | `android` (this image) | GitHub `ubuntu-24.04` | CircleCI `cimg/android` | `mingc/android-build-box` |
+| --- | --- | --- | --- | --- |
+| JDK | 21 (default), 17 | 8, 11, 17 (default), 21, 25 | 8, 17, 21 (default), 25 | 8, 11, 17, 21 |
+| SDK platforms | newest stable (37.0) | 34 to 37.2 | 34 to 37.2 | 28 to 35 |
+| Build-tools | newest stable (37.0.0) | 34.0.0 to 37.0.0 | 35.0.0 to 37.0.0 | 28.0.1 to 35.0.0 |
+| NDK | newest stable (r30) | r27d (default), r29, r30 | `-ndk` variant | r28b |
+| CMake (SDK) | on demand (Gradle) | 3.31.5, 4.1.2 | no | yes |
+| Emulator and system image | x86_64, booted from a snapshot | no | no | arm only |
+| Gradle | 9.8.2 | 9.8.2 | 9.8.2 | not listed |
+| Maven, Ant | no | yes | yes | no |
+| Kotlin (standalone) | no (Gradle) | 2.4.21 | no | not listed |
+| bundletool | no (Gradle) | no | no | yes |
+| Node | 26 | 22, 24 | in `-node` | 22 |
+| Python | Ubuntu's 3.12 | 3.12, more cached | not listed (base image) | 3.8 |
+| Ruby, fastlane | yes | yes | yes | yes |
+| Go, gomobile | yes, yes | Go cached, no | no | no |
+| Rust, Android targets | yes, with cargo-ndk | Rust, no targets | no | no |
+| Flutter | no | no | no | yes |
+| gcloud, Firebase CLI | no (no credentials) | gcloud | both | no |
+| Virtual display | yes | no | no | no |
 
 ### `jvm` in `linux`
 
@@ -358,10 +396,10 @@ Steps for [gcp.md](gcp.md) m2, ahead of `gis` and `android`:
   entrypoint, so `agent-xvfb.service` starts Xvfb at boot and the runner waits for
   it, and the image's profile now sources the toolsets' profile fragments, as the
   cloud one does (`DISPLAY`, and `ANDROID_NDK_HOME` from the `android` toolset).
-  `android` gains the NDK, Gradle and `android-rust`, and drops `python`, `go`,
-  `proto`, `terraform` and `browser`. Checked by `android-image-smoke`, which now
-  starts the display, takes a screenshot and builds a Rust library for arm64 and
-  x86_64 with cargo-ndk.
+  `android` gains JDK 17, the NDK, Gradle, `android-rust`, `android-go` and
+  `fastlane`, and drops `python`, `proto`, `terraform` and `browser`. Checked by
+  `android-image-smoke`, which now starts the display, takes a screenshot, and
+  builds a Rust library (cargo-ndk) and a Go one (gomobile) for arm64 and x86_64.
 
 `linux-gpu` and `3d-gpu` follow in m3 on the same structure, and both install
 `display` (it's in their lists above): the virtual display comes from s7, and m3

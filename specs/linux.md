@@ -69,8 +69,8 @@ writing the exec channel, image publishing, and ephemeral VMs ourselves.
   ([image-toolsets.md](image-toolsets.md)), unpinned: OpenJDK 21, build tools and
   headers, the emulator's libraries and a virtual display (Xvfb, which
   `agent-xvfb.service` starts at boot) from Ubuntu's archive; the session tools
-  (shared with the Mac), Node and Rust from Homebrew, with Rust's Android targets
-  and cargo-ndk.
+  (shared with the Mac), Node, Go and Rust from Homebrew, with Rust's Android
+  targets and cargo-ndk, Go's gomobile, JDK 17 beside 21, and Ruby with fastlane.
 - **Claude Code:** the native installer; the runner runs `claude update` at start.
 - **Android SDK** in `/opt/android-sdk`, owned by the guest user (the `android`
   toolset's `install.sh`):

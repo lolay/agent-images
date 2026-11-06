@@ -63,9 +63,12 @@ jobs:
             agent-emulator status
             agent-emulator stop
             java -version 2>&1 | head -n 1
+            /usr/lib/jvm/java-17-openjdk-amd64/bin/java -version 2>&1 | head -n 1
             gradle --version | grep -m1 ^Gradle
             node --version && pnpm --version
+            go version && command -v gomobile gobind
             cargo --version && cargo ndk --version
+            ruby --version && fastlane --version | tail -n 1
             rustup target list --installed | grep android
             echo "NDK: $ANDROID_NDK_HOME" && test -x "$ANDROID_NDK_HOME/ndk-build"
             du -sh "$ANDROID_HOME" "$ANDROID_NDK_HOME" /opt/gradle
@@ -85,6 +88,17 @@ jobs:
             printf "\n[lib]\ncrate-type = [\"cdylib\"]\n" >>Cargo.toml
             cargo ndk -t arm64-v8a -t x86_64 -o jniLibs build --release --quiet
             file jniLibs/*/libndkcheck.so'
+      # A Go package as an Android library, through the NDK.
+      - name: Build a Go library with gomobile
+        run: |
+          bash -lc '
+            set -euo pipefail
+            mkdir -p "$(mktemp -d)/gocheck" && cd "$_"
+            go mod init example.com/gocheck
+            printf "package gocheck\n\nfunc Hello() string { return \"hi\" }\n" >gocheck.go
+            go get golang.org/x/mobile/bind
+            gomobile bind -target=android/arm64,android/amd64 -androidapi 24 -o gocheck.aar .
+            unzip -l gocheck.aar | grep -E "classes.jar|libgojni.so"'
       - name: Green (no stderr from the image scripts)
         run: |
           if [ -s "$STDERR_LOG" ]; then

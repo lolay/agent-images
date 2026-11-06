@@ -3,13 +3,17 @@
 # cloud images list theirs in their Dockerfiles. # starts a comment.
 #
 # What Android development uses, not everything linux has: no python (Ubuntu's
-# python3 stays), go, proto, terraform or browser. A session has sudo, so it
-# adds any of them in a minute.
+# python3 stays), proto, terraform or browser. A session has sudo, so it adds
+# any of them in a minute. go is here for gomobile (android-go), and fastlane
+# because the common Android CI images all carry it.
 core
 native
 jvm
 display
 android
 node
+go
 rust
+android-go
 android-rust
+fastlane
