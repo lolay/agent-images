@@ -72,8 +72,9 @@ chmod 755 /opt/agent-images/bin/brew
 # to root's older toolchain, and tenv keeps its selected Terraform per user.
 cat >/etc/profile.d/zz-agent-images.sh <<EOF
 # agent-images toolsets (scripts/anthropic/setup.sh): Homebrew's tools ahead of
-# the image's own runtimes, as in agent-linux. Sourced by login shells, root's
-# ~/.bashrc and, through a SessionStart hook, every Bash tool command.
+# the image's own runtimes, as in agent-linux. Sourced by login shells,
+# interactive shells (root's ~/.bashrc) and, through a SessionStart hook, every
+# Bash tool command.
 export HOMEBREW_PREFIX=/home/linuxbrew/.linuxbrew HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_ENV_HINTS=1
 export RUSTUP_HOME=/home/$user/.rustup TENV_ROOT=/home/$user/.tenv TENV_AUTO_INSTALL=true
 case ":\$PATH:" in
