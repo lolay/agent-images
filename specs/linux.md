@@ -24,7 +24,7 @@ where the agents already run:
 
 | Where | Emulator? | Why |
 | --- | --- | --- |
-| Anthropic-hosted cloud environments | No | Firecracker VMs with no `/dev/kvm`; the base image can't be replaced, only added to with a setup script. Builds, unit tests, and Robolectric work there |
+| Anthropic-hosted cloud environments | No | Firecracker VMs with no `/dev/kvm`; the base image can't be replaced, only added to with a setup script. Builds, unit tests, and Robolectric work there ([anthropic-cloud.md](anthropic-cloud.md)) |
 | This repo's macOS VMs (any Apple Silicon) | No | Apple's nested virtualization is for Linux guests only (M3+ and macOS 15+); macOS guests get `HV_UNSUPPORTED` |
 | A Linux VM on an M3+ Mac (`tart run --nested`) | Not supported | KVM works, but Google ships no Linux arm64 emulator or `aapt2`; only community builds |
 | The emulator on the Mac host, relayed into the VM over adb | Yes, but outside the session's VM | MacStadium documents it; rejected so the emulator stays inside the session's own VM |
