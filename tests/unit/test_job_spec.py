@@ -82,8 +82,25 @@ class JobSpecTests(unittest.TestCase):
                 "CLAUDE_EXIT_IF_UNUSED_MIN": "60",
                 "CLAUDE_RELEASE_IDLE_SESSION_MIN": "60",
                 "CLAUDE_KILL_SESSION_AFTER_MIN": "480",
+                "CLAUDE_UPGRADE": "false",
             },
         )
+
+    # D6: a nightly type runs the Claude Code its lock baked in; a weekly one
+    # keeps updating itself at start. The class is read where the rebuild
+    # schedule reads it (gcp_rebuild_class), with its one default.
+    def test_claude_self_update_follows_the_rebuild_class(self):
+        cases = {"REBUILD=nightly": "false", "REBUILD=weekly": None, None: "false"}
+        for line, expected in cases.items():
+            with self.subTest(line):
+                env = self.custom_env([line] if line else [], drop=("REBUILD=",))
+                self.assertEqual(env.get("CLAUDE_UPGRADE"), expected)
+
+    def test_gis_updates_claude_itself(self):
+        result = render("gis", IMAGE)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        container = json.loads(result.stdout)["template"]["template"]["containers"][0]
+        self.assertNotIn("CLAUDE_UPGRADE", {item["name"] for item in container["env"]})
 
     def test_launch_stage_only_when_the_type_sets_it(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -95,20 +112,20 @@ class JobSpecTests(unittest.TestCase):
             result = render("linux", IMAGE, env_dir=env_dir)
         self.assertEqual(json.loads(result.stdout)["launchStage"], "BETA")
 
-    def custom_job(self, extra):
+    def custom_job(self, extra, drop=()):
         with tempfile.TemporaryDirectory() as tmp:
             env_dir = Path(tmp)
             (env_dir / "project.env").write_text((REPO / "infra/gcp/project.env").read_text())
             lines = [
                 line for line in (REPO / "infra/gcp/linux.env").read_text().splitlines()
                 if not line.startswith(("EXIT_IF_UNUSED_MIN=", "RELEASE_IDLE_SESSION_MIN=",
-                                        "KILL_SESSION_AFTER_MIN=", "RETIRE_MARGIN_SEC="))
+                                        "KILL_SESSION_AFTER_MIN=", "RETIRE_MARGIN_SEC=") + tuple(drop))
             ]
             (env_dir / "linux.env").write_text("\n".join(lines + extra) + "\n")
             return render("linux", IMAGE, env_dir=env_dir)
 
-    def custom_env(self, extra):
-        result = self.custom_job(extra)
+    def custom_env(self, extra, drop=()):
+        result = self.custom_job(extra, drop)
         self.assertEqual(result.returncode, 0, result.stderr)
         container = json.loads(result.stdout)["template"]["template"]["containers"][0]
         return {item["name"]: item["value"] for item in container["env"]}
