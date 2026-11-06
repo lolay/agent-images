@@ -10,8 +10,12 @@ libgl1-mesa-dri
 libglx-mesa0
 libegl-mesa0
 
-# Screenshots of the whole display (import -window root).
+# Screenshots of the whole display (import -window root), and xdotool to size a
+# window first: there's no window manager, so nothing maximizes windows.
 imagemagick
+xdotool
 
-# A plain UI font for desktop apps.
+# UI fonts for desktop apps. Open Sans is QGIS's default UI font: without it, QGIS
+# tries to download it at every start.
 fonts-dejavu-core
+fonts-open-sans
