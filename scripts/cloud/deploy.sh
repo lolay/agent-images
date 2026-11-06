@@ -5,7 +5,9 @@
 #   deploy.sh type <type> <image@sha256:...|--live> <commit>
 #       write agent-<type>-next with that image, run its smoke execution, and
 #       only if it passes write agent-<type>. --live reuses agent-<type>'s
-#       current image (an env-file-only change).
+#       current image (an env-file-only change). A type whose env file says
+#       DEPLOY=false is built and pushed by the workflow but not deployed: this
+#       writes no job and runs no smoke (a GPU type waiting for its quota).
 #   deploy.sh vm-build <type> <image name> <commit>
 #       a Compute Engine type (BACKEND=compute): build its image with Packer
 #       from images/<type>/gce into family <IMAGE_FAMILY>-next.
@@ -59,6 +61,12 @@ access_token() { gcloud auth print-access-token --quiet; }
 backend_of() { (
 	gcp_load_env "$1" || exit 0
 	printf '%s' "${BACKEND:-run}"
+); }
+
+# deploys <type>: false when the type's env file says DEPLOY=false.
+deploys() { (
+	gcp_load_env "$1" || exit 0
+	[[ "${DEPLOY:-true}" != false ]]
 ); }
 
 # family_of <type>: a compute type's image family.
@@ -134,6 +142,10 @@ cmd_type() {
 	local type="$1" image="$2" sha="$3"
 	[[ -f "$AGENT_GCP_ENV_DIR/$type.env" ]] || die "no infra/gcp/$type.env"
 	[[ "$(backend_of "$type")" == run ]] || die "$type is a Compute Engine type; it deploys with vm-build and vm-promote"
+	if ! deploys "$type"; then
+		log "agent-$type: DEPLOY=false in infra/gcp/$type.env; built $image, not deployed (no job, no smoke)"
+		return 0
+	fi
 	[[ "$image" != "--live" ]] || image="$(live_image "$type")"
 	[[ "$image" == "$ARTIFACT_REGISTRY/"*@sha256:* ]] ||
 		die "$image is not a digest under $ARTIFACT_REGISTRY"

@@ -175,6 +175,26 @@ class StartTests(SupervisorCase):
         self.stop()
 
 
+    def test_a_type_with_deploy_false_gets_no_orchestrator(self):
+        (self.env_dir / "linux-gpu.env").write_text("MIN_IDLE=0\nDEPLOY=false\n")
+        self.gcp.state.secrets["claude-env-linux-gpu"] = "gpu-key"
+        self.start()
+        self.wait_for(lambda: self.starts("linux") and self.starts("gis"), what="both types")
+        time.sleep(0.5)
+        self.assertEqual(self.starts("linux-gpu"), [])
+        self.assertIn("supervisor: linux-gpu: DEPLOY=false in its env file; not starting its orchestrator", self.lines)
+        # It takes no health port: the deployed types keep theirs.
+        self.assertIn("--health-port 18080", self.start_record("gis")["args"])
+        self.assertIn("--health-port 18081", self.start_record("linux")["args"])
+
+    def test_only_deploy_false_types_is_an_error(self):
+        for name in ("linux", "gis"):
+            (self.env_dir / f"{name}.env").write_text("DEPLOY=false\n")
+        self.start()
+        self.assertEqual(self.process.wait(timeout=10), 1)
+        self.wait_for(lambda: "supervisor: every runner type has DEPLOY=false" in self.lines, what="the error")
+
+
 class SupervisionTests(SupervisorCase):
     def test_restarts_an_orchestrator_that_exits(self):
         self.start(FAKE_MODE_gis="exit")

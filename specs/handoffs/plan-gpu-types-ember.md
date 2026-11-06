@@ -2,7 +2,8 @@
 
 Status: s1 done 2026-11-06 ([infra-ask-m3-gpu.md](infra-ask-m3-gpu.md)). Layout
 decided (owner, 2026-11-06). s2 to s5 done 2026-11-06, in
-lolay/agent-images#37; its merge starts s6.
+lolay/agent-images#37. s6 is blocked on the Cloud Run GPU quota (run 25 failed
+on it); `linux-gpu` is build-only (`DEPLOY=false`) until it lands.
 Branch `claude/vigilant-tesla-m2ipbw` (assigned by the harness), from `main` at
 `154787f`.
 

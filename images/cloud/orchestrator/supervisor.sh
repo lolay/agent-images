@@ -99,6 +99,23 @@ fetch_secret() {
 
 prefix_lines() { sed -u "s/^/[$1] /"; }
 
+# A type whose env file says DEPLOY=false has no job (deploy.sh builds its image
+# but doesn't deploy it), so it gets no orchestrator: one would take sessions
+# and fail to spawn every runner.
+deployed=()
+for type in "${types[@]}"; do
+	if [[ "$(type_setting "$type" DEPLOY true)" == false ]]; then
+		log "$type: DEPLOY=false in its env file; not starting its orchestrator"
+	else
+		deployed+=("$type")
+	fi
+done
+types=("${deployed[@]}")
+if ((${#types[@]} == 0)); then
+	log "every runner type has DEPLOY=false"
+	exit 1
+fi
+
 compute_types=()
 for type in "${types[@]}"; do
 	[[ "$(type_setting "$type" BACKEND run)" == compute ]] && compute_types+=("$type")

@@ -101,6 +101,25 @@ class DeployTests(unittest.TestCase):
         self.assertIn("can't read its log here", result.stdout)
         self.assertIn("run: gcloud logging read", result.stdout)
 
+    def test_deploy_false_builds_but_writes_no_job_and_runs_no_smoke(self):
+        env_dir = self.tmp / "infra"
+        env_dir.mkdir()
+        (env_dir / "project.env").write_text((REPO / "infra/gcp/project.env").read_text())
+        (env_dir / "linux.env").write_text((REPO / "infra/gcp/linux.env").read_text() + "DEPLOY=false\n")
+        for image in (IMAGE, "--live"):
+            with self.subTest(image=image):
+                result = self.deploy("type", "linux", image, "abc123", AGENT_GCP_ENV_DIR=str(env_dir))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("agent-linux: DEPLOY=false in infra/gcp/linux.env", result.stdout)
+                self.assertEqual(self.job_patches(), [])
+                self.assertEqual(self.gcloud_calls(), [])
+
+    def test_linux_gpu_waits_for_its_quota(self):
+        # Until the L4 quota lands; remove this test with the DEPLOY=false line.
+        result = self.deploy("type", "linux-gpu", IMAGE, "abc123")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.job_patches(), [])
+
     def test_live_reuses_the_current_image(self):
         self.assertEqual(self.deploy("type", "linux", IMAGE, "first").returncode, 0)
         result = self.deploy("type", "linux", "--live", "second")

@@ -13,18 +13,19 @@ Run's GPU docs on 2026-11-06
    orchestrator only once its secret reads, and a fourth one on the `e2-micro`
    leaves about 270 MiB. About $12 a month.
 
-2. **GPU quota: probably nothing to apply.** The first GPU deploy in a region gets
-   an automatic grant, subject to capacity: 3 L4 GPUs and 3,000 milliGPU (3) RTX PRO
-   6000, both with zonal redundancy off, which jobs require. That covers m3. So:
-   - If the `google_cloud_quotas_quota_preference` from gcp-infrastructure.md "GPU
-     quota" isn't applied yet, leave it out. If it is, check that its value isn't
-     below what was granted, since a preference can lower a quota as well as raise
-     it.
-   - After s6's first deploy, confirm the grant in the console (IAM & Admin, Quotas
-     & System Limits, service Cloud Run Admin API). Metrics:
-     `run.googleapis.com/nvidia_l4_gpu_allocation_no_zonal_redundancy` and
-     `run.googleapis.com/nvidia_rtx_pro_6000_gpu_allocation_no_zonal_redundancy`.
-   - gcp-infrastructure.md "GPU quota" changes to say this.
+2. **GPU quota: request it.** The docs' automatic grant on the first GPU deploy
+   didn't happen: run 25 (2026-11-06) failed writing `agent-linux-gpu-next` with
+   "You do not have quota for using GPUs without zonal redundancy", which jobs
+   require. Request it at g.co/cloudrun/gpu-quota (IAM & Admin, Quotas & System
+   Limits, service Cloud Run Admin API, `us-central1`), or through the quota
+   preference in gcp-infrastructure.md "GPU quota":
+   - `run.googleapis.com/nvidia_l4_gpu_allocation_no_zonal_redundancy`: 1 to 3,
+     for s6.
+   - `run.googleapis.com/nvidia_rtx_pro_6000_gpu_allocation_no_zonal_redundancy`:
+     1 to 3, for s8 and `3d-gpu`.
+   Until it lands, `linux-gpu.env` has `DEPLOY=false`: the image builds and
+   pushes, and nothing else deploys. Remove that line, then run `cloud-deploy`
+   with targets `linux-gpu orchestrator`.
 
 3. **Ephemeral disk, later.** `linux-gpu`'s test fits the default 10 GiB. `3d-gpu`
    (120 renders, COLMAP's dense model, the splat model, PyTorch's caches) wants the
