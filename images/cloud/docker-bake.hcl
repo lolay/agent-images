@@ -5,6 +5,11 @@
 # (images/cloud/runner) on those tools, which adds Claude Code last. Only <type>
 # is tagged and pushed; base and <type>-tools are build parents, passed as named
 # contexts, so their FROM lines never pull.
+#
+# There's no default group: the types are the BACKEND=run files in infra/gcp
+# (scripts/cloud/changed-targets.sh --all), and every one needs its <type> and
+# <type>-tools targets here (tests/unit/test_bake.py). make cloud-ci and the pull
+# request check build that list and the orchestrator.
 
 variable "REGISTRY" {
   # Empty for local builds (tags agent-<name>:<TAG>); the deploy passes
@@ -24,10 +29,6 @@ variable "CLAUDE_VERSION" {
 function "tags" {
   params = [name]
   result = [REGISTRY == "" ? "agent-${name}:${TAG}" : "${REGISTRY}/agent-${name}:${TAG}"]
-}
-
-group "default" {
-  targets = ["linux", "linux-gpu", "gis", "orchestrator"]
 }
 
 target "base" {

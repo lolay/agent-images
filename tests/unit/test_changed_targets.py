@@ -27,17 +27,20 @@ class ChangedTargetsTests(unittest.TestCase):
                 "\tbash /t/install-toolset.sh core\n"
                 "RUN bash /t/install-toolset.sh node\n"
             ),
-            "images/cloud/base-gpu/Dockerfile": "ARG BASE\nFROM agent-base\nRUN bash /t/install-toolset.sh display\n",
-            "images/cloud/linux/Dockerfile": "FROM agent-base\nRUN bash /t/install-toolset.sh go\n",
+            "images/cloud/linux/Dockerfile": (
+                "FROM agent-base\nRUN bash /t/install-toolset.sh display\nRUN bash /t/install-toolset.sh go\n"
+            ),
             "images/cloud/runner/Dockerfile": "FROM agent-tools\n",
             "images/toolsets/go/Brewfile": 'brew "go"\n',
-            "images/cloud/linux-gpu/Dockerfile": "FROM agent-base-gpu\n",
+            # linux's tools on bake target base-gpu (base on CUDA), then gpu.
+            "images/cloud/linux-gpu/Dockerfile": "FROM agent-linux\nRUN bash /t/install-toolset.sh gpu\n",
             "images/cloud/orchestrator/Dockerfile": "FROM ubuntu:24.04\n",
             "images/cloud/entrypoint.sh": "#!/bin/bash\n",
             "images/shared/agent-runner.sh": "#!/bin/bash\n",
             "images/toolsets/core/packages.txt": "git\n",
             "images/toolsets/node/Brewfile": 'brew "node"\n',
             "images/toolsets/display/packages.txt": "xvfb\n",
+            "images/toolsets/gpu/packages.txt": "virtualgl\n",
             "images/toolsets/android/packages.txt": "cpu-checker\n",
             "images/toolsets/install-toolset.sh": "#!/bin/bash\n",
             "images/toolsets/write-claude-md.sh": "#!/bin/bash\n",
@@ -101,18 +104,16 @@ class ChangedTargetsTests(unittest.TestCase):
 
     def test_a_toolset_rebuilds_the_types_that_install_it(self):
         both = [{"type": "linux", "build": True}, {"type": "linux-gpu", "build": True}]
-        self.assertEqual(self.change("images/toolsets/core/packages.txt")["types"], both)
-        self.base = self.head()
-        self.assertEqual(self.change("images/toolsets/node/Brewfile")["types"], both)
-        self.base = self.head()
-        self.assertEqual(
-            self.change("images/toolsets/display/packages.txt")["types"],
-            [{"type": "linux-gpu", "build": True}],
-        )
+        # base's, and linux's, which linux-gpu is built on.
+        for name in ("images/toolsets/core/packages.txt", "images/toolsets/node/Brewfile",
+                     "images/toolsets/go/Brewfile"):
+            with self.subTest(name=name):
+                self.assertEqual(self.change(name)["types"], both)
+                self.base = self.head()
 
     def test_a_types_own_toolset_rebuilds_only_it(self):
         self.assertEqual(
-            self.change("images/toolsets/go/Brewfile")["types"], [{"type": "linux", "build": True}]
+            self.change("images/toolsets/gpu/packages.txt")["types"], [{"type": "linux-gpu", "build": True}]
         )
 
     def test_the_runner_stage_rebuilds_every_type(self):
@@ -138,22 +139,26 @@ class ChangedTargetsTests(unittest.TestCase):
             self.change("images/android/toolsets.txt"), {"types": [], "vms": [], "orchestrator": False, "prune": False}
         )
 
-    def test_a_types_directory_rebuilds_only_it(self):
-        result = self.change("images/cloud/linux/Dockerfile")
+    def test_a_types_directory_rebuilds_it_and_the_types_built_on_it(self):
+        result = self.change("images/cloud/linux-gpu/Dockerfile")
         self.assertEqual(
-            result, {"types": [{"type": "linux", "build": True}], "vms": [], "orchestrator": False, "prune": False}
-        )
-
-    def test_a_build_parent_rebuilds_its_children_up_the_chain(self):
-        self.assertEqual(
-            self.change("images/cloud/base-gpu/Dockerfile")["types"],
-            [{"type": "linux-gpu", "build": True}],
+            result, {"types": [{"type": "linux-gpu", "build": True}], "vms": [], "orchestrator": False, "prune": False}
         )
         self.base = self.head()
-        self.assertEqual(
-            self.change("images/cloud/base/Dockerfile")["types"],
-            [{"type": "linux", "build": True}, {"type": "linux-gpu", "build": True}],
-        )
+        self.assertEqual(self.change("images/cloud/linux/Dockerfile")["types"], [{"type": "linux", "build": True}, {"type": "linux-gpu", "build": True}])
+
+    def test_base_rebuilds_every_type(self):
+        self.assertEqual(self.change("images/cloud/base/Dockerfile")["types"], [{"type": "linux", "build": True}, {"type": "linux-gpu", "build": True}])
+
+    def test_a_type_on_base_gpu_reaches_base(self):
+        # base-gpu is a bake target (base's Dockerfile on CUDA), with no directory.
+        self.write("infra/gcp/3d-gpu.env", "GPU_TYPE=nvidia-l4\n")
+        self.write("images/cloud/3d-gpu/Dockerfile", "FROM agent-base-gpu\nRUN bash /t/install-toolset.sh gpu\n")
+        self.commit("3d-gpu")
+        self.base = self.head()
+        self.assertIn({"type": "3d-gpu", "build": True}, self.change("images/cloud/base/Dockerfile")["types"])
+        self.base = self.head()
+        self.assertIn({"type": "3d-gpu", "build": True}, self.change("images/toolsets/core/packages.txt")["types"])
 
     def test_an_env_file_rewrites_the_job_and_the_orchestrator(self):
         result = self.change("infra/gcp/linux.env")
@@ -264,7 +269,7 @@ class ComputeTypeTests(ChangedTargetsTests):
 
     def test_a_toolset_it_does_not_install_leaves_it(self):
         result = self.change("images/toolsets/go/Brewfile")
-        self.assertEqual(result["types"], [{"type": "linux", "build": True}])
+        self.assertEqual(len(result["types"]), 2)
         self.assertEqual(result["vms"], [])
 
     def test_the_cloud_run_images_leave_it(self):
@@ -297,7 +302,7 @@ class ComputeTypeTests(ChangedTargetsTests):
 
     # Inherited ones whose fixture now includes android's toolsets.
     def test_a_toolset_no_cloud_type_installs_deploys_nothing(self):
-        self.assertEqual(self.change("images/toolsets/display/packages.txt")["vms"], [])
+        self.assertEqual(self.change("images/toolsets/gpu/packages.txt")["vms"], [])
 
     @unittest.skip("with android as a compute type it rebuilds android; test_its_own_directory_rebuilds_its_image_only")
     def test_the_android_images_toolset_list_deploys_nothing(self):

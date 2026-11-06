@@ -34,7 +34,7 @@ export
         image-pull image-prune vm-create vm-start vm-configure vm-up vm-stop vm-status vm-logs \
         vm-versions vm-list vm-delete secret-set \
         gh-runs-list gh-runs-watch gh-runs-status bump publish \
-        cloud-build cloud-smoke cloud-lint cloud-test cloud-ci cloud-status
+        cloud-build cloud-smoke cloud-lint cloud-test cloud-ci cloud-targets cloud-status
 
 MODE ?= run
 HOST_OS := $(shell uname -s)
@@ -103,7 +103,10 @@ CLOUD_SCRIPTS := $(wildcard images/cloud/*.sh images/cloud/runner/*.sh images/cl
                    images/cloud/orchestrator/*.sh scripts/cloud/*.sh hooks/gcp/*.sh \
                    images/android/gce/*.sh images/android/gce/files/*.sh) hooks/gcp/spawn-runner
 CLOUD_BAKE := docker buildx bake -f images/cloud/docker-bake.hcl
-# TYPE=all builds every type and the orchestrator (the bake file's default group).
+# Every Cloud Run type (the BACKEND=run files in infra/gcp) and the orchestrator:
+# what TYPE=all and cloud-ci build, and the pull request check's matrix.
+CLOUD_TARGETS = $(shell scripts/cloud/changed-targets.sh --all | jq -r '.types[].type, "orchestrator"')
+# TYPE=all builds every type and the orchestrator (CLOUD_TARGETS).
 TYPE ?= linux
 # An exact version (what the deploy passes) or a channel.
 CLAUDE_VERSION ?= latest
@@ -304,7 +307,7 @@ secret-set: ## Store a runner secret (prompts, or pipe it in): NAME=claude-envir
 ##@ Cloud (GCP runners; specs/gcp.md. Deploys run only from main, in GitHub Actions)
 
 cloud-build: ## Build a cloud image locally as agent-<TYPE>:local: TYPE=linux|orchestrator|all [CLAUDE_VERSION=latest]
-	CLAUDE_VERSION=$(CLAUDE_VERSION) $(CLOUD_BAKE) --load $(if $(filter all,$(TYPE)),,$(TYPE))
+	CLAUDE_VERSION=$(CLAUDE_VERSION) $(CLOUD_BAKE) --load $(if $(filter all,$(TYPE)),$(CLOUD_TARGETS),$(TYPE))
 
 # Anonymous volumes stand in for the job's mounts (a disk for scratch, writable
 # outputs, read-only datasets); --rm removes them.
@@ -326,7 +329,10 @@ cloud-test: ## Run the cloud unit tests (Linux: they use /proc and GNU tools)
 	python3 -m unittest discover -s tests/unit
 
 cloud-ci: cloud-lint cloud-test ## Lint, unit tests and a build of every cloud image, no push (the pull request check)
-	CLAUDE_VERSION=$(CLAUDE_VERSION) $(CLOUD_BAKE)
+	CLAUDE_VERSION=$(CLAUDE_VERSION) $(CLOUD_BAKE) $(CLOUD_TARGETS)
+
+cloud-targets: ## Print every Cloud Run type and the orchestrator, one a line: what TYPE=all and cloud-ci build
+	@printf '%s\n' $(CLOUD_TARGETS)
 
 cloud-status: ## Read-only: each job's image, commit and last run, and the orchestrator's image (your gcloud login)
 	@scripts/cloud/deploy.sh status

@@ -43,15 +43,34 @@ jobs:
           PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: make cloud-lint cloud-test
 
+  # The images to build: every Cloud Run type (the BACKEND=run files in
+  # infra/gcp, as the deploy plans them) and the orchestrator, so a pull request
+  # adding a type builds it (make cloud-targets, the list make cloud-ci builds).
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      targets: ${{ steps.targets.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Targets
+        id: targets
+        run: |
+          set -euo pipefail
+          targets="$(make -s cloud-targets | jq -Rcn '[inputs]')"
+          echo "$targets"
+          echo "targets=$targets" >>"$GITHUB_OUTPUT"
+
   # One image per runner: together they don't fit on one. A build with no
   # output is the check; nothing is loaded or pushed.
   build:
+    needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        target: [linux, linux-gpu, gis, orchestrator]
+        target: ${{ fromJSON(needs.plan.outputs.targets) }}
     steps:
       - uses: actions/checkout@v7.0.1
       # Hosted runners leave about 14 GB free, and agent-gis alone is 9 GB. The
