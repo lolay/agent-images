@@ -53,11 +53,11 @@ jobs:
           set -euo pipefail
           digest="$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest}}' | jq -r .digest)"
           ref="${IMAGE%%:*}@$digest"
-          packages="sudo ca-certificates curl $(bash -c 'source scripts/cloud/lib.sh; for t in $(cloud_toolsets "$1"); do f=images/toolsets/$t/packages.txt; [[ -f $f ]] && sed -e "s/#.*//" -e "/^[[:space:]]*$/d" "$f"; done' _ "$TYPE" | tr '\n' ' ')"
+          packages="sudo ca-certificates curl $(bash -c 'source scripts/cloud/lib.sh; for t in $(cloud_toolsets "$1"); do f=images/toolsets/$t/packages.txt; if [[ -f $f ]]; then sed -e "s/#.*//" -e "/^[[:space:]]*$/d" "$f"; fi; done' _ "$TYPE" | tr '\n' ' ')"
           echo "$packages" | wc -w
           simulate() {
             # $1: a snapshot id, or empty for today's archive.
-            docker run --rm -e SNAP="$1" -e PACKAGES="$packages" "$ref" bash -c '
+            docker run --rm --entrypoint /bin/bash -e SNAP="$1" -e PACKAGES="$packages" "$ref" -c '
               set -euo pipefail
               [[ -z "$SNAP" ]] || printf "APT::Snapshot \"%s\";\n" "$SNAP" >/etc/apt/apt.conf.d/50agent-snapshot
               apt-get update >/tmp/update.log 2>&1 || { cat /tmp/update.log >&2; exit 1; }
@@ -104,7 +104,7 @@ jobs:
           sort -u tops.txt deps.txt >closure.txt
           brew info --json=v2 --formula $(cat closure.txt) |
             jq -r '.formulae[] | "\(.full_name) \(.versions.stable)\(if .revision > 0 then "_\(.revision)" else "" end)"' | sort >resolved.txt
-          run="$(gh run list -R "$GITHUB_REPOSITORY" --workflow cloud-deploy.yml --branch main --status success --limit 5 --json databaseId --jq '.[].databaseId' | head -1)"
+          run=42283134638  # m4's deploy, which built linux
           gh run download -R "$GITHUB_REPOSITORY" "$run" -p 'versions-linux-*' -D report
           report="$(find report -name '*.md' | head -1)"
           awk '/^## Homebrew/{f=1; next} f && /^```text/{g=1; next} g && /^```/{exit} g' "$report" | sort >image.txt
