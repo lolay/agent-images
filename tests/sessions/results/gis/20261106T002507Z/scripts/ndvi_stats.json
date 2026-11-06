@@ -1,0 +1,439 @@
+{
+ "utm_bounds": [
+  754439.6380357745,
+  4059831.0145940883,
+  763711.3243528034,
+  4071198.398206312
+ ],
+ "full_band_bytes": {
+  "red": 222610953,
+  "nir": 212119307,
+  "scl": 2111259
+ },
+ "network": {
+  "methods": {
+   "HEAD": {
+    "count": 27
+   },
+   "GET": {
+    "count": 7,
+    "downloaded_bytes": 10924966
+   }
+  },
+  "handlers": {
+   "vsicurl": {
+    "methods": {
+     "HEAD": {
+      "count": 27
+     },
+     "GET": {
+      "count": 7,
+      "downloaded_bytes": 10924966
+     }
+    },
+    "files": {
+     "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/B04.AUX": {
+      "methods": {
+       "HEAD": {
+        "count": 1
+       }
+      },
+      "actions": {
+       "GetFileSize": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       }
+      }
+     },
+     "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/B04.aux": {
+      "methods": {
+       "HEAD": {
+        "count": 1
+       }
+      },
+      "actions": {
+       "GetFileSize": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       }
+      }
+     },
+     "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/B04.tif": {
+      "methods": {
+       "GET": {
+        "count": 2,
+        "downloaded_bytes": 5849528
+       }
+      },
+      "actions": {
+       "Read": {
+        "methods": {
+         "GET": {
+          "count": 1,
+          "downloaded_bytes": 16384
+         }
+        }
+       },
+       "ReadMultiRange": {
+        "methods": {
+         "GET": {
+          "count": 1,
+          "downloaded_bytes": 5833144
+         }
+        }
+       }
+      }
+     },
+     "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/B04.tif.AUX": {
+      "methods": {
+       "HEAD": {
+        "count": 1
+       }
+      },
+      "actions": {
+       "GetFileSize": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       }
+      }
+     },
+     "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/B04.tif.aux": {
+      "methods": {
+       "HEAD": {
+        "count": 1
+       }
+      },
+      "actions": {
+       "GetFileSize": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       }
+      }
+     },
+     "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/B08.AUX": {
+      "methods": {
+       "HEAD": {
+        "count": 1
+       }
+      },
+      "actions": {
+       "GetFileSize": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       }
+      }
+     },
+     "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/B08.aux": {
+      "methods": {
+       "HEAD": {
+        "count": 1
+       }
+      },
+      "actions": {
+       "GetFileSize": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       }
+      }
+     },
+     "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/B08.tif": {
+      "methods": {
+       "GET": {
+        "count": 2,
+        "downloaded_bytes": 4984861
+       }
+      },
+      "actions": {
+       "Read": {
+        "methods": {
+         "GET": {
+          "count": 1,
+          "downloaded_bytes": 16384
+         }
+        }
+       },
+       "ReadMultiRange": {
+        "methods": {
+         "GET": {
+          "count": 1,
+          "downloaded_bytes": 4968477
+         }
+        }
+       }
+      }
+     },
+     "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/B08.tif.AUX": {
+      "methods": {
+       "HEAD": {
+        "count": 1
+       }
+      },
+      "actions": {
+       "GetFileSize": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       }
+      }
+     },
+     "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/B08.tif.aux": {
+      "methods": {
+       "HEAD": {
+        "count": 1
+       }
+      },
+      "actions": {
+       "GetFileSize": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       }
+      }
+     },
+     "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/SCL.AUX": {
+      "methods": {
+       "HEAD": {
+        "count": 1
+       }
+      },
+      "actions": {
+       "GetFileSize": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       }
+      }
+     },
+     "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/SCL.aux": {
+      "methods": {
+       "HEAD": {
+        "count": 1
+       }
+      },
+      "actions": {
+       "GetFileSize": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       }
+      }
+     },
+     "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/SCL.tif": {
+      "methods": {
+       "GET": {
+        "count": 2,
+        "downloaded_bytes": 90245
+       }
+      },
+      "actions": {
+       "Read": {
+        "methods": {
+         "GET": {
+          "count": 1,
+          "downloaded_bytes": 16384
+         }
+        }
+       },
+       "ReadMultiRange": {
+        "methods": {
+         "GET": {
+          "count": 1,
+          "downloaded_bytes": 73861
+         }
+        }
+       }
+      }
+     },
+     "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/SCL.tif.AUX": {
+      "methods": {
+       "HEAD": {
+        "count": 1
+       }
+      },
+      "actions": {
+       "GetFileSize": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       }
+      }
+     },
+     "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/SCL.tif.aux": {
+      "methods": {
+       "HEAD": {
+        "count": 1
+       }
+      },
+      "actions": {
+       "GetFileSize": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       }
+      }
+     }
+    },
+    "actions": {
+     "ReadDir": {
+      "methods": {
+       "GET": {
+        "count": 1,
+        "downloaded_bytes": 332
+       }
+      }
+     },
+     "Stat": {
+      "methods": {
+       "HEAD": {
+        "count": 15
+       }
+      },
+      "files": {
+       "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/B04.XML": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       },
+       "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/B04.tif.MSK": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       },
+       "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/B04.tif.aux.xml": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       },
+       "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/B04.tif.msk": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       },
+       "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/B04.xml": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       },
+       "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/B08.XML": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       },
+       "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/B08.tif.MSK": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       },
+       "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/B08.tif.aux.xml": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       },
+       "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/B08.tif.msk": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       },
+       "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/B08.xml": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       },
+       "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/SCL.XML": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       },
+       "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/SCL.tif.MSK": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       },
+       "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/SCL.tif.aux.xml": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       },
+       "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/SCL.tif.msk": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       },
+       "/vsicurl/https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/GF/2025/7/S2B_10SGF_20250709_0_L2A/SCL.xml": {
+        "methods": {
+         "HEAD": {
+          "count": 1
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "read_seconds": 4.011209011077881,
+ "valid_pixels": 634174,
+ "total_pixels": 1053999,
+ "ndvi_min": -0.8541672229766846,
+ "ndvi_max": 0.9995501041412354,
+ "ndvi_mean_box": 0.48110589385032654
+}

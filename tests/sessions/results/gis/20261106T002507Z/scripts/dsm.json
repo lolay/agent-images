@@ -1,0 +1,6 @@
+{"pipeline":[
+ {"type":"readers.las","filename":"cropped_classified.laz"},
+ {"type":"filters.range","limits":"ReturnNumber[1:1]"},
+ {"type":"writers.gdal","filename":"dsm_1m.tif","resolution":1,"output_type":"max","nodata":-9999,
+  "bounds":"([763090,763590],[4062281,4062781])","gdaldriver":"GTiff","gdalopts":"COMPRESS=DEFLATE,TILED=YES","data_type":"float32"}
+]}

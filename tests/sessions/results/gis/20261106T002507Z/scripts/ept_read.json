@@ -1,0 +1,32 @@
+{
+ "pipeline": [
+  {
+   "type": "readers.ept",
+   "filename": "https://s3-us-west-2.amazonaws.com/usgs-lidar-public/CA_SanJoaquin_3_2021/ept.json",
+   "bounds": "([-13364624.425,-13363923.234],[4393130.645,4393834.617])",
+   "threads": 8,
+   "tag": "ept"
+  },
+  {
+   "type": "filters.reprojection",
+   "out_srs": "EPSG:32610",
+   "tag": "utm"
+  },
+  {
+   "type": "filters.crop",
+   "bounds": "([763090,763590],[4062281,4062781])",
+   "tag": "crop"
+  },
+  {
+   "type": "filters.smrf",
+   "tag": "smrf"
+  },
+  {
+   "type": "writers.las",
+   "filename": "cropped_classified.laz",
+   "compression": "laszip",
+   "a_srs": "EPSG:32610",
+   "tag": "laz"
+  }
+ ]
+}
