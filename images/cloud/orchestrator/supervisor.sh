@@ -65,14 +65,6 @@ if ((${#types[@]} == 0)); then
 	exit 1
 fi
 
-# type_setting <type> <NAME> <default>: a value from that type's env file.
-type_setting() {
-	(
-		gcp_load_env "$1" >/dev/null 2>&1 || exit 0
-		printf '%s' "${!2:-$3}"
-	)
-}
-
 # fetch_secret <type> <file>: the type's Claude environment key, to an
 # owner-only file. The value passes through a pipe, never a command line.
 fetch_secret() {
@@ -104,7 +96,7 @@ prefix_lines() { sed -u "s/^/[$1] /"; }
 # and fail to spawn every runner.
 deployed=()
 for type in "${types[@]}"; do
-	if [[ "$(type_setting "$type" DEPLOY true)" == false ]]; then
+	if ! gcp_deploys "$type"; then
 		log "$type: DEPLOY=false in its env file; not starting its orchestrator"
 	else
 		deployed+=("$type")
@@ -118,7 +110,7 @@ fi
 
 compute_types=()
 for type in "${types[@]}"; do
-	[[ "$(type_setting "$type" BACKEND run)" == compute ]] && compute_types+=("$type")
+	[[ "$(gcp_backend "$type")" == compute ]] && compute_types+=("$type")
 done
 if ((${#compute_types[@]} > 0)) && [[ -z "${ZONE:-}" || -z "${PROJECT_ID:-}" ]]; then
 	log "reaper: no PROJECT_ID or ZONE in project.env; not reaping ${compute_types[*]}"
@@ -128,7 +120,7 @@ fi
 # reap_type <token> <type>: one pass of the reaper over the type's VMs.
 reap_type() {
 	local token="$1" type="$2" max_run zone_url page="" instance name status created now age
-	max_run="$(type_setting "$type" MAX_RUN_DURATION_SEC 34200)"
+	max_run="$(gcp_type_setting "$type" MAX_RUN_DURATION_SEC 34200)"
 	zone_url="$GCP_COMPUTE_URL/compute/v1/projects/$PROJECT_ID/zones/$ZONE"
 	now="$(date +%s)"
 	while :; do
@@ -224,8 +216,8 @@ start_type() {
 		return
 	fi
 	local min_idle expected
-	min_idle="$(type_setting "$type" MIN_IDLE 0)"
-	expected="$(type_setting "$type" EXPECTED_SPAWN_SECONDS 120)"
+	min_idle="$(gcp_type_setting "$type" MIN_IDLE 0)"
+	expected="$(gcp_type_setting "$type" EXPECTED_SPAWN_SECONDS 120)"
 	# The subshell becomes the orchestrator at exec, so $! is its pid: signals
 	# reach it directly, and the log prefixer is its child, not ours.
 	(

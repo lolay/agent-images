@@ -1,7 +1,7 @@
 # Plan: m5, the dependency watch
 
 Status: approved as written (owner, 2026-11-06), D1 to D9 as recommended, and the
-draft PR for s4. s1 done.
+draft PR for s4. s1 and s2 done.
 Branch `claude/admiring-bell-0c7a1d` (assigned by the harness), from `main` at
 `ba55d96`.
 
@@ -133,7 +133,7 @@ Add the run 42283134638 lines to gcp.md's "m4 results" (the android smoke VM's
 checks and smoke tests, and `-next` passing and promoting for `linux` and `gis`).
 Trim "Still open from m4" in the m5 handoff to gpu's live test only.
 
-#### s2 - One helper for type facts `[exec]`
+#### s2 - One helper for type facts `[exec]` (done)
 
 Move `parent_of`, `toolsets_of`, `image_paths` and `rebuild_of` out of
 `changed-targets.sh` into one sourced helper. The lock resolver needs a type's

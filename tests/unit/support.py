@@ -12,6 +12,13 @@ REPO = Path(__file__).resolve().parents[2]
 faulthandler.dump_traceback_later(300, exit=True)
 
 
+def isolated_git_env() -> dict:
+    """The environment for git in a test's temp repo: none of the host's global or
+    system config, so a host that signs commits (commit.gpgsign) can't fail a test
+    (r2.f5)."""
+    return {**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"}
+
+
 def write_executable(path: Path, body: str) -> Path:
     """Write a bash script at path and make it executable."""
     path.parent.mkdir(parents=True, exist_ok=True)

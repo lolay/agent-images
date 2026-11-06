@@ -30,6 +30,26 @@ gcp_load_env() {
 	done
 }
 
+# gcp_type_setting <type> <NAME> <default>: one key from infra/gcp/<type>.env
+# (with project.env under it), or the default when the file leaves it unset or
+# empty. Prints nothing when the type has no env file. A subshell, so nothing
+# the file sets leaks into the caller.
+gcp_type_setting() { (
+	gcp_load_env "$1" >/dev/null 2>&1 || exit 0
+	printf '%s' "${!2:-$3}"
+); }
+
+# The per-type settings more than one script reads, each with its one default.
+# gcp_backend <type>: run (a Cloud Run job) or compute (a VM per session).
+gcp_backend() { gcp_type_setting "$1" BACKEND run; }
+# gcp_rebuild_class <type>: the scheduled rebuild it takes, nightly or weekly
+# (specs/gcp.md, "Rebuild cadence"). Unset is nightly, so a new type is never
+# left off the schedule.
+gcp_rebuild_class() { gcp_type_setting "$1" REBUILD nightly; }
+# gcp_deploys <type>: false only when the env file says DEPLOY=false (a type
+# that builds but isn't deployed, waiting for its quota).
+gcp_deploys() { [[ "$(gcp_type_setting "$1" DEPLOY true)" != false ]]; }
+
 # gcp_runner_settings: the runner.env settings (images/shared/runners/claude.sh)
 # that the loaded type's env file sets, one KEY=value line each, for both
 # backends: the Cloud Run job's env (scripts/cloud/job-spec.sh) and a compute

@@ -61,23 +61,8 @@ readonly compute_api="$GCP_COMPUTE_URL/compute/v1/projects/$PROJECT_ID"
 
 access_token() { gcloud auth print-access-token --quiet; }
 
-# backend_of <type>: run (a Cloud Run job, the default) or compute (a VM).
-backend_of() { (
-	gcp_load_env "$1" || exit 0
-	printf '%s' "${BACKEND:-run}"
-); }
-
-# deploys <type>: false when the type's env file says DEPLOY=false.
-deploys() { (
-	gcp_load_env "$1" || exit 0
-	[[ "${DEPLOY:-true}" != false ]]
-); }
-
 # family_of <type>: a compute type's image family.
-family_of() { (
-	gcp_load_env "$1" || exit 0
-	printf '%s' "${IMAGE_FAMILY:-}"
-); }
+family_of() { gcp_type_setting "$1" IMAGE_FAMILY ""; }
 
 # wait_operation <token>: wait for the long-running operation in GCP_BODY.
 wait_operation() {
@@ -145,8 +130,8 @@ cmd_type() {
 	(($# == 3)) || die "usage: deploy.sh type <type> <image@sha256:...|--live> <commit>"
 	local type="$1" image="$2" sha="$3"
 	[[ -f "$AGENT_GCP_ENV_DIR/$type.env" ]] || die "no infra/gcp/$type.env"
-	[[ "$(backend_of "$type")" == run ]] || die "$type is a Compute Engine type; it deploys with vm-build and vm-promote"
-	if ! deploys "$type"; then
+	[[ "$(gcp_backend "$type")" == run ]] || die "$type is a Compute Engine type; it deploys with vm-build and vm-promote"
+	if ! gcp_deploys "$type"; then
 		log "agent-$type: DEPLOY=false in infra/gcp/$type.env; built $image, not deployed (no job, no smoke)"
 		return 0
 	fi
@@ -167,7 +152,7 @@ cmd_type() {
 # load_compute_type <type>: its settings, or die if it isn't a compute type.
 load_compute_type() {
 	[[ -f "$AGENT_GCP_ENV_DIR/$1.env" ]] || die "no infra/gcp/$1.env"
-	[[ "$(backend_of "$1")" == compute ]] || die "$1 isn't a Compute Engine type (BACKEND=compute)"
+	[[ "$(gcp_backend "$1")" == compute ]] || die "$1 isn't a Compute Engine type (BACKEND=compute)"
 	gcp_load_env "$1"
 	: "${IMAGE_FAMILY:?}" "${MACHINE_TYPE:?}" "${DISK_GB:?}" "${DISK_TYPE:?}" "${ZONE:?}" "${NETWORK:?}" "${SUBNET:?}"
 }
@@ -340,7 +325,7 @@ cmd_status() {
 	local token type job
 	token="$(access_token)"
 	while read -r type; do
-		if [[ "$(backend_of "$type")" == compute ]]; then
+		if [[ "$(gcp_backend "$type")" == compute ]]; then
 			local family
 			family="$(family_of "$type")"
 			gcp_call "$token" GET "$compute_api/global/images/family/$family"
