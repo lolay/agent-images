@@ -62,11 +62,12 @@ jobs:
               [[ -z "$SNAP" ]] || printf "APT::Snapshot \"%s\";\n" "$SNAP" >/etc/apt/apt.conf.d/50agent-snapshot
               apt-get update >/tmp/update.log 2>&1 || { cat /tmp/update.log >&2; exit 1; }
               grep -E "^(Get|Hit|Ign|Err|W:|E:)" /tmp/update.log | sed -E "s/ \[[0-9.]+ [kMG]?B\]//" | sort -u >&2
-              apt-get install --simulate --no-install-recommends $PACKAGES 2>/dev/null | sed -n "s/^Inst //p"'
+              apt-get install --simulate --no-install-recommends $PACKAGES >/tmp/sim.txt 2>&1 || { cat /tmp/sim.txt >&2; exit 1; }
+              sed -n "s/^Inst //p" /tmp/sim.txt'
           }
-          simulate 20261101T000000Z >old.txt 2>old-update.txt
+          simulate 20261101T000000Z >old.txt 2>old-update.txt || { echo "snapshot run failed:"; tail -40 old-update.txt; exit 1; }
           simulate 20261101T000000Z >old2.txt 2>/dev/null
-          simulate "" >today.txt 2>today-update.txt
+          simulate "" >today.txt 2>today-update.txt || { echo "today run failed:"; tail -40 today-update.txt; exit 1; }
           {
             echo "## apt: $TYPE on \`$ref\`"
             echo "- packages asked for: $(echo "$packages" | wc -w); resolved: $(wc -l <old.txt) at the snapshot, $(wc -l <today.txt) today"
@@ -106,7 +107,7 @@ jobs:
             jq -r '.formulae[] | "\(.full_name) \(.versions.stable)\(if .revision > 0 then "_\(.revision)" else "" end)"' | sort >resolved.txt
           run=42283134638  # m4's deploy, which built linux
           gh run download -R "$GITHUB_REPOSITORY" "$run" -p 'versions-linux-*' -D report
-          report="$(find report -name '*.md' | head -1)"
+          report="$(find report -type f -name '*.md' | head -1)"
           awk '/^## Homebrew/{f=1; next} f && /^```text/{g=1; next} g && /^```/{exit} g' "$report" | sort >image.txt
           {
             echo "## Homebrew: linux"
