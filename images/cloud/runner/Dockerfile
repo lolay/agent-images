@@ -52,6 +52,9 @@ cp -R /tmp/images/skills/. "$HOME/.claude/skills/"
 # cloud-smoke) takes their owner, so the session user can write scratch and outputs.
 sudo install -d -m 755 -o ubuntu -g ubuntu /scratch /mnt/outputs
 sudo install -d -m 755 /mnt/datasets
+# The toolsets are in; a session's own apt (on a runtime that allows sudo) reads
+# today's archive, not the build's snapshot (images/cloud/base/Dockerfile).
+sudo rm -f /etc/apt/apt.conf.d/50agent-snapshot
 SCRIPT
 
 # profile.sh's PATH: Homebrew (and rustup's proxies) ahead of the system.

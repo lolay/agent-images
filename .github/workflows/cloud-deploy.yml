@@ -103,8 +103,9 @@ jobs:
             echo "orchestrator=$(jq '.orchestrator' <<<"$plan")"
             echo "prune=$(jq '.prune' <<<"$plan")"
           } >>"$GITHUB_OUTPUT"
-      # The layer cache would otherwise keep the first Claude Code it installed:
-      # the version is part of the build, so a new release rebuilds that layer.
+      # The orchestrator's Claude Code (it has no lock): the version is part of
+      # its build, so a new release rebuilds that layer instead of the cache
+      # keeping the first one. Runner types take theirs from their lock.
       - name: Claude Code version
         id: claude
         run: echo "version=$(curl -fsSL https://downloads.claude.ai/claude-code-releases/latest)" >>"$GITHUB_OUTPUT"
@@ -156,18 +157,28 @@ jobs:
       # gis's. So -gpu types build without the cache: slower, but only when
       # something they use changed, and the CPU types' caches stay intact
       # (specs/gcp.md, "Deploy: build, smoke, promote").
-      - name: Cache settings
+      # The bake's set: the type's lock (scripts/cloud/lock.sh bake-args: the
+      # base digest, apt snapshot, Claude and toolchain versions), then the
+      # cache settings. base gets a scope per type: with a lock each, linux's
+      # and gis's bases differ whenever their locks do, and one scope would
+      # thrash between them.
+      - name: Build settings
         id: cache
         if: matrix.build
         env:
           TYPE: ${{ matrix.type }}
         run: |
+          set -euo pipefail
+          lock="$(scripts/cloud/lock.sh bake-args "$TYPE")"
           {
             echo 'set<<EOF'
+            echo "$lock"
             if [[ "$TYPE" != *-gpu ]]; then
               for target in base "$TYPE-tools" "$TYPE"; do
-                echo "$target.cache-from=type=gha,scope=$target"
-                echo "$target.cache-to=type=gha,mode=max,scope=$target"
+                scope="$target"
+                [[ "$target" != base ]] || scope="base-$TYPE"
+                echo "$target.cache-from=type=gha,scope=$scope"
+                echo "$target.cache-to=type=gha,mode=max,scope=$scope"
               done
             fi
             echo EOF
@@ -179,7 +190,6 @@ jobs:
         env:
           REGISTRY: ${{ env.ARTIFACT_REGISTRY }}
           TAG: ${{ steps.tag.outputs.tag }}
-          CLAUDE_VERSION: ${{ needs.plan.outputs.claude-version }}
           COMMIT: ${{ github.sha }}
           # The next step reads bake's metadata from an environment variable.
           # Provenance in it repeats the GitHub event (with the head commit's
@@ -200,7 +210,8 @@ jobs:
           # what Cloud Run runs and what the job records.
           provenance: false
           sbom: false
-          # A scheduled rebuild skips the cache: picking up apt and Homebrew is its job.
+          # A scheduled rebuild skips the cache: it still builds from the lock,
+          # but picks up what the lock can't pin (Homebrew, the installers).
           no-cache: ${{ inputs.no-cache == true || github.event_name == 'schedule' }}
           set: ${{ steps.cache.outputs.set }}
       - name: Smoke and promote

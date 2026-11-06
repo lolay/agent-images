@@ -1,7 +1,9 @@
-# Build-only check for pull requests that touch the GCP runners: lint, the unit
-# tests, and a build of every cloud image (one runner each), with no push and
-# no GCP credentials (specs/gcp.md, "Only main deploys"). It has no id-token
-# permission and no environment, so it couldn't get a GCP token if it tried.
+# The pull request check for the GCP runners: lint and the unit tests, then
+# every cloud image built (one runner each, a runner type from its lock),
+# loaded, its toolset record checked and smoked (make cloud-smoke), with no push
+# and no GCP credentials (specs/gcp.md, "Only main deploys"; m4, m5). It has no
+# id-token permission and no environment, so it couldn't get a GCP token if it
+# tried. m5's lock pull requests merge on it.
 name: cloud-build
 
 on:
@@ -86,17 +88,17 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # A runner type builds from its lock (images/cloud/<type>/versions.lock)
+      # with its versions report, as make cloud-build does locally; --load sends
+      # the image to Docker for the smoke, and versions-<type> keeps its local
+      # output. The orchestrator takes the latest Claude Code.
       - name: Build ${{ matrix.target }}
         env:
           TARGET: ${{ matrix.target }}
           COMMIT: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          args=("$TARGET")
-          # --load sends the image to Docker; versions-<type> keeps its local output.
-          [[ "$TARGET" == orchestrator ]] || args=(--load "$TARGET" "versions-$TARGET")
-          CLAUDE_VERSION="$(curl -fsSL https://downloads.claude.ai/claude-code-releases/latest)" \
-            docker buildx bake -f images/cloud/docker-bake.hcl "${args[@]}"
+          make cloud-build TYPE="$TARGET"
           df -h /
           docker system df
       - name: Smoke ${{ matrix.target }}

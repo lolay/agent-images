@@ -14,10 +14,20 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
-# packages.txt: what the base needs before any toolset (sudo, and curl for
-# Homebrew's installer); the lock resolves it with the toolsets' lists.
+# apt reads Ubuntu's archive as it was at APT_SNAPSHOT, the type's locked
+# snapshot (specs/gcp.md, "The lock"), in this layer and every toolset's after
+# it; the runner stage drops the setting at the end. snapshot.ubuntu.com is
+# HTTPS only and the stock image has no CA certificates, so ca-certificates
+# (and on plain Ubuntu its openssl) comes from today's archive first: the one
+# apt install the snapshot doesn't hold. packages.txt is what the base needs
+# before any toolset (sudo, and curl for Homebrew's installer).
+ARG APT_SNAPSHOT
 RUN --mount=type=bind,source=images/cloud/base/packages.txt,target=/tmp/base-packages.txt \
-	apt-get update \
+	: "${APT_SNAPSHOT:?the build passes the lock's apt-snapshot (scripts/cloud/lock.sh bake-args)}" \
+	&& apt-get update \
+	&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates \
+	&& printf 'APT::Snapshot "%s";\n' "$APT_SNAPSHOT" >/etc/apt/apt.conf.d/50agent-snapshot \
+	&& apt-get update \
 	&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
 		$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' /tmp/base-packages.txt) \
 	&& rm -rf /var/lib/apt/lists/* \

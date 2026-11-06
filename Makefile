@@ -102,13 +102,13 @@ CLOUD_SCRIPTS := $(wildcard images/cloud/*.sh images/cloud/runner/*.sh images/cl
                    images/toolsets/*.sh images/toolsets/*/*.sh \
                    images/cloud/orchestrator/*.sh scripts/cloud/*.sh hooks/gcp/*.sh \
                    images/android/gce/*.sh images/android/gce/files/*.sh) hooks/gcp/spawn-runner
-CLOUD_BAKE := docker buildx bake -f images/cloud/docker-bake.hcl
 # Every Cloud Run type (the BACKEND=run files in infra/gcp) and the orchestrator:
 # what TYPE=all and cloud-ci build, and the pull request check's matrix.
 CLOUD_TARGETS = $(shell scripts/cloud/changed-targets.sh --all | jq -r '.types[].type, "orchestrator"')
 # TYPE=all builds every type and the orchestrator (CLOUD_TARGETS).
 TYPE ?= linux
-# An exact version (what the deploy passes) or a channel.
+# The orchestrator's Claude Code: an exact version or a channel. Runner types
+# take theirs from their lock (scripts/cloud/bake.sh).
 CLAUDE_VERSION ?= latest
 
 SHELL_SCRIPTS := $(wildcard $(MACOS_DIR)/scripts/*.sh $(MACOS_DIR)/files/*.sh \
@@ -306,8 +306,10 @@ secret-set: ## Store a runner secret (prompts, or pipe it in): NAME=claude-envir
 
 ##@ Cloud (GCP runners; specs/gcp.md. Deploys run only from main, in GitHub Actions)
 
-cloud-build: ## Build a cloud image locally as agent-<TYPE>:local: TYPE=linux|orchestrator|all [CLAUDE_VERSION=latest]
-	CLAUDE_VERSION=$(CLAUDE_VERSION) $(CLOUD_BAKE) --load $(if $(filter all,$(TYPE)),$(CLOUD_TARGETS),$(TYPE))
+cloud-build: ## Build a cloud image locally as agent-<TYPE>:local, a runner type from its lock with its versions report: TYPE=linux|orchestrator|all
+	@for target in $(if $(filter all,$(TYPE)),$(CLOUD_TARGETS),$(TYPE)); do \
+	  CLAUDE_VERSION=$(CLAUDE_VERSION) scripts/cloud/bake.sh "$$target" --load || exit 1; \
+	done
 
 # Stand-ins for the job's mounts: anonymous volumes for scratch (a disk) and
 # outputs (writable), which --rm removes, and an empty read-only tmpfs for
@@ -334,7 +336,18 @@ cloud-test: ## Run the cloud unit tests (Linux: they use /proc and GNU tools)
 	python3 -m unittest discover -s tests/unit
 
 cloud-ci: cloud-lint cloud-test ## Lint, unit tests and a build of every cloud image, no push (the pull request check)
-	CLAUDE_VERSION=$(CLAUDE_VERSION) $(CLOUD_BAKE) $(CLOUD_TARGETS)
+	@for target in $(CLOUD_TARGETS); do \
+	  CLAUDE_VERSION=$(CLAUDE_VERSION) scripts/cloud/bake.sh "$$target" || exit 1; \
+	done
+
+# The lock's diff, or the whole candidate when the type has no lock yet. The
+# watch (m5) writes locks through pull requests; WRITE=1 is for seeding one by
+# hand or checking a constraint change before its pull request.
+cloud-lock: ## Resolve a runner type's lock from upstream now and show what moved (Linux, Docker, Homebrew): TYPE=linux [WRITE=1 writes it]
+	@set -o pipefail; lock=images/cloud/$(TYPE)/versions.lock; new="$$(mktemp)"; \
+	scripts/cloud/lock.sh resolve $(TYPE) >"$$new" || { rm -f "$$new"; exit 1; }; \
+	if [ -f "$$lock" ]; then scripts/cloud/lock.sh diff "$$lock" "$$new"; else cat "$$new"; fi; \
+	if [ -n "$(WRITE)" ]; then mv "$$new" "$$lock"; printf 'wrote %s\n' "$$lock"; else rm -f "$$new"; fi
 
 cloud-targets: ## Print every Cloud Run type and the orchestrator, one a line: what TYPE=all and cloud-ci build
 	@printf '%s\n' $(CLOUD_TARGETS)

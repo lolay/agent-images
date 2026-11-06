@@ -14,6 +14,8 @@ FROM agent-linux
 ENV NVIDIA_DRIVER_CAPABILITIES=all
 
 ARG APT_DROP_LISTS=true
+# The locked VirtualGL release (scripts/cloud/lock.sh bake-args).
+ARG VIRTUALGL_VERSION
 RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
 	--mount=type=bind,source=images/toolsets/gpu,target=/tmp/toolsets/gpu \
 	bash /tmp/toolsets/install-toolset.sh gpu

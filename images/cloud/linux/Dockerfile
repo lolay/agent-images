@@ -28,12 +28,17 @@ RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/tool
 RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
 	--mount=type=bind,source=images/toolsets/go,target=/tmp/toolsets/go \
 	bash /tmp/toolsets/install-toolset.sh go
+# The locked toolchain versions (scripts/cloud/lock.sh bake-args), each declared
+# just before its own layer, so a new one rebuilds that layer and those after it.
+ARG RUST_TOOLCHAIN
 RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
 	--mount=type=bind,source=images/toolsets/rust,target=/tmp/toolsets/rust \
 	bash /tmp/toolsets/install-toolset.sh rust
 RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
 	--mount=type=bind,source=images/toolsets/proto,target=/tmp/toolsets/proto \
 	bash /tmp/toolsets/install-toolset.sh proto
+ARG TERRAFORM_VERSION
+ARG TFLINT_VERSION
 RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
 	--mount=type=bind,source=images/toolsets/terraform,target=/tmp/toolsets/terraform \
 	bash /tmp/toolsets/install-toolset.sh terraform
