@@ -109,10 +109,11 @@ From gcp.md m3 and image-toolsets.md "Types":
 
 ## Gotchas
 
-- **Hosted runner disk:** about 14 GB free after the deploy's "Free disk" step, and
-  `agent-gis` alone is 9 GB. CUDA's devel image is several GB before any toolset,
-  and `linux-gpu` adds all of `linux`'s (about 5.7 GB). Measure before assuming it
-  fits; a larger runner or a split build may be needed. COLMAP's and gsplat's CUDA
+- **Hosted runner disk and cache:** about 14 GB free before the deploy's "Free
+  disk" step, about 44 GB after it. `linux-gpu`'s tools are about 10.8 GB unpacked
+  (CUDA devel 7.1 GB, 4.0 GB compressed; `linux`'s toolsets about 3.6 GB), so they
+  fit (measured in m3.s5). The tighter limit is the Actions cache, 10 GB per repo:
+  a GPU type's cache carries CUDA's 4 GB of layers. COLMAP's and gsplat's CUDA
   builds are also slow on 4 hosted vCPUs.
 - **Building without a GPU:** the hosted runner has none, so `sm_120` code can be
   compiled there but not run. Nothing in the build should call a GPU; gsplat's

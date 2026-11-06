@@ -27,7 +27,7 @@ function "tags" {
 }
 
 group "default" {
-  targets = ["linux", "gis", "orchestrator"]
+  targets = ["linux", "linux-gpu", "gis", "orchestrator"]
 }
 
 target "base" {
@@ -86,6 +86,14 @@ target "linux-gpu-tools" {
   contexts = {
     agent-linux = "target:linux-tools-gpu"
   }
+}
+
+target "linux-gpu" {
+  inherits = ["_runner"]
+  contexts = {
+    agent-tools = "target:linux-gpu-tools"
+  }
+  tags = tags("linux-gpu")
 }
 
 target "gis-tools" {
