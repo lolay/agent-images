@@ -90,6 +90,27 @@ class BakeTests(unittest.TestCase):
                 report = bake_print(flag, "linux", "versions-linux")["versions-linux"]
                 self.assertEqual(report["output"], [{"type": "local", "dest": "out/versions/linux"}])
 
+    def test_cloud_build_builds_each_runner_types_report_with_the_commit(self):
+        """make cloud-build reproduces the pull request check's report (r2.f14)."""
+
+        def targets(*args):
+            out = subprocess.run(
+                ["make", "-n", "cloud-build", *args], cwd=REPO, check=True, capture_output=True, text=True
+            ).stdout
+            line = next(l for l in out.splitlines() if "docker buildx bake" in l)
+            return line, line.split("--load ")[1].split()
+
+        line, built = targets("TYPE=linux", "COMMIT=abc123")
+        self.assertEqual(built, ["linux", "versions-linux"])
+        self.assertIn("COMMIT=abc123 ", line)
+        self.assertEqual(targets("TYPE=orchestrator")[1], ["orchestrator"], "not a runner: no report")
+        built = targets("TYPE=all")[1]
+        for name in run_types():
+            self.assertIn(name, built)
+            self.assertIn(f"versions-{name}", built)
+        self.assertIn("orchestrator", built)
+        self.assertNotIn("versions-orchestrator", built)
+
     def test_the_orchestrator_has_its_target(self):
         self.assertEqual(bake_print("orchestrator")["orchestrator"]["tags"], ["agent-orchestrator:local"])
 

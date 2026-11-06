@@ -110,6 +110,12 @@ CLOUD_TARGETS = $(shell scripts/cloud/changed-targets.sh --all | jq -r '.types[]
 TYPE ?= linux
 # An exact version (what the deploy passes) or a channel.
 CLAUDE_VERSION ?= latest
+# The commit the versions report names; the workflows pass the one they build.
+COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+# What cloud-build builds: TYPE's targets, and for each runner type (not the
+# orchestrator) its versions-<type> report target, as the workflows build them.
+CLOUD_BUILD_TARGETS = $(if $(filter all,$(TYPE)),$(CLOUD_TARGETS),$(TYPE))
+CLOUD_VERSIONS_TARGETS = $(addprefix versions-,$(filter-out orchestrator,$(CLOUD_BUILD_TARGETS)))
 
 SHELL_SCRIPTS := $(wildcard $(MACOS_DIR)/scripts/*.sh $(MACOS_DIR)/files/*.sh \
                    $(SHARED_DIR)/*.sh $(SHARED_DIR)/runners/*.sh $(SHARED_DIR)/claude/hooks/*.sh \
@@ -306,8 +312,8 @@ secret-set: ## Store a runner secret (prompts, or pipe it in): NAME=claude-envir
 
 ##@ Cloud (GCP runners; specs/gcp.md. Deploys run only from main, in GitHub Actions)
 
-cloud-build: ## Build a cloud image locally as agent-<TYPE>:local: TYPE=linux|orchestrator|all [CLAUDE_VERSION=latest]
-	CLAUDE_VERSION=$(CLAUDE_VERSION) $(CLOUD_BAKE) --load $(if $(filter all,$(TYPE)),$(CLOUD_TARGETS),$(TYPE))
+cloud-build: ## Build a cloud image locally as agent-<TYPE>:local, and its versions report in out/versions/<TYPE>: TYPE=linux|orchestrator|all [CLAUDE_VERSION=latest] [COMMIT=<sha>]
+	CLAUDE_VERSION=$(CLAUDE_VERSION) COMMIT=$(COMMIT) $(CLOUD_BAKE) --load $(CLOUD_BUILD_TARGETS) $(CLOUD_VERSIONS_TARGETS)
 
 # Stand-ins for the job's mounts: anonymous volumes for scratch (a disk) and
 # outputs (writable), which --rm removes, and an empty read-only tmpfs for

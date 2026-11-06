@@ -192,7 +192,7 @@ or deploys: only a push to `main` does, through `.github/workflows/cloud-deploy.
 
 | Target | What it does |
 | --- | --- |
-| `cloud-build` | `docker buildx bake -f images/cloud/docker-bake.hcl --load <TYPE>`: `agent-<TYPE>:local`. `TYPE=linux` (default), any type, `orchestrator`, or `all` (`cloud-targets`). `agent-base` comes along as `linux`'s build context and isn't loaded on its own |
+| `cloud-build` | `docker buildx bake -f images/cloud/docker-bake.hcl --load <TYPE> versions-<TYPE>`: `agent-<TYPE>:local`, and the versions report the pull request check shows, in `out/versions/<TYPE>/versions.md` (it names `COMMIT`, the checked-out commit by default). `TYPE=linux` (default), any type, `orchestrator` (no report: it isn't a runner), or `all` (`cloud-targets`; a report for each runner type). `agent-base` comes along as `linux`'s build context and isn't loaded on its own |
 | `cloud-smoke` | Runs `agent-<TYPE>:local smoke $(SMOKE)` (the entrypoint's checks: Claude, every toolset's binary checks and smoke tests, the mounts; what the deploy runs on `agent-<type>-next`) with anonymous volumes standing in for scratch and outputs and an empty read-only tmpfs for the datasets. What the pull request check runs on each loaded runner type |
 | `cloud-lint` | `shellcheck` and `shfmt -d` on the cloud scripts (the android VM's guest scripts included), the cloud settings JSON, and `packer fmt -check` and `packer validate` on the android Compute Engine image's template (`images/android/gce`) |
 | `cloud-test` | `python3 -m unittest discover -s tests/unit`: the entrypoint, the toolset checks runner, SessionStart hook, spawn hook (both backends), supervisor and its reaper, the android VM's order script, job spec, path map and deploy script, against fakes (`tests/unit/fake_gcp.py` for the GCP APIs and the metadata server), and that the bake file has every type's targets (needs `docker buildx`). Linux only |
@@ -204,6 +204,7 @@ or deploys: only a push to `main` does, through `.github/workflows/cloud-deploy.
 | --- | --- | --- |
 | `TYPE` | `linux` | `cloud-build`, `cloud-smoke` |
 | `SMOKE` | `pr` | `cloud-smoke`: `pr` skips the smoke tests marked `# smoke: live` (they need a GPU); empty runs them all, as the deploy does |
+| `COMMIT` | checked-out commit | `cloud-build`: the commit the versions report names (the pull request check passes the head commit it builds) |
 | `CLAUDE_VERSION` | `latest` | `cloud-build`, `cloud-ci`: an exact version (the deploy resolves one per run, so the layer cache can't keep an old one) or a channel |
 
 Where things live:
