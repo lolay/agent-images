@@ -288,27 +288,51 @@ deploys everything. A manual dispatch takes a list of targets, or `all`.
 
 ### The lock
 
-Each image type has a lock in git, `images/cloud/<type>/versions.lock`: every
+Each Cloud Run type has a lock in git, `images/cloud/<type>/versions.lock`: every
 dependency resolved to an exact version. It's the record of what the live image was
 built from, and the check compares upstream against it, so nothing ever reads the
-image.
+image. `scripts/cloud/lock.sh` is its one reader and writer: `resolve <type>`
+(Linux, with Docker and Homebrew), `bake-args`, `diff` and `summary`. A lock is
+`<kind> <name> <value>` lines, sorted, under a header:
 
-| Dependency | Locked as | Resolved by (on the hosted runner, from upstream only) |
-| --- | --- | --- |
-| Base image | Digest | `crane digest mirror.gcr.io/library/ubuntu:24.04` (or the CUDA tag): a registry HEAD, no pull |
-| apt packages, dependencies included | An Ubuntu snapshot timestamp, plus the full resolved list | `apt-get install --simulate` of `packages.txt` in a stock `ubuntu:24.04` container at the locked base digest, once with `--snapshot <locked>` and once against today's archive. Any difference in the resolved set means apt moved |
-| Homebrew, dependencies and `lolay/tap` included | Each formula and cask with its version and revision | `brew info --json=v2` on the runner's own Homebrew (preinstalled on Ubuntu runners), after `brew tap lolay/tap` |
-| Claude Code | Version | `https://downloads.claude.ai/claude-code-releases/latest` |
-| Type tools (COLMAP, ...) | Version | The project's latest GitHub release |
-| Rust toolchain | Version | rustup's `stable` channel manifest |
-| Terraform | Version | `tenv tf list-remote`, newest stable |
+```text
+apt ca-certificates 20260816ubuntu0.24.04.2
+apt-snapshot - 20261106T222014Z
+base - mirror.gcr.io/library/ubuntu:24.04@sha256:fe8156...
+brew lolay/tap/nowline 0.4.0
+claude - 2.1.319
+release tflint v0.65.0
+rust - 1.99.1
+terraform - 1.17.1
+```
 
-The build consumes the lock: `FROM` the locked digest, `apt-get --snapshot` at the
-locked timestamp, `CLAUDE_VERSION` from the lock, and the rust and terraform toolsets'
-`install.sh` install the locked version (`rustup toolchain install <x.y.z>`,
-`tenv tf install <x.y.z>`) instead of `stable` and `latest`. apt's snapshot makes the
-apt layer reproducible, old versions included, which plain `pkg=version` can't promise
-because Ubuntu's update pockets keep only the newest.
+`apt-floating` marks a package from a source with no snapshot (NVIDIA's CUDA
+repo; none today), and `pinned <what> <issue URL>` a pin
+([below](#pinning-a-dependency)).
+
+| Dependency | Locked as | Constraint, where it's declared | Resolved by (from upstream only) |
+| --- | --- | --- | --- |
+| Base image | Digest | `BASE_IMAGE` per base target in `docker-bake.hcl` (a tag; `@sha256` pins it) | `docker buildx imagetools inspect`: the index digest, no pull (a bare registry `HEAD` on mirror.gcr.io needs a token) |
+| apt packages, dependencies included | An Ubuntu snapshot id, plus the full resolved list | `images/cloud/base/packages.txt` and each toolset's `packages.txt` (`name=version` pins one) | `apt-get install --simulate` of that list in a stock container at the locked base digest, against today's archive. A resolved set unlike the lock's (or a new base) moves the snapshot to now |
+| Homebrew, dependencies and `lolay/tap` included | Each formula with its version and revision | The type's Brewfiles | `brew bundle list`, `brew deps --union` (no build-only dependencies) and `brew info --json=v2` on the runner's own Homebrew, after tapping and trusting the Brewfiles' taps. Matches the image's `brew list` exactly |
+| Claude Code | Version | `CLAUDE_VERSION` in `docker-bake.hcl` (`latest`, `stable`, or a version) | `https://downloads.claude.ai/claude-code-releases/<channel>` |
+| Rust toolchain | Version | `RUST_TOOLCHAIN` in `images/toolsets/rust/install.sh` (`stable`, a minor line, or a version) | rustup's channel manifest |
+| Terraform | Version | `TERRAFORM_VERSION` in `images/toolsets/terraform/install.sh` (`latest`, `~> x.y`, or a version) | HashiCorp's release index, newest stable on that line |
+| tflint, VirtualGL | Release tag | `TFLINT_VERSION`, `VIRTUALGL_VERSION` in their toolsets' `install.sh` | The tag GitHub redirects `/releases/latest` to |
+
+The build consumes the lock (`scripts/cloud/bake.sh` locally and on pull requests,
+the deploy's bake from `lock.sh bake-args`): `BASE_IMAGE` at the locked digest,
+`APT::Snapshot` at the locked snapshot for every apt install, `CLAUDE_VERSION`,
+`RUST_TOOLCHAIN`, `TERRAFORM_VERSION`, `TFLINT_VERSION` and `VIRTUALGL_VERSION`
+from the lock, each `ARG` declared just before its own layer. A type with no lock
+doesn't build. apt's snapshot makes the apt layer reproducible, old versions
+included, which plain `pkg=version` can't promise because Ubuntu's update pockets
+keep only the newest. One install isn't held: snapshot.ubuntu.com is HTTPS only and
+the stock `ubuntu:24.04` image has no CA certificates, so the base first installs
+`ca-certificates` (and, on plain Ubuntu, its `openssl`) from today's archive, then
+sets the snapshot. The runner stage drops the setting, so a session's own apt
+reads today's archive. The VM images (android) take each `install.sh`'s default
+and have no lock (m5, D2).
 
 Homebrew is the exception, and stays that way (owner, 2026-11-06): it only installs
 current versions, so its lock entries are a record and a change trigger, never a pin.
@@ -322,7 +346,10 @@ Homebrew back current.
 What an image actually got is its versions report
 ([m4](#m4---functional-smoke-and-versions-report)), `/etc/agent-images/versions.md`,
 read from inside the built image. The lock says what was asked for; the report says
-what landed, and the two differ only where Homebrew moved between them.
+what landed, and the two differ only where Homebrew moved between them, or in the
+base's certificate bootstrap. What neither the lock nor its constraints cover: the
+Homebrew installer (`HEAD`) and `gis`'s conda-forge solve (pixi, with no
+`pixi.lock`); the scheduled rebuilds pick those up.
 
 The watch never touches GCP, so there's no egress. The stock Ubuntu image it starts
 is about 30 MB, from a public registry.
@@ -446,9 +473,11 @@ the cheap ones.
 A scheduled run catches what the lock can't see (a curl installer), retries a failed
 deploy, and keeps the "track latest" promise even if a check is wrong. Before m5 it's
 the only way apt and Homebrew updates reach an image that nothing has pushed to.
-With m5, the nightly builds `--pull` from the lock on `main`, and the hourly watch
-covers `nightly` types only; a `weekly` type's lock pull request opens on its
-schedule.
+With m5, every scheduled build builds from the lock on `main`, without the
+layer cache: it moves nothing the lock pins (the base, apt, Claude, the
+toolchains), and picks up what it can't (Homebrew, the installers). The hourly
+watch covers `nightly` types; a weekly watch run covers every type, so a `weekly`
+type's lock moves once a week.
 
 A scheduled run can displace a push run waiting in the deploy's `concurrency` queue
 (GitHub keeps one pending run); the next push covers it, since `plan` diffs against
