@@ -10,6 +10,9 @@
 #   lock.sh diff <old> <new>      print what moved, one line each, nothing if equal
 #   lock.sh summary <old> <new>   one line for a title: `claude 2.1.318, go
 #                                 1.27.4, apt 3 packages`
+#   lock.sh pins <type>           each pin in the type's lock, tab-separated:
+#                                 what, locked value, upstream's newest now, and
+#                                 the issue URL (or -)
 #
 # A lock is `<kind> <name> <value>` lines, sorted, under a comment header:
 #
@@ -57,7 +60,7 @@ die() {
 	printf 'lock: %s\n' "$*" >&2
 	exit 1
 }
-usage() { die "usage: lock.sh resolve <type> | bake-args <type> | diff <old> <new> | summary <old> <new>"; }
+usage() { die "usage: lock.sh resolve <type> | bake-args <type> | diff <old> <new> | summary <old> <new> | pins <type>"; }
 
 lock_file() { printf '%s/%s/versions.lock' "$lock_dir" "$1"; }
 
@@ -118,26 +121,49 @@ resolve_claude() {
 		printf 'claude - %s\npinned claude %s\n' "$constraint" "$(pin_note "$bake_file" 'variable "CLAUDE_VERSION"')"
 		return
 	fi
-	version="$(fetch "$claude_releases/$constraint")"
-	[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "Claude Code's $constraint channel gave '$version'"
+	version="$(claude_channel "$constraint")"
 	printf 'claude - %s\n' "$version"
 }
 
+# claude_channel <channel>: the version Claude Code's channel (latest, stable)
+# names now.
+claude_channel() {
+	local version
+	version="$(fetch "$claude_releases/$1")"
+	[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "Claude Code's $1 channel gave '$version'"
+	printf '%s' "$version"
+}
+
+# rust_channel <channel>: the version rustup's channel (stable, or a minor line
+# such as 1.91) names now, from its manifest. Fetched whole first: the manifest
+# is large, and a reader that stops at the version would close curl's pipe,
+# which fails it (curl exits 23).
+rust_channel() {
+	local manifest version
+	manifest="$(fetch "$rust_dist/channel-rust-$1.toml")"
+	version="$(awk '/^\[pkg\.rust\]/ {found = 1} found && /^version = / {gsub(/"/, "", $3); print $3; exit}' <<<"$manifest")"
+	[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "rust $1: no version in its channel manifest"
+	printf '%s' "$version"
+}
+
 resolve_rust() {
-	local file=images/toolsets/rust/install.sh constraint manifest version
+	local file=images/toolsets/rust/install.sh constraint version
 	constraint="$(declared "$file" RUST_TOOLCHAIN)"
 	if [[ "$constraint" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 		printf 'rust - %s\npinned rust %s\n' "$constraint" "$(pin_note "$file" 'RUST_TOOLCHAIN:-')"
 		return
 	fi
-	# stable, or a minor line (1.91): rustup's channel manifest names its version.
-	# Fetched whole first: the manifest is large, and a reader that stops at the
-	# version would close curl's pipe, which fails it (curl exits 23).
-	manifest="$(fetch "$rust_dist/channel-rust-$constraint.toml")"
-	version="$(awk '/^\[pkg\.rust\]/ {found = 1} found && /^version = / {gsub(/"/, "", $3); print $3; exit}' <<<"$manifest")"
-	[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "rust $constraint: no version in its channel manifest"
+	version="$(rust_channel "$constraint")"
 	[[ "$constraint" == stable ]] || printf 'pinned rust %s\n' "$(pin_note "$file" 'RUST_TOOLCHAIN:-')"
 	printf 'rust - %s\n' "$version"
+}
+
+# terraform_newest [x.y.]: the newest stable Terraform release, on that line if
+# given; nothing if none matches.
+terraform_newest() {
+	local versions
+	versions="$(fetch "$terraform_index" | jq -r '.versions | keys[]')"
+	grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' <<<"$versions" | grep -F "${1:-}" | sort -V | tail -n 1 || true
 }
 
 resolve_terraform() {
@@ -153,21 +179,30 @@ resolve_terraform() {
 		elif [[ "$constraint" != latest ]]; then
 			die "terraform: can't resolve '$constraint' (a version, ~> x.y or latest)"
 		fi
-		version="$(fetch "$terraform_index" | jq -r '.versions | keys[]' |
-			grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | grep -F "$line" | sort -V | tail -n 1)"
+		version="$(terraform_newest "$line")"
 		[[ -n "$version" ]] || die "terraform: no release matches '$constraint'"
 		[[ "$constraint" == latest ]] || printf 'pinned terraform %s\n' "$(pin_note "$file" 'TERRAFORM_VERSION:-')"
 		printf 'terraform - %s\n' "$version"
 	fi
-	resolve_release tflint terraform-linters/tflint "$file" TFLINT_VERSION
+	resolve_release tflint "$file" TFLINT_VERSION
 }
 
-# resolve_release <name> <owner/repo> <file> <NAME>: a tool from a GitHub release.
+# release_repo <name>: the GitHub repository a `release` line's tool comes from.
+release_repo() {
+	case "$1" in
+	tflint) printf 'terraform-linters/tflint' ;;
+	virtualgl) printf 'VirtualGL/virtualgl' ;;
+	*) die "no GitHub repository known for release '$1'" ;;
+	esac
+}
+
+# resolve_release <name> <file> <NAME>: a tool from a GitHub release.
 resolve_release() {
-	local name="$1" repo="$2" file="$3" var="$4" constraint tag
+	local name="$1" file="$2" var="$3" constraint tag repo
 	constraint="$(declared "$file" "$var")"
 	if [[ "$constraint" == latest ]]; then
 		# Assigned first: a failed substitution in printf's arguments wouldn't fail.
+		repo="$(release_repo "$name")"
 		tag="$(github_latest "$repo")"
 		printf 'release %s %s\n' "$name" "$tag"
 	else
@@ -281,7 +316,7 @@ cmd_resolve() {
 		if [[ " ${toolsets[*]} " == *" rust "* ]]; then resolve_rust; fi
 		if [[ " ${toolsets[*]} " == *" terraform "* ]]; then resolve_terraform; fi
 		if [[ " ${toolsets[*]} " == *" gpu "* ]]; then
-			resolve_release virtualgl VirtualGL/virtualgl images/toolsets/gpu/install.sh VIRTUALGL_VERSION
+			resolve_release virtualgl images/toolsets/gpu/install.sh VIRTUALGL_VERSION
 		fi
 		resolve_brew "$type"
 	)"
@@ -353,6 +388,44 @@ cmd_summary() {
 		}'
 }
 
+# pinned_value <file> <what>: the locked value a `pinned <what>` line holds.
+pinned_value() {
+	case "$2" in
+	apt/*) lock_value "$1" apt "${2#apt/}" ;;
+	tflint | virtualgl) lock_value "$1" release "$2" ;;
+	*) lock_value "$1" "$2" ;;
+	esac
+}
+
+# upstream_newest <what> <locked value>: what upstream would give with no pin,
+# now. apt's needs a container at the base, so it isn't resolved here (-).
+upstream_newest() {
+	local digest
+	case "$1" in
+	claude) claude_channel latest ;;
+	rust) rust_channel stable ;;
+	terraform) terraform_newest ;;
+	tflint | virtualgl) github_latest "$(release_repo "$1")" ;;
+	base)
+		digest="$(image_digest "${2%@*}")"
+		printf '%s@%s' "${2%@*}" "$digest"
+		;;
+	apt/*) printf '%s' - ;;
+	*) die "pinned '$1': no upstream known" ;;
+	esac
+}
+
+cmd_pins() {
+	local file what issue value newest
+	file="$(lock_file "$1")"
+	[[ -f "$file" ]] || die "no lock for $1 ($file)"
+	while read -r _ what issue; do
+		value="$(pinned_value "$file" "$what")"
+		newest="$(upstream_newest "$what" "$value")"
+		printf '%s\t%s\t%s\t%s\n' "$what" "${value:--}" "${newest:--}" "$issue"
+	done < <(awk '$1 == "pinned"' "$file")
+}
+
 case "${1:-}" in
 resolve)
 	(($# == 2)) || usage
@@ -369,6 +442,10 @@ diff)
 summary)
 	(($# == 3)) || usage
 	cmd_summary "$2" "$3"
+	;;
+pins)
+	(($# == 2)) || usage
+	cmd_pins "$2"
 	;;
 *) usage ;;
 esac

@@ -1,0 +1,198 @@
+# The lock watch (specs/gcp.md, "Watch" and "The lock bot"; m5). It resolves
+# each runner type's lock from upstream with scripts/cloud/lock.sh and, when one
+# moved, proposes the candidates as one auto-merging pull request from the bot's
+# branch, lock/watch. It never deploys: the pull request merges itself once
+# cloud-build's gate passes, and that push to main deploys.
+#
+# Two jobs, so the App's key never shares a runner with anything resolved from
+# upstream: `resolve` (read-only GITHUB_TOKEN) pulls base images, runs apt in
+# them and reads Homebrew; `propose` (the lock-bot environment, main only) only
+# commits the files `resolve` handed over, after checking each is a lock.
+name: lock-watch
+
+on:
+  schedule:
+    # The hourly run: the nightly types (D4).
+    - cron: "17 8-22 * * *"
+      timezone: America/Los_Angeles
+    # The weekly run: every type, 50 minutes before the weekly rebuild. Keep in
+    # step with WEEKLY below.
+    - cron: "47 4 * * 0"
+      timezone: America/Los_Angeles
+  workflow_dispatch:
+    inputs:
+      class:
+        description: The types to resolve
+        type: choice
+        options: [all, nightly, weekly]
+        default: all
+
+permissions:
+  contents: read
+
+# One run at a time, queued: two runs pushing lock/watch at once would race.
+concurrency:
+  group: lock-watch
+  cancel-in-progress: false
+
+env:
+  WEEKLY: "47 4 * * 0"
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # A dispatch from another branch would resolve that branch's constraints.
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      action: ${{ steps.decide.outputs.action }}
+      title: ${{ steps.decide.outputs.title }}
+      body: ${{ steps.decide.outputs.body }}
+      candidate: ${{ steps.decide.outputs.candidate }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Class
+        id: class
+        env:
+          EVENT: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          INPUT: ${{ inputs.class }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT" == workflow_dispatch ]]; then class="$INPUT"
+          elif [[ "$SCHEDULE" == "$WEEKLY" ]]; then class=all
+          else class=nightly; fi
+          echo "class=$class" | tee -a "$GITHUB_OUTPUT"
+      - name: Resolve
+        env:
+          CLASS: ${{ steps.class.outputs.class }}
+        run: |
+          set -euo pipefail
+          # The hosted runner's Homebrew isn't on PATH by default.
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          # The candidate tree starts as main's locks; each resolved type
+          # replaces its own.
+          mkdir -p out/candidate
+          cp --parents images/cloud/*/versions.lock out/candidate/
+          types="$(scripts/cloud/lock-watch.sh types "$CLASS")"
+          for type in $types; do
+            mkdir -p "out/candidate/images/cloud/$type"
+            scripts/cloud/lock.sh resolve "$type" >"out/resolved.lock"
+            mv out/resolved.lock "out/candidate/images/cloud/$type/versions.lock"
+          done
+      - name: Decide
+        id: decide
+        env:
+          CLASS: ${{ steps.class.outputs.class }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          open="$(gh api "repos/$GITHUB_REPOSITORY/pulls?head=${GITHUB_REPOSITORY%%/*}:lock/watch&base=main&state=open" --jq 'length')"
+          if ((open > 0)); then
+            git fetch --no-tags origin lock/watch
+            # Keep the open pull request's candidates for the types this run
+            # didn't resolve (the weekly run's, in an hourly run).
+            scripts/cloud/lock-watch.sh carry "$CLASS" out/candidate origin/main origin/lock/watch
+          fi
+          changed="$(scripts/cloud/lock-watch.sh changed . out/candidate)"
+          if [[ -z "$changed" ]]; then
+            action=none
+            ((open == 0)) || action=close
+            echo "No lock moved."
+          elif ((open > 0)) && scripts/cloud/lock-watch.sh proposed out/candidate origin/main origin/lock/watch; then
+            action=none
+            echo "The open pull request already proposes these locks on main's head."
+          else
+            action=push
+            printf '%s\n' "$changed" | scripts/cloud/lock-watch.sh guard
+          fi
+          echo "action=$action" >>"$GITHUB_OUTPUT"
+          if [[ "$action" == push ]]; then
+            title="$(scripts/cloud/lock-watch.sh title . out/candidate)"
+            scripts/cloud/lock-watch.sh body . out/candidate >out/body.md
+            # The changed locks, for the propose job: only those paths.
+            candidate="$(printf '%s\n' "$changed" | tar -C out/candidate -czf - -T - | base64 -w0)"
+            {
+              echo "title=$title"
+              echo "candidate=$candidate"
+              echo "body<<LOCK_WATCH_BODY_EOF"
+              cat out/body.md
+              echo "LOCK_WATCH_BODY_EOF"
+            } >>"$GITHUB_OUTPUT"
+            { echo "## $title"; echo; cat out/body.md; echo; } >>"$GITHUB_STEP_SUMMARY"
+          fi
+      # Every pin with upstream's newest and its issue's state, read with
+      # GITHUB_TOKEN (the App has no Issues permission), so a pin whose issue
+      # closed stands out (specs/gcp.md, "Pinning a dependency").
+      - name: Pins
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tree=out/candidate
+          [[ -d "$tree" ]] || tree=.
+          scripts/cloud/lock-watch.sh pins "$tree" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  propose:
+    needs: resolve
+    if: needs.resolve.outputs.action == 'push' || needs.resolve.outputs.action == 'close'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # The App's id and key are this environment's secrets, and its deployment
+    # branches are main only.
+    environment: lock-bot
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Candidate
+        if: needs.resolve.outputs.action == 'push'
+        env:
+          CANDIDATE: ${{ needs.resolve.outputs.candidate }}
+          TITLE: ${{ needs.resolve.outputs.title }}
+          BODY: ${{ needs.resolve.outputs.body }}
+        run: |
+          set -euo pipefail
+          mkdir -p out/candidate
+          base64 -d <<<"$CANDIDATE" | tar -C out/candidate -xzf - --no-same-owner --no-same-permissions
+          # propose checks it holds nothing but locks before calling GitHub.
+          printf '%s\n' "$TITLE" >out/title
+          printf '%s\n' "$BODY" >out/body.md
+      # The token is minted here rather than by a third-party action: it's
+      # narrowed to this repository with Contents and Pull requests write, and
+      # revoked when the job ends (scripts/cloud/lock-watch.sh token).
+      - name: Token
+        id: token
+        env:
+          LOCK_BOT_APP_ID: ${{ secrets.LOCK_BOT_APP_ID }}
+          LOCK_BOT_PRIVATE_KEY: ${{ secrets.LOCK_BOT_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          token="$(scripts/cloud/lock-watch.sh token)"
+          echo "::add-mask::$token"
+          echo "token=$token" >>"$GITHUB_OUTPUT"
+      - name: Propose
+        if: needs.resolve.outputs.action == 'push'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          scripts/cloud/lock-watch.sh propose out/candidate "$(cat out/title)" out/body.md | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Close
+        if: needs.resolve.outputs.action == 'close'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: scripts/cloud/lock-watch.sh close | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Revoke
+        if: ${{ always() && steps.token.outputs.token != '' }}
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: scripts/cloud/lock-watch.sh revoke
