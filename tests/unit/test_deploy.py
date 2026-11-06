@@ -16,20 +16,48 @@ JOBS = "projects/lolay-agents/locations/us-central1/jobs"
 
 FAKE_GCLOUD = f"""
 printf '%s\\n' "$*" >>"$FAKE_OUT/gcloud.log"
+# Refuse a flag the real command doesn't take, as gcloud does (exit 2), so a typo
+# in deploy.sh fails here rather than on main.
+allow() {{
+	local arg name
+	for arg in "${{args[@]}}"; do
+		[[ "$arg" == --* ]] || continue
+		name="${{arg%%=*}}"
+		[[ " $* " == *" $name "* ]] || {{
+			echo "ERROR: (gcloud.$command) unrecognized arguments: $arg" >&2
+			exit 2
+		}}
+	done
+}}
+args=("$@")
+command="$1 $2 $3"
 case "$1 $2" in
-"auth print-access-token") echo {TOKEN} ;;
+"auth print-access-token") allow --quiet; echo {TOKEN} ;;
 "run jobs")
 	case "$3" in
-	execute) exit "${{FAKE_SMOKE_STATUS:-0}}" ;;
-	executions) echo agent-linux-next-p5rqf ;;
+	execute)
+		allow --project --region --args --task-timeout --wait --quiet
+		for arg in "$@"; do
+			if [[ "$arg" == --task-timeout=* && ! "${{arg#*=}}" =~ ^[0-9]+s$ ]]; then
+				echo "ERROR: (gcloud.run.jobs.execute) argument --task-timeout: invalid duration" >&2
+				exit 2
+			fi
+		done
+		exit "${{FAKE_SMOKE_STATUS:-0}}" ;;
+	executions) allow --job --project --region --sort-by --limit --format; echo agent-linux-next-p5rqf ;;
 	esac ;;
 "logging read")
+	allow --project --order --limit --format
 	[[ -n "${{FAKE_LOG_DENIED:-}}" ]] && {{ echo "PERMISSION_DENIED" >&2; exit 1; }}
-	printf 'smoke: pass claude (2.1.318)\nsmoke: FAIL scratch (not a mount)\n' ;;
+	printf 'smoke: pass claude (2.1.318)\\nsmoke: FAIL scratch (not a mount)\\n' ;;
 "compute instances")
-	if [[ "$3" == describe ]]; then
-		echo '{{"metadata": {{"items": [{{"key": "orchestrator-image", "value": "{REGISTRY}/agent-orchestrator@sha256:cc"}}]}}}}'
-	fi ;;
+	case "$3" in
+	add-metadata) allow --project --zone --metadata --quiet ;;
+	describe)
+		allow --project --zone --format
+		echo '{{"metadata": {{"items": [{{"key": "orchestrator-image", "value": "{REGISTRY}/agent-orchestrator@sha256:cc"}}]}}}}' ;;
+	esac ;;
+*) echo "ERROR: (gcloud) the fake doesn't know $*" >&2; exit 2 ;;
 esac
 """
 
@@ -71,7 +99,7 @@ class DeployTests(unittest.TestCase):
         self.assertEqual(self.job_patches(), ["agent-linux-next", "agent-linux"])
         self.assertEqual(
             self.gcloud_calls(),
-            ["run jobs execute agent-linux-next --project lolay-agents --region us-central1 --args=smoke --wait --quiet"],
+            ["run jobs execute agent-linux-next --project lolay-agents --region us-central1 --args=smoke --task-timeout=1800s --wait --quiet"],
         )
         for name in ("agent-linux", "agent-linux-next"):
             job = self.gcp.state.jobs[f"{JOBS}/{name}"]

@@ -39,6 +39,10 @@ source "$repo/hooks/gcp/lib.sh"
 : "${DEPLOY_POLL_SEC:=3}"
 : "${DEPLOY_TIMEOUT_SEC:=600}"
 : "${DEPLOY_LOG_WAIT_SEC:=5}"
+# The smoke execution's own limit, in place of the job's 9.5 h task timeout, so a
+# hung smoke can't bill for hours (r1.f8). Every smoke test has 120 s
+# (images/toolsets/toolset-checks.sh); twelve at that limit is under 25 min.
+: "${DEPLOY_SMOKE_TASK_TIMEOUT_SEC:=1800}"
 # The smoke VM boots, then boots the emulator twice (the first from a disk
 # Compute Engine is still restoring from the image).
 : "${VM_SMOKE_TIMEOUT_SEC:=1500}"
@@ -153,7 +157,7 @@ cmd_type() {
 	put_job "agent-$type-next" "$type" "$image" "$sha"
 	log "agent-$type-next: smoke execution"
 	if ! gcloud run jobs execute "agent-$type-next" --project "$PROJECT_ID" --region "$REGION" \
-		--args=smoke --wait --quiet; then
+		--args=smoke --task-timeout="${DEPLOY_SMOKE_TASK_TIMEOUT_SEC}s" --wait --quiet; then
 		smoke_log "agent-$type-next"
 		die "smoke failed on agent-$type-next; agent-$type keeps its image"
 	fi

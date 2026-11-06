@@ -113,6 +113,10 @@ jobs:
     needs: plan
     if: needs.plan.outputs.has-types == 'true'
     runs-on: ubuntu-24.04
+    # Per type: a no-cache build, the push and the smoke, whose execution has its
+    # own 30 min limit (deploy.sh). Cancelling gcloud's wait wouldn't stop the
+    # execution, so that limit, not this one, is what bounds its cost (r1.f8).
+    timeout-minutes: 120
     environment: production
     permissions:
       contents: read
