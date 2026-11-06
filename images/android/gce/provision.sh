@@ -15,6 +15,7 @@
 set -euo pipefail
 
 : "${STAGING_DIR:?}" "${GUEST_USER:?}"
+# AGENT_COMMIT: the commit being built, for the versions report.
 readonly libexec_dir=/usr/local/libexec/agent-images
 readonly stderr_log=/var/tmp/agent-images-build.err
 
@@ -62,6 +63,13 @@ install -m 644 "$STAGING_DIR/gce/profile-gce.sh" /etc/profile.d/agent-images-gce
 install -d -m 755 -o "$GUEST_USER" -g "$GUEST_USER" /scratch
 systemctl daemon-reload
 systemctl enable --quiet agent-gce-order.service
+
+# What the image contains (specs/gcp.md, m4 "Versions report"), in the image and
+# in the Packer log. As the guest user, through a login shell: its PATH finds
+# Homebrew, rustup and the checks a session would.
+log "versions report (/etc/agent-images/versions.md)"
+runuser -l "$GUEST_USER" -c "bash $(printf '%q' "$STAGING_DIR/toolsets/write-versions.sh") android $(printf '%q' "${AGENT_COMMIT:-unknown}")" |
+	tee /etc/agent-images/versions.md
 
 log "cleaning up"
 # Staging copies shouldn't outlive the build. Cleared cloud-init state and

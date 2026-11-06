@@ -97,6 +97,7 @@ build {
     environment_vars = [
       "STAGING_DIR=${local.guest_staging}",
       "GUEST_USER=${var.guest_user}",
+      "AGENT_COMMIT=${var.commit}",
     ]
     execute_command = "sudo -n env {{ .Vars }} bash '{{ .Path }}'"
     script          = "${path.root}/provision.sh"
