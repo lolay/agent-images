@@ -2,7 +2,8 @@
 # write-versions.sh: what an image contains, as Markdown on stdout (specs/gcp.md,
 # m4 "Versions report"). The cloud runner Dockerfile writes it to
 # /etc/agent-images/versions.md in its last layer, and the android image's
-# provision.sh at the end of its build; the workflows put it in their summaries.
+# install-packages.sh at the end of its installs; the workflows put it in their
+# summaries.
 #
 # Usage: write-versions.sh <type> <commit>
 #
