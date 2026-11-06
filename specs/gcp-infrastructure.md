@@ -197,6 +197,12 @@ resource name), `CI_SERVICE_ACCOUNT`, `ORCHESTRATOR_SERVICE_ACCOUNT`,
 - Cloud Run GPU jobs need the GPU quota and at least 20 vCPU and 80 GiB per RTX PRO
   6000 instance; agent-images sets those on the job, but the quota is here. Not
   needed until the GPU step.
+- Packer's build VM turns OS Login off for itself (`enable-oslogin=FALSE` in instance
+  metadata) so its metadata SSH key works through IAP. An org policy that enforces
+  `compute.requireOsLogin` would override that; Packer would then need `use_os_login`
+  and CI `roles/compute.osAdminLogin`. The `android` VMs also set
+  `serial-port-logging-enable`, which `compute.disableSerialPortLogging` would block
+  (their logs are lost with the VM, nothing breaks).
 - Nested virtualization needs an Intel machine series (`n2` to start) or AMD `n4d`;
   not `e2` or Arm. The default `n2` CPU quota in `us-central1` covers a few runner VMs
   at 8 vCPUs each.

@@ -194,8 +194,8 @@ or deploys: only a push to `main` does, through `.github/workflows/cloud-deploy.
 | --- | --- |
 | `cloud-build` | `docker buildx bake -f images/cloud/docker-bake.hcl --load <TYPE>`: `agent-<TYPE>:local`. `TYPE=linux` (default), `orchestrator`, or `all`. `agent-base` comes along as `linux`'s build context and isn't loaded on its own |
 | `cloud-smoke` | Runs `agent-<TYPE>:local smoke` (the entrypoint's checks, what the deploy runs on `agent-<type>-next`) with anonymous volumes standing in for scratch, outputs and the read-only datasets |
-| `cloud-lint` | `shellcheck` and `shfmt -d` on the cloud scripts, and the cloud settings JSON |
-| `cloud-test` | `python3 -m unittest discover -s tests/unit`: the entrypoint, SessionStart hook, spawn hook, supervisor, job spec, path map and deploy script, against fakes (`tests/unit/fake_gcp.py` for the GCP APIs). Linux only |
+| `cloud-lint` | `shellcheck` and `shfmt -d` on the cloud scripts (the android VM's guest scripts included), the cloud settings JSON, and `packer fmt -check` and `packer validate` on the android Compute Engine image's template (`images/android/gce`) |
+| `cloud-test` | `python3 -m unittest discover -s tests/unit`: the entrypoint, SessionStart hook, spawn hook (both backends), supervisor and its reaper, the android VM's order script, job spec, path map and deploy script, against fakes (`tests/unit/fake_gcp.py` for the GCP APIs and the metadata server). Linux only |
 | `cloud-ci` | `cloud-lint`, `cloud-test`, then a build of every cloud image with no output: what the pull request check (`cloud-build.yml`) runs, there split across runners |
 | `cloud-status` | `scripts/cloud/deploy.sh status`, with your gcloud login: each job's image, deployed commit and last execution, and the orchestrator VM's `orchestrator-image` |
 
@@ -209,9 +209,10 @@ Where things live:
 | Path | What |
 | --- | --- |
 | `infra/gcp/project.env` | Terraform's outputs (`lolay/infrastructure`), committed as a copy |
-| `infra/gcp/<type>.env` | One runner type: job resources, scratch size, timeouts, orchestrator settings |
+| `infra/gcp/<type>.env` | One runner type: its backend (`BACKEND=run`, a Cloud Run job, or `compute`, a VM per session), resources, scratch size, timeouts, orchestrator settings |
 | `images/cloud/` | `base`, `linux`, `orchestrator` Dockerfiles, `entrypoint.sh`, the cloud `CLAUDE.md` and SessionStart hook |
-| `hooks/gcp/` | `spawn-runner` and `lib.sh` (REST with curl and a metadata-server token) |
+| `hooks/gcp/` | `spawn-runner` and `lib.sh` (REST with curl and a metadata-server token): a Cloud Run execution or a Compute Engine VM per session |
+| `images/android/gce/` | The android type's Compute Engine image: the Packer template, `provision.sh` (runs `images/android/scripts` as in the LXD build), and the guest's `files/` (the boot-time work-order reader, the smoke checks, systemd and journald units) |
 | `scripts/cloud/` | `job-spec.sh` (the v2 Job), `changed-targets.sh` (what a push redeploys), `deploy.sh` |
 
 ## CI alignment

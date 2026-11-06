@@ -1,6 +1,6 @@
 # Plan: m2, `android` on Compute Engine
 
-Status: s1 to s5 done; s2 to s6 approved 2026-11-06 (no GCP spend), s7 waits for a second go.
+Status: s1 to s6 done 2026-11-06; waiting for the owner's go on s7 (opening the PR and merging, which deploys and spends money).
 Branch `claude/youthful-dijkstra-09v7kk` (assigned by the harness), cut
 from `main` at `ecc54c2`, after lolay/agent-images#18, #19 and #20.
 
@@ -141,7 +141,7 @@ both families, keeping one.
   vm-image`); the orchestrator job waits on both.
 - Tests in `test_changed_targets.py` and `test_deploy.py`.
 
-#### s6 - Docs [exec]
+#### s6 - Docs [exec] (done)
 
 - `specs/gcp.md` ("Compute Engine VM per session" as built, the deploy map, open
   items), the GCE guest's `CLAUDE.md` lines (scratch, sudo, one session),
