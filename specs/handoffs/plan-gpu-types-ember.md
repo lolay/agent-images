@@ -1,7 +1,7 @@
 # Plan: m3, the GPU types on GCP
 
-Status: written 2026-11-06; no step started. Waiting on the owner's answers to the
-decisions below.
+Status: s1 done 2026-11-06 ([infra-ask-m3-gpu.md](infra-ask-m3-gpu.md)). The base
+image and `gpu` toolset decisions are still open; s2 waits on them.
 Branch `claude/vigilant-tesla-m2ipbw` (assigned by the harness), from `main` at
 `154787f`.
 
@@ -48,7 +48,7 @@ infra/gcp/linux-gpu.env, 3d-gpu.env
   file pointing at NVIDIA's libraries, VirtualGL, `vulkan-tools`, `nvtop`) go in a
   `gpu` toolset that `base-gpu` installs after `core`. The CUDA toolkit itself comes
   with the base image. image-toolsets.md's tables change to match.
-- **Build for the L4 and Blackwell both:** `sm_89` and `sm_120`, plus PTX for
+- **Build for the L4 and Blackwell both (owner, 2026-11-06):** `sm_89` and `sm_120`, plus PTX for
   `compute_120`, everywhere we compile CUDA (COLMAP, gsplat, the smoke probe). It
   costs build time, and it lets the cheap L4 run the same image while we test.
 - **GPU smoke checks report what they can't settle.** `nvidia-smi`, the driver mount
@@ -59,12 +59,14 @@ infra/gcp/linux-gpu.env, 3d-gpu.env
 
 ## Steps
 
-#### s1 - Infrastructure asks [fast]
+#### s1 - Infrastructure asks [fast] (done)
 
 Draft the lolay/infrastructure change for Gary: `e2-small` for the host; Cloud Run
 GPU quota preferences for L4 and RTX PRO 6000 in `us-central1` (confirm the default
 grant first); ephemeral disk per instance for the GPU types if wanted now. Also
 the two claude.ai environments and their secrets. Everything from s6 waits on this.
+Written to [infra-ask-m3-gpu.md](infra-ask-m3-gpu.md): the first GPU deploy gets 3 L4
+and 3 RTX PRO 6000 automatically, so the quota likely needs no Terraform.
 
 #### s2 - `base-gpu` and the `gpu` toolset [deep]
 

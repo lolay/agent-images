@@ -7,13 +7,15 @@ from `main` at `154787f`. Plan: [plan-gpu-types-ember.md](plan-gpu-types-ember.m
 
 - The m3 milestone handoff, [handoff-m3-gpu-types.md](handoff-m3-gpu-types.md),
   linked from gcp.md's m3.
-- The tiered m3 plan, s1 to s11. No step started.
+- The tiered m3 plan, s1 to s11; s1 (the infrastructure ask) done.
+- CUDA builds target `sm_89` and `sm_120` plus PTX (owner).
 
 ## Pending
 
-The owner reviews the plan's "Decisions made here", above all the single base
-Dockerfile and the `gpu` toolset in place of `cuda`. Then s1 (the infrastructure
-asks).
+Pending question to the owner: one base Dockerfile with `BASE_IMAGE` (linux-gpu reuses
+linux's Dockerfile), or gcp.md's separate `base-gpu` Dockerfile; and with it, the
+`gpu` toolset in `base-gpu` or a `cuda` toolset per type. s2 starts after the answer.
+The owner acts on [infra-ask-m3-gpu.md](infra-ask-m3-gpu.md).
 
 The owner chose to skip the review gate: the full review of `main` covering m1 and
 m2 runs later, and its high findings become steps in this plan.
