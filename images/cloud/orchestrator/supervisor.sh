@@ -37,6 +37,8 @@ set -euo pipefail
 : "${SHUTDOWN_DRAIN_SEC:=70}"
 : "${HOOK_TIMEOUT_SEC:=60}"
 : "${MEMORY_LOG_INTERVAL_SEC:=300}"
+# Where the memory log reads smaps_rollup from; tests point it at a fake tree.
+: "${AGENT_PROC_ROOT:=/proc}"
 : "${SECRET_RETRY_SEC:=60}"
 : "${RESTART_MIN_SEC:=5}"
 : "${RESTART_MAX_SEC:=60}"
@@ -260,17 +262,23 @@ tree_pids() {
 }
 
 # tree_memory <pid>: "<pss_kib> <rss_kib> <processes>" for the pid and its children.
+# A process can exit between listing it and reading it; its smaps_rollup then fails
+# to open, and it is skipped rather than failing the function (set -e).
 tree_memory() {
-	local pss=0 rss=0 count=0 pid key value _
+	local pss=0 rss=0 count=0 pid key value _ p_pss p_rss
 	while read -r pid; do
-		[[ -r "/proc/$pid/smaps_rollup" ]] || continue
+		p_pss=0 p_rss=0
+		{
+			while read -r key value _; do
+				case "$key" in
+				Pss:) p_pss=$((p_pss + value)) ;;
+				Rss:) p_rss=$((p_rss + value)) ;;
+				esac
+			done <"$AGENT_PROC_ROOT/$pid/smaps_rollup"
+		} 2>/dev/null || continue
 		count=$((count + 1))
-		while read -r key value _; do
-			case "$key" in
-			Pss:) pss=$((pss + value)) ;;
-			Rss:) rss=$((rss + value)) ;;
-			esac
-		done <"/proc/$pid/smaps_rollup"
+		pss=$((pss + p_pss))
+		rss=$((rss + p_rss))
 	done < <(tree_pids "$1")
 	printf '%s %s %s\n' "$pss" "$rss" "$count"
 }
@@ -283,13 +291,14 @@ log_memory() {
 			log "memory type=$type running=false"
 			continue
 		fi
-		read -r pss rss count < <(tree_memory "$pid")
+		# Memory logging must never stop the supervisor: log zeros if there is no answer.
+		read -r pss rss count < <(tree_memory "$pid") || { pss=0 rss=0 count=0; }
 		connected="$(curl -s --max-time 2 "http://127.0.0.1:${port_of[$type]}/healthz" 2>/dev/null |
 			jq -r '.connected // "unknown"' 2>/dev/null)" || connected=""
 		log "memory type=$type pid=$pid processes=$count pss_kib=$pss rss_kib=$rss connected=${connected:-unknown}"
 		total=$((total + pss))
 	done
-	self="$(awk '$1 == "Pss:" { print $2 }' "/proc/$$/smaps_rollup" 2>/dev/null)"
+	self="$(awk '$1 == "Pss:" { print $2 }' "$AGENT_PROC_ROOT/$$/smaps_rollup" 2>/dev/null)" || self=""
 	available="$(awk '$1 == "MemAvailable:" { print $2 }' /proc/meminfo)"
 	mem_total="$(awk '$1 == "MemTotal:" { print $2 }' /proc/meminfo)"
 	log "memory total orchestrators_pss_kib=$total supervisor_pss_kib=${self:-0} mem_available_kib=$available mem_total_kib=$mem_total"

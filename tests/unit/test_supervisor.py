@@ -3,6 +3,7 @@
 import os
 import re
 import signal
+import socket
 import stat
 import subprocess
 import tempfile
@@ -268,6 +269,33 @@ class MemoryTests(SupervisorCase):
             ),
             what="a total line",
         )
+        self.stop()
+
+    def test_a_process_that_cannot_be_read_is_skipped_and_logging_continues(self):
+        # The race: the process is there for the readable check, then its
+        # smaps_rollup fails to open (as /proc's does when the process exits). A
+        # socket file passes -r and fails to open with ENXIO.
+        proc_root = self.tmp / "proc"
+        proc_root.mkdir()
+        self.start(MEMORY_LOG_INTERVAL_SEC="1", AGENT_PROC_ROOT=str(proc_root))
+        self.wait_for(lambda: self.starts("linux"), what="the orchestrator to start")
+        pid = self.start_record("linux")["pid"]
+        (proc_root / pid).mkdir()
+        unreadable = proc_root / pid / "smaps_rollup"
+        with socket.socket(socket.AF_UNIX) as sock:
+            sock.bind(str(unreadable))
+            self.assertTrue(os.access(unreadable, os.R_OK))
+            with self.assertRaises(OSError):
+                open(unreadable)
+            seen = len(self.lines)
+            skipped = f"supervisor: memory type=linux pid={pid} processes=0 pss_kib=0 rss_kib=0 connected=unknown"
+            self.wait_for(lambda: skipped in self.lines[seen:], what="the unreadable process to be skipped")
+            seen = len(self.lines)
+            self.wait_for(
+                lambda: any(line.startswith("supervisor: memory total") for line in self.lines[seen:]),
+                what="a total line after the unreadable process",
+            )
+        self.assertIsNone(self.process.poll(), "the supervisor must keep running")
         self.stop()
 
 
