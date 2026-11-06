@@ -62,26 +62,28 @@ images/toolsets/
 | `core` | Homebrew itself; apt: build-essential, curl, ca-certificates, file, procps, zip, unzip, mandoc; Brewfile: gh, git, jq, ripgrep, tmux, age, sops, shellcheck, actionlint, nowline, triage | Every session on every platform. The Brewfile is the Mac's session tools too, so they're defined once |
 | `native` | apt: pkg-config, cmake, ninja-build, and the headers native builds look for (libssl-dev, zlib1g-dev, libffi-dev, libsqlite3-dev, libpq-dev, libbz2-dev, liblzma-dev, libreadline-dev), sqlite3, postgresql-client | The gap a no-sudo session can't fill: `cargo build` of anything on `openssl-sys`, or a Python package with a C extension and no wheel, fails without these |
 | `node` | node, pnpm | |
-| `python` | Homebrew's python, uv | Latest CPython for general work. Not for `gis` or `3d-gpu` (below) |
+| `python` | Homebrew's python, uv, ruff, pre-commit | Latest CPython for general work. Not for `gis` or `3d-gpu` (below) |
 | `go` | go | |
 | `rust` | rustup, stable with clippy and rustfmt | |
 | `proto` | protobuf, buf, grpcurl | |
 | `terraform` | tenv with the latest Terraform, tflint | |
 | `jvm` | OpenJDK 21 | Android, Kotlin and Gradle builds, the Firebase emulators |
 | `browser` | Chromium's runtime libraries and fonts (Playwright's list) | apt-only, so a Playwright session on Cloud Run can't add them |
-| `android` | Emulator runtime libraries, cpu-checker, the SDK, the AVD and its snapshot (`ensure-android-sdk.sh`), `agent-emulator` | Needs KVM, so VM types only |
+| `android` | Emulator runtime libraries, cpu-checker, JDK 17 beside `jvm`'s 21, the SDK with the newest NDK, Gradle, the AVD and its snapshot, `agent-emulator` | Needs KVM, so VM types only |
+| `android-rust` | Rust's Android targets (aarch64, armv7, x86_64) and cargo-ndk | Rust libraries for an Android app, against the `android` toolset's NDK. Needs `rust` and `android` |
+| `android-go` | gomobile and gobind | Go libraries for an Android app (`.aar`), against the same NDK. Needs `go` and `android` |
 | `gis` | uv, and a pixi environment from conda-forge: GDAL, PDAL with python-pdal, QGIS with PyQGIS, rasterio, geopandas, shapely, pyproj, pystac-client, rioxarray, DuckDB with its spatial extension | Below |
 | `cuda` | Nothing installed: a marker that the base is NVIDIA's CUDA devel image | Below |
-| `display` | Xvfb, VirtualGL, mesa-utils, vulkan-tools, libegl1, x11-utils | GPU types' virtual head |
+| `display` | Xvfb (the entrypoint, or `agent-xvfb.service` on the VM types, starts it at `:99`, 1920x1080), Mesa's software OpenGL (llvmpipe), x11-utils, mesa-utils, ImageMagick for screenshots | A virtual display: headed browsers and desktop apps (QGIS) run and can be screenshotted without a GPU. apt-only, so baked in. GPU types add GPU rendering (VirtualGL, Vulkan) on top in m3 |
 | `3d` | Blender (blender.org's build), COLMAP built for compute capability 12.0, ffmpeg, uv, and a uv project with PyTorch's CUDA build, gsplat, Open3D | Below |
 
 ## Types
 
 | Type | Base | Toolsets |
 | --- | --- | --- |
-| `linux` | `ubuntu:24.04` | core, native, node, python, go, rust, proto, terraform, jvm, browser |
-| `android` (LXD and Compute Engine) | Ubuntu 24.04 VM image | everything `linux` has, then android |
-| `gis` | `ubuntu:24.04` | core, native, node, gis |
+| `linux` | `ubuntu:24.04` | core, native, node, python, go, rust, proto, terraform, jvm, browser, display |
+| `android` (LXD and Compute Engine) | Ubuntu 24.04 VM image | core, native, jvm, display, android, node, go, rust, android-go, android-rust |
+| `gis` | `ubuntu:24.04` | core, native, display, node, gis |
 | `linux-gpu` | `nvidia/cuda:13.0.x-devel-ubuntu24.04` | everything `linux` has, then cuda, display |
 | `3d-gpu` | the same CUDA image | core, native, display, 3d |
 | `mac` | Cirrus macOS (Tart) | core (Brewfile only), then its own Brewfile: asccli, swiftformat, swiftlint, xcbeautify, xcodegen |
@@ -91,10 +93,110 @@ Two patterns fall out of this:
 - **`-gpu` is the CPU sibling plus the GPU.** `linux-gpu` is `linux` on a CUDA base
   with a display. A future `gis-gpu` is `gis` the same way. That's what the naming
   in [gcp.md](gcp.md) already promises; toolsets make it literal.
-- **`android` is `linux` plus Android**, on the LXD host and on Compute Engine alike,
-  provisioned by the same scripts. A session on `android` can do anything one on
-  `linux` can (and has sudo besides). This is what the LXD image is today; it just
-  stops being the thing every other image is built from.
+- **`android` is what Android development uses**, on the LXD host and on Compute
+  Engine alike, provisioned by the same scripts: JDKs 21 and 17, the SDK with the
+  NDK and Gradle, an emulator, Rust with cargo-ndk and Go with gomobile for native
+  libraries, Node for React Native, Expo and the Firebase CLI, and the display.
+  Not everything `linux` has (below).
+
+### What each type has
+
+Built from the lists above; versions are in the README, newest stable at build time.
+"Base" means it comes with the type's base image, not from a toolset. `linux-gpu`
+and `3d-gpu` are planned (m3).
+
+| | `linux` | `gis` | `android` | `mac` | `linux-gpu` | `3d-gpu` |
+| --- | --- | --- | --- | --- | --- | --- |
+| Base | `ubuntu:24.04` | `ubuntu:24.04` | Ubuntu 24.04 VM | Cirrus macOS with Xcode | CUDA 13 devel | CUDA 13 devel |
+| sudo in a session | no | no | yes | yes | no | no |
+| Session tools (gh, git, jq, ripgrep, tmux, age, sops, shellcheck, actionlint, nowline, triage) | yes | yes | yes | yes | yes | yes |
+| Claude Code | yes | yes | yes | yes | yes | yes |
+| C toolchain, cmake, ninja, pkg-config | yes | yes | yes | clang and make from Xcode (base) | yes | yes |
+| Native headers (OpenSSL, zlib, libffi, SQLite, libpq, and more) | yes | yes | yes | Xcode's SDK (base) | yes | yes |
+| Python | Homebrew's newest, with uv, ruff, pre-commit | conda-forge 3.14 (`/opt/gis`), with uv, ruff, pre-commit | 3.12 (base) | Xcode's (base) | as `linux` | pinned for PyTorch (`/opt/3d`), with uv |
+| Node, pnpm | yes | yes | yes | no | yes | no |
+| Go | yes | no | yes | no | yes | no |
+| Rust (rustup stable, clippy, rustfmt) | yes | no | yes | no | yes | no |
+| protobuf, buf, grpcurl | yes | no | no | no | yes | no |
+| Terraform (tenv), tflint | yes | no | no | no | yes | no |
+| JDK | 21 | no | 21 (default), 17 | no | 21 | no |
+| Gradle | no (projects' `./gradlew`) | no | yes | no | no | no |
+| Android SDK, emulator, AVD | no | no | yes | no | no | no |
+| Android NDK | no | no | newest stable | no | no | no |
+| Rust Android targets, cargo-ndk | no | no | yes | no | no | no |
+| gomobile, gobind | no | no | yes | no | no | no |
+| Chromium's libraries (Playwright) | yes | no | no | no | yes | no |
+| Display | Xvfb, llvmpipe | Xvfb, llvmpipe | Xvfb, llvmpipe | the VM's (base) | Xvfb, then GPU rendering (m3) | Xvfb, then GPU rendering (m3) |
+| GIS: QGIS, GDAL, PDAL, rasterio, geopandas, DuckDB spatial, STAC | no | yes | no | no | no | no |
+| CUDA toolkit | no | no | no | no | base | base |
+| 3D: Blender, COLMAP, PyTorch, gsplat, Open3D, ffmpeg | no | no | no | no | no | yes |
+| Xcode, swiftformat, swiftlint, xcbeautify, xcodegen, asc | no | no | no | yes | no | no |
+
+A type without something can still get it: on `android` and `mac` with sudo or
+Homebrew, and on the Cloud Run types with Homebrew, uv, rustup or pixi in user space,
+for anything that doesn't need apt.
+
+### `android` is not `linux` plus Android
+
+It was until s8, the LXD image being where every other list came from. By the rule
+it carries what Android sessions use most days, and a session there has sudo, so
+anything else is an `apt-get` or `brew install` away:
+
+| Toolset | In `android` | Why |
+| --- | --- | --- |
+| core, native, jvm | yes | The session tools; the headers a native build or `cargo build` needs; the JDK Gradle runs on |
+| android | yes | The SDK, emulator and AVD, now with the newest stable NDK (about 2 GB, too big to fetch per session), Gradle for starting a project, and JDK 17 for projects that pin `jvmToolchain(17)` (all three CI images below ship 17). The Android Gradle plugin still fetches the NDK a project pins, if it's another one |
+| display | yes | Desktop apps and screenshots of them; the emulator itself stays windowless, and the `android` CLI screenshots the device |
+| node | yes | React Native and Expo, the Firebase CLI (its emulators), and the `npx`-run tools agents use, many MCP servers among them. Native Kotlin work doesn't need it |
+| rust, android-rust | yes | Rust libraries for Android (UniFFI, or JNI through cargo-ndk) |
+| go, android-go | yes | Go libraries for Android through gomobile, which upstream still calls experimental and has never tagged; none of the CI images below ships it |
+| fastlane (Ruby) | no | All three CI images below ship it, but it's release automation, and releases run in CI with the store credentials, not here |
+| JDK 25 | no | Ubuntu has it (25.0.4), but Android Studio bundles 21, so that's what projects are built and tested with; 17 is there because projects pin it. Add 25 when a project pins it |
+| python | no | Ubuntu's `python3` stays, which is enough for SDK and build scripts |
+| proto, terraform | no | Not Android work; the protobuf Gradle plugin brings its own protoc |
+| browser | no | Playwright's libraries; Android has no headless-browser tests to run |
+
+Not added:
+
+- **Play publishing:** Google has no CLI for the Play Developer API (it publishes
+  Java and Python client libraries), and the `android` CLI has no Play commands.
+  Projects publish through the Gradle Play Publisher plugin or fastlane's `supply`,
+  both per project. Play services, Play Core and Play Integrity are Maven
+  dependencies from Google's repository, not SDK packages.
+- **Kotlin/Native:** the Kotlin Multiplatform Gradle plugin downloads the toolchain
+  matching the project's Kotlin version, so a baked one would rarely be the right
+  version. A Linux host builds the `androidNative*` and `linux*` targets, not Apple
+  ones (those need the Mac image).
+- **Standalone Kotlin, ktlint and bundletool:** a project gets them through Gradle,
+  and Homebrew's builds each bring their own JDK. Kotlin DSL build scripts
+  (`build.gradle.kts`, `settings.gradle.kts`) need nothing either: Gradle embeds
+  the Kotlin compiler for them, and the Kotlin Gradle plugin for app code comes
+  from the plugins block.
+- **Flutter:** until a repo uses it.
+
+Compared with the common Android CI images (2026-11-06). "Base" means it comes with
+Ubuntu's 24.04 image, not from a toolset:
+
+| | `android` (this image) | GitHub `ubuntu-24.04` | CircleCI `cimg/android` | `mingc/android-build-box` |
+| --- | --- | --- | --- | --- |
+| JDK | 21 (default), 17 | 8, 11, 17 (default), 21, 25 | 8, 17, 21 (default), 25 | 8, 11, 17, 21 |
+| SDK platforms | newest stable (37.0) | 34 to 37.2 | 34 to 37.2 | 28 to 35 |
+| Build-tools | newest stable (37.0.0) | 34.0.0 to 37.0.0 | 35.0.0 to 37.0.0 | 28.0.1 to 35.0.0 |
+| NDK | newest stable (r30) | r27d (default), r29, r30 | `-ndk` variant | r28b |
+| CMake (SDK) | on demand (Gradle) | 3.31.5, 4.1.2 | no | yes |
+| Emulator and system image | x86_64, booted from a snapshot | no | no | arm only |
+| Gradle | 9.8.2 | 9.8.2 | 9.8.2 | not listed |
+| Maven, Ant | no | yes | yes | no |
+| Kotlin (standalone) | no (Gradle) | 2.4.21 | no | not listed |
+| bundletool | no (Gradle) | no | no | yes |
+| Node | 26 | 22, 24 | in `-node` | 22 |
+| Python | 3.12 (base) | 3.12 (base), more cached | not listed | 3.8 |
+| Ruby, fastlane | no | yes | yes | yes |
+| Go, gomobile | yes, yes | Go cached, no | no | no |
+| Rust, Android targets | yes, with cargo-ndk | Rust, no targets | no | no |
+| Flutter | no | no | no | yes |
+| gcloud, Firebase CLI | no (no credentials) | gcloud | both | no |
+| Virtual display | yes | no | no | no |
 
 ### `jvm` in `linux`
 
@@ -321,5 +423,25 @@ Steps for [gcp.md](gcp.md) m2, ahead of `gis` and `android`:
   the count, and once the builds agree nothing is dropped. The environment also
   carries the cloud-native stack: GeoParquet and Arrow, polars, Zarr, Dask,
   odc-stac, COPC through untwine, tippecanoe and PMTiles, H3, osmium.
+- s7 (done): the `display` toolset in `linux` and `gis`: Xvfb at `:99`, which the
+  entrypoint starts before the runner (and before the smoke checks), with Mesa's
+  software OpenGL, ImageMagick for screenshots, xdotool to size windows (there's no
+  window manager) and Open Sans (QGIS downloads it at start otherwise). The session
+  tests' display steps (QGIS desktop in `gis`, headed Chromium in `linux`) run
+  instead of skipping. Checked in both images: smoke passes the display, OpenGL
+  (llvmpipe) and screenshot checks; QGIS 4.2 desktop runs full-screen with a layer
+  drawn; headed Chromium runs full-screen with WebGL 1.0. About 60 MB (agent-linux
+  went from 5.67 to 5.73 GB).
 
-`linux-gpu` and `3d-gpu` follow in m3 on the same structure.
+- s8: `android` gets its own list (above) and the display. The VM types have no
+  entrypoint, so `agent-xvfb.service` starts Xvfb at boot and the runner waits for
+  it, and the image's profile now sources the toolsets' profile fragments, as the
+  cloud one does (`DISPLAY`, and `ANDROID_NDK_HOME` from the `android` toolset).
+  `android` gains JDK 17, the NDK, Gradle, `android-rust` and `android-go`, and
+  drops `python`, `proto`, `terraform` and `browser`. Checked by
+  `android-image-smoke`, which now starts the display, takes a screenshot, and
+  builds a Rust library (cargo-ndk) and a Go one (gomobile) for arm64 and x86_64.
+
+`linux-gpu` and `3d-gpu` follow in m3 on the same structure, and both install
+`display` (it's in their lists above): the virtual display comes from s7, and m3
+adds GPU rendering on top of it (VirtualGL, Vulkan) where Cloud Run's driver allows.

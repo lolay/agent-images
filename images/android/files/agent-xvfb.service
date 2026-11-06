@@ -1,0 +1,16 @@
+# The display toolset's virtual display for the Android image's VMs: the cloud
+# images' entrypoint starts the same Xvfb (images/cloud/entrypoint.sh), and the
+# toolset's profile.sh points DISPLAY at it. Installed to /etc/systemd/system by
+# setup-user.sh, which replaces __GUEST_USER__; agent-runner.service wants it.
+[Unit]
+Description=agent-images virtual display (Xvfb :99)
+
+[Service]
+Type=simple
+User=__GUEST_USER__
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

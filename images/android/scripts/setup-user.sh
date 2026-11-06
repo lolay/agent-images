@@ -3,8 +3,8 @@
 # cloud-init creates with passwordless sudo, the Linux counterpart of the macOS
 # image's admin. Installs the runner scripts (~/bin), the Claude Code settings the
 # runner seeds into sessions (~/.claude), the environment login shells get
-# (/etc/profile.d), and the runner and watchdog systemd units, and puts the user
-# in kvm for the emulator. Runs in the guest as that user, first of the
+# (/etc/profile.d), and the runner, watchdog and display systemd units, and puts
+# the user in kvm for the emulator. Runs in the guest as that user, first of the
 # provisioning scripts. Safe to re-run.
 set -euo pipefail
 shopt -s nullglob
@@ -49,10 +49,13 @@ done
 
 sudo install -m 644 "$STAGING_DIR/profile.sh" /etc/profile.d/agent-images.sh
 
-for template in "$STAGING_DIR"/agent-runner*.service "$STAGING_DIR"/agent-runner*.path "$STAGING_DIR"/agent-runner*.timer; do
+for template in "$STAGING_DIR"/agent-runner*.service "$STAGING_DIR"/agent-runner*.path "$STAGING_DIR"/agent-runner*.timer \
+	"$STAGING_DIR"/agent-xvfb.service; do
 	sed -e "s#__GUEST_HOME__#$home#g" -e "s#__GUEST_USER__#$GUEST_USER#g" "$template" |
 		sudo tee "/etc/systemd/system/$(basename "$template")" >/dev/null
 done
 sudo systemctl daemon-reload
 # The runner starts when runner.env appears; the watchdog checks every 30 s.
-sudo systemctl enable --quiet agent-runner.path agent-runner-watchdog.timer
+# The display starts at boot (Xvfb comes with the display toolset, installed
+# after this script).
+sudo systemctl enable --quiet agent-runner.path agent-runner-watchdog.timer agent-xvfb.service

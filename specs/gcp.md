@@ -878,6 +878,9 @@ with nothing installed during the session. What it found:
 ### m3 - GPU types
 
 - Host to `e2-small`.
+- Both GPU types install the `display` toolset ([image-toolsets.md](image-toolsets.md)
+  s7), which already gives `linux` and `gis` a virtual display with software OpenGL;
+  m3 adds GPU rendering on top of it.
 - `linux-gpu` on an L4 first (cheaper), then RTX PRO 6000. Done when
   [tests/sessions/linux-gpu.md](../tests/sessions/linux-gpu.md) passes, which settles
   the open graphics question: if OpenGL and Vulkan don't run on the GPU in Cloud Run,

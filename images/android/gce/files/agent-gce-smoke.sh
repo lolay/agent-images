@@ -46,6 +46,10 @@ check "kvm" kvm-ok
 check "java" java -version
 check "adb" adb version
 check "scratch writable" test -w "${AGENT_SCRATCH:-/scratch}"
+check "display" xdpyinfo -display "${DISPLAY:-:99}"
+check "gradle" gradle --version
+check "cargo-ndk" cargo ndk --version
+check "gomobile" command -v gomobile
 
 boot_seconds emulator-boot-sec-cold
 check "api level" adb -s emulator-5554 shell getprop ro.build.version.sdk

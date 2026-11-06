@@ -20,6 +20,7 @@ The differences, side by side. Each section below has the detail and the source.
 | Disk | 30 GB | 30 GB | 10 GiB scratch; the rest is memory |
 | Larger machines | No | No | `gis` (8 vCPU, 32 GiB), GPU types (m3) |
 | Root, apt, Docker | Yes | Yes | No |
+| Display | Per command (`xvfb-run`) | Xvfb at `:99`, started by the first shell | Xvfb at `:99`, started before the session |
 | Cold start | About 12 s | About 12 s from the cache; 2:45 to 3:55 while it builds | About 55 s |
 | Cache rebuild | n/a | After a script change, or about weekly | Nightly image build in CI |
 | Compute cost | None beyond the plan | None beyond the plan | About $0.37 an hour per session |
@@ -44,7 +45,8 @@ The differences, side by side. Each section below has the detail and the source.
 | System packages | `apt-get install` works | Not possible; Homebrew, or a Compute Engine type |
 | Docker | `docker`, `dockerd`, compose. The daemon isn't running at start; `dockerd &` brings it up (overlayfs, cgroup v1) | None; Cloud Run can't run containers in a session |
 | KVM | No `/dev/kvm` | No `/dev/kvm` |
-| GPU, display | None | None (the `-gpu` types are m3) |
+| GPU | None | None (the `-gpu` types are m3) |
+| Display | Xvfb, `xvfb-run`, ImageMagick and Mesa's drivers are installed, but no display runs and `DISPLAY` is unset: wrap one command with `xvfb-run` | Xvfb at `:99` with software OpenGL (the `display` toolset), started before the session: headed browsers and desktop apps run and can be screenshotted |
 | Session limits | Reclaimed after inactivity; reopening provisions a fresh VM with the conversation | 60 min idle, 8 h hard limit, both in the session notice |
 | Persistence outside git | None | `$AGENT_OUTPUTS` (GCS, 30 days) and read-only `$AGENT_DATASETS` |
 
@@ -268,6 +270,14 @@ and Homebrew ended at 1.7 GB:
 | terraform | 15.8 | |
 | **Total** | **254.9** | |
 
+`display` joined `agent-linux` after this was measured. On Anthropic's image it should
+take seconds, since Xvfb and Mesa are already there; it adds `xdpyinfo`, `glxinfo`,
+`xdotool` and Open Sans. Sessions have no entrypoint to start Xvfb, so the script's
+profile starts it from the first shell (checked on an Anthropic VM: the first shell
+started it and set `DISPLAY=:99`, the next one reused it, and a screenshot came back
+1920x1080). Through the SessionStart hook, the Bash tool's first command is that first
+shell too.
+
 Most of it is `core`, `node` and `rust`. A script that kept Anthropic's Node, Rust
 and Go would take about two minutes, but then the versions aren't `agent-linux`'s.
 
@@ -349,6 +359,8 @@ From `linux` to Anthropic's:
   `gh api repos/...`.
 - No `$AGENT_OUTPUTS` or `$AGENT_DATASETS`: large outputs have nowhere to go but git.
 - No KVM on either, so the Android emulator needs the `android` type.
+- No running display without the setup script: headed browsers and desktop apps need
+  `xvfb-run` around each command.
 
 ## Re-measuring
 

@@ -1,10 +1,11 @@
 # Installed to /etc/systemd/system by setup-user.sh, which replaces __GUEST_USER__
-# and __GUEST_HOME__. Started by agent-runner.path. bash -l gives the runner the
-# same environment as a login shell (/etc/profile.d/agent-images.sh).
+# and __GUEST_HOME__. Started by agent-runner.path, after the virtual display
+# (agent-xvfb.service). bash -l gives the runner the same environment as a login
+# shell (/etc/profile.d/agent-images.sh).
 [Unit]
 Description=agent-images runner (see ~/bin/agent-runner)
-Wants=network-online.target
-After=network-online.target
+Wants=network-online.target agent-xvfb.service
+After=network-online.target agent-xvfb.service
 
 [Service]
 Type=simple

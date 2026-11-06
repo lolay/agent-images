@@ -10,6 +10,9 @@ RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/tool
 	--mount=type=bind,source=images/toolsets/native,target=/tmp/toolsets/native \
 	bash /tmp/toolsets/install-toolset.sh native
 RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
+	--mount=type=bind,source=images/toolsets/display,target=/tmp/toolsets/display \
+	bash /tmp/toolsets/install-toolset.sh display
+RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
 	--mount=type=bind,source=images/toolsets/node,target=/tmp/toolsets/node \
 	bash /tmp/toolsets/install-toolset.sh node
 RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \

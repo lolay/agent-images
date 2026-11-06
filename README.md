@@ -84,7 +84,7 @@ tracks the latest and pins only on breakage
 | shellcheck / shfmt | 0.11.0 / 3.14.1 | Build host tools for `make lint` |
 | actions/checkout | v7.0.1 | `.github/workflows/ci.yml`, `.github/workflows/android-image-smoke.yml` |
 | Linux host | Ubuntu 24.04 Server, LXD snap `latest/stable` (refreshes held; `make build` refreshes) | `scripts/linux/host-setup.sh` |
-| Android image (Linux host) | `ubuntu:24.04`; OpenJDK 21; Android command-line tools 23.0, emulator 37.1.11, platform and x86_64 Google APIs image `android-37.0`, build-tools 37.0.0 | `images/android/toolsets.txt` (the toolsets in `images/toolsets`; the SDK is the `android` toolset's `install.sh`): newest stable at build time |
+| Android image (Linux host) | `ubuntu:24.04`; OpenJDK 21; Android command-line tools 23.0, emulator 37.1.11, platform and x86_64 Google APIs image `android-37.0`, build-tools 37.0.0; NDK r30, Gradle 9.8.2 (2026-11-06) | `images/android/toolsets.txt` (the toolsets in `images/toolsets`; the SDK is the `android` toolset's `install.sh`): newest stable at build time |
 | Linux toolchains | Node 26.13.0, pnpm 12.16.1, Python 3.15.2, uv 0.13.7, Go 1.27.3, Rust 1.99.1 (rustup stable), protoc 36.2, buf 1.75.0, grpcurl 1.9.4, Terraform 1.17.1 (tenv), tflint 0.65.0, actionlint 1.7.12, shellcheck 0.11.0, nowline 0.12.1, triage 0.5.0 (2026-11-05) | The `images/toolsets` Brewfiles and install scripts: newest stable at build time |
 | hashicorp/setup-packer | v3.4.0 (installs Packer 1.16.1) | `.github/workflows/ci.yml` |
 

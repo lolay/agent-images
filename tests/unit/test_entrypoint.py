@@ -238,6 +238,42 @@ class SmokeTests(EntrypointCase):
 
 
 
+class DisplayTests(EntrypointCase):
+    """Images with the display toolset get Xvfb on $DISPLAY before the runner or smoke."""
+
+    def fake_display(self, *, answers=True):
+        # Xvfb records its arguments; xdpyinfo answers once Xvfb has "started".
+        write_executable(self.fake_bin / "Xvfb", 'printf "%s\\n" "$*" >"$FAKE_OUT/xvfb"\n')
+        answer = '[[ -f "$FAKE_OUT/xvfb" ]]' if answers else "exit 1"
+        write_executable(self.fake_bin / "xdpyinfo", answer + "\n")
+
+    def test_starts_xvfb_on_the_display_before_the_runner(self):
+        self.fake_display()
+        result = self.run_entrypoint(DISPLAY=":99")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.out / "xvfb").read_text().split()[:4], [":99", "-screen", "0", "1920x1080x24"])
+        self.assertIn("display :99", result.stdout)
+        self.assertTrue((self.out / "env").exists(), "the runner still starts")
+
+    def test_smoke_starts_it_too(self):
+        self.fake_display()
+        self.run_entrypoint("smoke", DISPLAY=":99")
+        self.assertTrue((self.out / "xvfb").exists())
+
+    def test_no_display_no_xvfb(self):
+        self.fake_display()
+        result = self.run_entrypoint()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.out / "xvfb").exists())
+
+    def test_a_display_that_never_answers_warns_and_the_runner_still_starts(self):
+        self.fake_display(answers=False)
+        result = self.run_entrypoint(DISPLAY=":99", AGENT_DISPLAY_WAIT_SEC="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Xvfb didn't answer on :99", result.stderr)
+        self.assertTrue((self.out / "env").exists())
+
+
 class ProfileTests(unittest.TestCase):
     """profile.sh puts the session's tools first however the shell started."""
 

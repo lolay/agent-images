@@ -1,6 +1,10 @@
 # The Android emulator's system side. install.sh then adds the SDK, the AVD and
 # its snapshot (it needs KVM to boot the emulator once, so VM images only).
 
+# JDK 17 beside the jvm toolset's 21 (still the default): many Android projects
+# pin `jvmToolchain(17)`, and Gradle finds JDKs in /usr/lib/jvm on its own.
+openjdk-17-jdk-headless
+
 # KVM checks (kvm-ok) for make doctor and agent-emulator status.
 cpu-checker
 
