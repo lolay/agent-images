@@ -27,7 +27,9 @@ Compute Engine VM), is being built: `linux` runs (m1), `gis` and `android` are m
 See [specs/gcp.md](specs/gcp.md),
 with the infrastructure it runs on in [specs/gcp-infrastructure.md](specs/gcp-infrastructure.md)
 a test session per runner type in [tests/sessions](tests/sessions/README.md), and
-how each type picks its tools in [specs/image-toolsets.md](specs/image-toolsets.md). It
+how each type picks its tools in [specs/image-toolsets.md](specs/image-toolsets.md).
+How `linux` compares with Anthropic's default cloud environment is in
+[specs/anthropic-cloud.md](specs/anthropic-cloud.md). The GCP backend
 deploys only from `main`; `make cloud-status` shows what's live, and the `cloud-*`
 targets in [Makefile.md](Makefile.md#cloud-gcp) build and check it locally.
 
