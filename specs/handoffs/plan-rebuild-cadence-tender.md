@@ -1,6 +1,6 @@
 # Per-type rebuild cadence for the GCP images
 
-Status: s1, s2 done; s3 next.
+Status: s1 to s3 done; s4 next.
 
 ## Context
 
@@ -59,7 +59,7 @@ last commit before merge.
 - `tests/unit/test_changed_targets.py`: cases for each class, the default, and a bad
   class, using the existing fixtures in `tests/unit/support.py`.
 
-### s3 - Schedules in `cloud-deploy.yml` [exec]
+### s3 - Schedules in `cloud-deploy.yml` [exec] (done)
 
 - `on.schedule`, `timezone: America/Los_Angeles`:
   - nightly `7 4 * * 2-6` (spec's 04:00 Tue to Sat, off the hour)

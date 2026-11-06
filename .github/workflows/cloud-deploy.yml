@@ -1,5 +1,6 @@
 # Deploys the GCP runners from main (specs/gcp.md, "Image pipeline"). Only main
-# deploys, enforced three ways: this workflow runs on a push to main or a manual
+# deploys, enforced three ways: this workflow runs on a push to main, a
+# schedule (which GitHub runs on main, the default branch) or a manual
 # dispatch; the jobs that touch GCP run in the production environment, whose
 # branch policy allows main only; and the workload identity provider accepts
 # only this repo's id with ref refs/heads/main and environment production. A job
@@ -10,6 +11,16 @@ name: cloud-deploy
 on:
   push:
     branches: [main]
+  # Scheduled no-cache rebuilds, by each type's REBUILD in infra/gcp/<type>.env
+  # (specs/gcp.md, "Rebuild cadence"). plan maps the cron string to the class,
+  # so keep these strings in step with its case statement.
+  schedule:
+    # nightly: linux and the orchestrator, after the weekday's Claude releases
+    - cron: "7 4 * * 2-6"
+      timezone: "America/Los_Angeles"
+    # weekly: gis and android, the slow, costly builds
+    - cron: "37 5 * * 0"
+      timezone: "America/Los_Angeles"
   workflow_dispatch:
     inputs:
       targets:
@@ -26,7 +37,8 @@ permissions:
 
 # Queue, never cancel: a cancelled deploy would leave its push undeployed. plan
 # diffs against the last successful push deploy, so a run GitHub drops from the
-# queue is covered by the next one.
+# queue is covered by the next push. GitHub keeps one pending run, so a
+# scheduled run can displace a waiting push run too; the next push covers it.
 concurrency:
   group: cloud-deploy
   cancel-in-progress: false
@@ -55,9 +67,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           REQUESTED: ${{ inputs.targets }}
+          SCHEDULE: ${{ github.event.schedule }}
         run: |
           set -euo pipefail
-          if [[ "$EVENT" == workflow_dispatch ]]; then
+          if [[ "$EVENT" == schedule ]]; then
+            case "$SCHEDULE" in
+            "7 4 * * 2-6") class=nightly ;;
+            "37 5 * * 0") class=weekly ;;
+            *) echo "::error::no rebuild class for schedule '$SCHEDULE'"; exit 1 ;;
+            esac
+            echo "Scheduled $class rebuild"
+            plan="$(scripts/cloud/changed-targets.sh --schedule "$class")"
+          elif [[ "$EVENT" == workflow_dispatch ]]; then
             plan="$(scripts/cloud/changed-targets.sh --all)"
             if [[ "$REQUESTED" != all ]]; then
               plan="$(jq -c --arg requested "$REQUESTED" '
@@ -149,7 +170,8 @@ jobs:
           # what Cloud Run runs and what the job records.
           provenance: false
           sbom: false
-          no-cache: ${{ inputs.no-cache == true }}
+          # A scheduled rebuild skips the cache: picking up apt and Homebrew is its job.
+          no-cache: ${{ inputs.no-cache == true || github.event_name == 'schedule' }}
           set: |
             base.cache-from=type=gha,scope=base
             base.cache-to=type=gha,mode=max,scope=base
@@ -270,7 +292,8 @@ jobs:
           push: true
           provenance: false
           sbom: false
-          no-cache: ${{ inputs.no-cache == true }}
+          # A scheduled rebuild skips the cache: picking up apt and Homebrew is its job.
+          no-cache: ${{ inputs.no-cache == true || github.event_name == 'schedule' }}
           set: |
             orchestrator.cache-from=type=gha,scope=orchestrator
             orchestrator.cache-to=type=gha,mode=max,scope=orchestrator
