@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fake_gcp import FakeGcp
@@ -247,6 +248,98 @@ class MemoryTests(SupervisorCase):
             ),
             what="a total line",
         )
+        self.stop()
+
+
+def vm(name, status="RUNNING", age_sec=60, work_order=True, type_="android"):
+    created = datetime.now(timezone.utc) - timedelta(seconds=age_sec)
+    items = [{"key": "runner-env", "value": "RUNNER_LABEL=x"}]
+    if work_order:
+        items.insert(0, {"key": "work-order", "value": "the-work-order"})
+    return {
+        "name": name,
+        "status": status,
+        "labels": {"managed-by": "agent-images", "agent-images-type": type_},
+        "creationTimestamp": created.isoformat(timespec="milliseconds"),
+        "metadata": {"items": items, "fingerprint": "fp-1"},
+    }
+
+
+class ReaperTests(SupervisorCase):
+    def setUp(self):
+        super().setUp()
+        (self.env_dir / "project.env").write_text(
+            "PROJECT_ID=lolay-agents\nPROJECT_NUMBER=613087327945\nZONE=us-central1-a\n")
+        (self.env_dir / "android.env").write_text("BACKEND=compute\nMAX_RUN_DURATION_SEC=3600\n")
+        self.gcp.state.secrets["claude-env-android"] = "android-key"
+
+    def instances(self):
+        return self.gcp.state.instances
+
+    def test_deletes_stopped_and_overdue_vms_and_clears_read_orders(self):
+        for instance in (
+            vm("agent-android-done", status="TERMINATED"),
+            vm("agent-android-overdue", age_sec=3600 + 400),
+            vm("agent-android-busy"),
+            vm("agent-android-new"),
+            vm("agent-android-almost", age_sec=3600 + 100, work_order=False),
+            vm("agent-gis-other", status="TERMINATED", type_="gis"),
+        ):
+            self.instances()[instance["name"]] = instance
+        self.gcp.state.instance_guest_attributes["agent-android-busy"] = {"agent-images/order": "read\n"}
+        self.start(REAPER_INTERVAL_SEC="1")
+        self.wait_for(
+            lambda: "agent-android-done" not in self.instances()
+            and "agent-android-overdue" not in self.instances()
+            and self.instances()["agent-android-busy"]["metadata"]["fingerprint"] == "fp-2",
+            what="a reaper pass",
+        )
+        busy_keys = [item["key"] for item in self.instances()["agent-android-busy"]["metadata"]["items"]]
+        self.assertEqual(busy_keys, ["runner-env"])
+        new_keys = [item["key"] for item in self.instances()["agent-android-new"]["metadata"]["items"]]
+        self.assertIn("work-order", new_keys, "not read yet, so kept")
+        self.assertIn("agent-android-almost", self.instances(), "within the grace")
+        self.assertIn("agent-gis-other", self.instances(), "not a compute type")
+        log = "\n".join(self.lines)
+        self.assertIn("supervisor: reaper: android: deleting agent-android-done (TERMINATED)", log)
+        self.assertIn("reaper: android: deleting agent-android-overdue (RUNNING, ", log)
+        self.assertIn("reaper: android: removed the spent work order from agent-android-busy", log)
+        self.assertNotIn("the-work-order", log)
+        self.stop()
+
+    def test_runs_every_interval(self):
+        self.start(REAPER_INTERVAL_SEC="1")
+        self.wait_for(lambda: len(self.gcp.requests("GET", "/instances")) >= 2, what="two passes")
+        listing = self.gcp.requests("GET", "/instances")[0]
+        self.assertEqual(listing.query["filter"], "labels.agent-images-type=android")
+        self.stop()
+
+    def test_an_api_error_is_logged_and_retried(self):
+        self.gcp.fail("GET", "/zones/us-central1-a/instances", 503, "unavailable")
+        self.start(REAPER_INTERVAL_SEC="1")
+        self.wait_for(
+            lambda: sum("reaper: android: listing VMs: HTTP 503" in line for line in self.lines) >= 2,
+            what="two failed passes",
+        )
+        self.assertTrue(self.starts("android") or self.starts("linux"))
+        self.stop()
+
+    def test_a_hung_api_does_not_hold_up_sigterm(self):
+        self.gcp.state.delays["/zones/us-central1-a/instances"] = 4
+        self.start(REAPER_INTERVAL_SEC="1", GCP_CURL_MAX_TIME="10")
+        self.wait_for(lambda: self.gcp.requests("GET", "/instances") or len(self.lines) > 3, what="the reaper")
+        self.wait_for(lambda: self.starts("android"), what="android")
+        started = time.time()
+        self.assertEqual(self.stop(), 0)
+        self.assertLess(time.time() - started, 3)
+
+
+class NoComputeTypesTests(SupervisorCase):
+    def test_never_calls_compute_engine(self):
+        self.start(REAPER_INTERVAL_SEC="1")
+        self.wait_for(lambda: self.starts("linux") and self.starts("gis"), what="both types")
+        time.sleep(1.5)
+        self.assertEqual(self.gcp.requests(contains="/compute/"), [])
         self.stop()
 
 

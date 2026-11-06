@@ -1,6 +1,6 @@
 # Plan: m2, `android` on Compute Engine
 
-Status: s1 to s3 done; s2 to s6 approved 2026-11-06 (no GCP spend), s7 waits for a second go.
+Status: s1 to s4 done; s2 to s6 approved 2026-11-06 (no GCP spend), s7 waits for a second go.
 Branch `claude/youthful-dijkstra-09v7kk` (assigned by the harness), cut
 from `main` at `ecc54c2`, after lolay/agent-images#18, #19 and #20.
 
@@ -62,8 +62,9 @@ both families, keeping one.
 - **Logs:** journald forwards the runner and watchdog units to the serial console,
   and the VM sets `serial-port-logging-enable`, so the guest's log reaches Cloud
   Logging after the VM is gone. If the org policy `compute.disableSerialPortLogging`
-  blocks that, the reaper copies the serial output's tail into the supervisor log
-  before it deletes a VM.
+  blocks that, s7 finds out; the fallback (the reaper reading the serial output
+  before it deletes a VM) is left out for now, since it can be up to 1 MB per VM
+  into an `e2-micro`'s log.
 - **The smoke VM measures the emulator.** It boots with metadata `agent-smoke=true`
   and no service account, runs the checks (`claude --version`, `kvm-ok`, sudo,
   `agent-emulator start` and `wait` timed twice: the first boot reads a lazily
@@ -112,7 +113,7 @@ both families, keeping one.
   after the marker deletes it, as now.
 - Tests in `test_spawn_runner.py` against fake Compute endpoints.
 
-#### s4 - The reaper [deep]
+#### s4 - The reaper [deep] (done)
 
 - In `supervisor.sh`'s loop, every `REAPER_INTERVAL_SEC` (60), for each type with
   `BACKEND=compute`: list instances by label `agent-images-type=<type>`, delete the
