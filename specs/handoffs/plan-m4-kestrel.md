@@ -1,6 +1,6 @@
 # Plan: m4, binary checks, smoke tests and the versions report
 
-Status: plan revised 2026-11-06 after Gary's first review (minimal smoke tests,
+Status: plan revised twice 2026-11-06 (s3 adds the session skill) after Gary's review (minimal smoke tests,
 "binary check" and "smoke test" as the terms, smoke tests where cheap, always
 runnable live, large data fetched). Waiting on approval. Nothing built yet.
 Branch `claude/bold-albattani-fg54u5` (assigned by the harness), from `main` at
@@ -89,6 +89,7 @@ Creates:
 - `images/toolsets/write-versions.sh`: the versions report.
 - `images/toolsets/<name>/smoke.sh` for the twelve toolsets in the table.
 - `tests/unit/test_toolset_checks.py`, `tests/unit/test_write_versions.py`.
+- `images/shared/claude/skills/agent-toolset-checks/SKILL.md`: the session skill (s3).
 
 Modifies:
 - `images/toolsets/install-toolset.sh` (records `smoke.sh` as `<name>.smoke.sh`)
@@ -96,7 +97,8 @@ Modifies:
 - `images/cloud/entrypoint.sh` (binary checks and smoke tests through the runner;
   `smoke pr`; names the report)
 - `images/cloud/runner/Dockerfile`, `images/cloud/docker-bake.hcl`
-- `images/android/gce/provision.sh`, `images/android/gce/files/agent-gce-smoke.sh`
+- `images/android/gce/provision.sh`, `images/android/gce/files/agent-gce-smoke.sh`,
+  `images/android/scripts/setup-user.sh` (installs the skill)
 - `scripts/cloud/changed-targets.sh`, `scripts/cloud/deploy.sh`
 - `.github/workflows/cloud-build.yml`, `.github/workflows/cloud-deploy.yml`
 - `Makefile` (`cloud-smoke` passes `pr`), `Makefile.md`
@@ -160,7 +162,8 @@ the draft PR, and record `df` after each load from its run.
 
 #### s2 - [deep] Versions report
 
-`write-versions.sh` writes `/etc/agent-images/versions.md`: type and build date,
+`write-versions.sh` writes `/etc/agent-images/versions.md`: type, build date and
+commit (a bake arg, which s3's issues quote),
 Claude's version, the binary checks' version lines, `brew list --versions`,
 `rustup toolchain list`, `tenv tf list`, `pixi list` for `/opt/gis`, and
 `dpkg-query` in a collapsed `<details>`; a section whose tool isn't there is left
@@ -173,15 +176,58 @@ check on the draft PR: bake-action's `push: true` may override the report's loca
 output; if so the deploy sets `<type>.output=type=registry` itself, and the PR's
 bake call takes the same shape so `main` runs what the PR proved. Commit and push.
 
+#### s3 - [deep] The `/agent-toolset-checks` session skill
+
+A Claude Code skill baked into every runner image, so it exists only in sessions on
+them: `images/shared/claude/skills/agent-toolset-checks/SKILL.md`, installed into
+`~/.claude/skills/` by the runner Dockerfile (cloud) and `setup-user.sh` (android),
+from the one source. It drives `agent-toolset-checks`; it never parses `check.txt`
+or runs a test itself.
+
+1. **Ask what to run**, with the choice dialog: everything (binary checks and every
+   smoke test, `live` ones included), binary checks only, or chosen smoke tests.
+   The choices come from `agent-toolset-checks smoke-list` in the image, not a list
+   in the skill.
+2. **Run and report**: one line per check, as the deploy smoke prints them, and the
+   versions report's path.
+3. **On a failure, ask before filing.** Run the failed one again once, to tell a
+   flake from a break, then ask: file an issue on lolay/agent-images, or don't. A
+   no files nothing.
+4. **File it.** First look for an open issue with the same title and comment there
+   instead. If the session's GitHub tools reach lolay/agent-images, create it there.
+   If they don't (a session scoped to another repo), print a prefilled
+   `issues/new?title=&body=` link and the body to paste. It never files without the
+   yes.
+
+**What the issue holds** (the rule lives in `SKILL.md`, its one source):
+
+- Title: `<type>: <check> fails` (`linux: smoke-go fails`, `gis: binary check gdal fails`).
+- The image: type, build date and commit from the versions report's header (s2
+  adds the commit, as a bake arg), and the image digest or android image name
+  where the session can see it.
+- What failed: binary check or smoke test, the toolset, the exact command to rerun
+  (`agent-toolset-checks smoke go`), exit status or timeout, and whether the rerun
+  failed too.
+- The output: the check's last 50 lines, in a code block.
+- The versions: only the lines for that toolset's tools from `versions.md`, not
+  the whole report.
+- Nothing from the user's own work: no project files, environment dumps, tokens or
+  paths outside the temp directory. The skill shows the body before filing.
+
+Labels: `toolset-check`, which s3 creates in the repo once, plus the toolset's
+name when that label exists (the skill adds none of its own). Test: a unit test that
+every `agent-toolset-checks` subcommand the skill names exists in the runner, so
+the two can't drift.
+
 --- STOP: tier change [deep] -> [exec] ---
-  Gary reviews s1 and s2 on the draft PR (its run shows the loads, the disk, the
+  Gary reviews s1 to s3 on the draft PR (its run shows the loads, the disk, the
   binary checks, the display, gpu and gis smoke tests, and the reports) before
   the rest fan out. The parent stays on Opus and dispatches Sonnet subagents.
 ---
 
 --- WAVE 2 [exec] ---
 
-#### s3 - [exec] The other smoke tests
+#### s4 - [exec] The other smoke tests
 
 Sonnet subagents, at most six at once, each given the contract (gcp.md m4 as s1
 rewrites it) plus the toolset's files and the git rule (write the one file; don't
@@ -198,7 +244,7 @@ and commits and pushes each batch so the draft PR checks it in the images.
 
 --- WAVE 3 [deep] ---
 
-#### s4 - [deep] Verify on images
+#### s5 - [deep] Verify on images
 
 On the draft PR: each loaded type shows its binary checks, a `smoke-<name>` pass
 line per PR smoke test, a `skip` line for gpu, and a versions report. A scratch
@@ -218,5 +264,6 @@ leave the branch, promoted to gcp.md, as its last commit.
 
 - [ ] s1
 - [ ] s2
-- [ ] s3
+- [ ] s3 (session skill)
 - [ ] s4
+- [ ] s5
