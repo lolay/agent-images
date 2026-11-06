@@ -44,6 +44,8 @@ LEVEL ?= patch
 MACOS_DIR := images/macos
 SHARED_DIR := images/shared
 ANDROID_DIR := images/android
+# The android type's Compute Engine image (Packer), built by the deploy on main.
+ANDROID_GCE_DIR := $(ANDROID_DIR)/gce
 BUILD_DIR := build
 LOG_DIR := $(BUILD_DIR)/logs
 IMAGE_NAME := agent-macos
@@ -98,7 +100,8 @@ PKR_VAR_base_image ?= ghcr.io/cirruslabs/macos-$(MACOS_CODENAME)-xcode:latest
 # Docker; the deploy itself runs only from main, in GitHub Actions.
 CLOUD_SCRIPTS := $(wildcard images/cloud/*.sh images/cloud/runner/*.sh images/cloud/runner/claude/hooks/*.sh \
                    images/toolsets/*.sh images/toolsets/*/*.sh \
-                   images/cloud/orchestrator/*.sh scripts/cloud/*.sh hooks/gcp/*.sh) hooks/gcp/spawn-runner
+                   images/cloud/orchestrator/*.sh scripts/cloud/*.sh hooks/gcp/*.sh \
+                   images/android/gce/*.sh images/android/gce/files/*.sh) hooks/gcp/spawn-runner
 CLOUD_BAKE := docker buildx bake -f images/cloud/docker-bake.hcl
 # TYPE=all builds every type and the orchestrator (the bake file's default group).
 TYPE ?= linux
@@ -309,9 +312,13 @@ cloud-smoke: ## Run a built image's smoke checks against stand-in volumes: TYPE=
 	docker run --rm -v /scratch -v /mnt/outputs \
 	  --mount type=volume,target=/mnt/datasets,readonly agent-$(TYPE):local smoke
 
-cloud-lint: ## Lint the cloud scripts and settings (no writes)
+cloud-lint: ## Lint the cloud scripts and settings, and validate the android Packer template (no writes)
 	shellcheck -x $(CLOUD_SCRIPTS)
 	shfmt -d $(CLOUD_SCRIPTS)
+	packer init $(ANDROID_GCE_DIR) >/dev/null
+	packer fmt -check -recursive $(ANDROID_GCE_DIR)
+	packer validate -var project_id=check -var zone=check -var network=check -var subnetwork=check \
+	  -var image_name=agent-android-check -var commit=check $(ANDROID_GCE_DIR)
 	@jq empty images/cloud/runner/claude/settings.json && printf '%s: OK\n' images/cloud/runner/claude/settings.json
 
 cloud-test: ## Run the cloud unit tests (Linux: they use /proc and GNU tools)

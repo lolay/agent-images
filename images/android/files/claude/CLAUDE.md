@@ -2,7 +2,9 @@
 
 A disposable Linux VM (Ubuntu 24.04, x86_64) that serves this one session and is
 deleted when it ends, so push anything worth keeping. You're the image's `ubuntu`
-user, with passwordless sudo: `sudo apt-get install` whatever a project needs.
+user, with passwordless sudo: `sudo apt-get install` whatever a project needs. On
+Google Cloud (the `android` runner type) `$AGENT_SCRATCH` is `/scratch`, on the VM's
+own disk: build there.
 
 ## Tools
 

@@ -14,6 +14,8 @@ gcp_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${GCP_STORAGE_URL:=https://storage.googleapis.com}"
 : "${GCP_RUN_URL:=https://run.googleapis.com}"
 : "${GCP_SECRETS_URL:=https://secretmanager.googleapis.com}"
+: "${GCP_COMPUTE_URL:=https://compute.googleapis.com}"
+: "${GCP_POLL_SEC:=2}"
 : "${GCP_CURL_MAX_TIME:=20}"
 
 # gcp_load_env [type]: export project.env, then infra/gcp/<type>.env if given.
@@ -73,4 +75,58 @@ gcp_error() {
 	local message
 	message="$(jq -r '.error.message // empty' <<<"$GCP_BODY" 2>/dev/null)"
 	printf '%s' "${message:-${GCP_BODY:0:200}}"
+}
+
+# gcp_compute_wait <token> <scope url> <seconds>: poll the Compute Engine
+# operation in GCP_BODY (an insert's or delete's response) until it's DONE or
+# the time is up. <scope url> is .../compute/v1/projects/<p>/zones/<z> or
+# .../global. Returns 0 when it finished cleanly; 1 when it failed, with its
+# first error in GCP_OP_ERROR ("<CODE>: <message>"); 2 when time ran out.
+gcp_compute_wait() {
+	local token="$1" scope="$2" deadline name status
+	deadline=$(($(date +%s) + $3))
+	name="$(jq -r '.name // empty' <<<"$GCP_BODY")"
+	status="$(jq -r '.status // empty' <<<"$GCP_BODY")"
+	GCP_OP_ERROR=""
+	while [[ "$status" != "DONE" ]]; do
+		(($(date +%s) < deadline)) || return 2
+		sleep "$GCP_POLL_SEC"
+		gcp_call "$token" GET "$scope/operations/$name"
+		[[ "$GCP_STATUS" == 200 ]] || continue
+		status="$(jq -r '.status // empty' <<<"$GCP_BODY")"
+	done
+	GCP_OP_ERROR="$(jq -r '.error.errors[0] // empty | "\(.code): \(.message)"' <<<"$GCP_BODY")"
+	[[ -z "$GCP_OP_ERROR" ]] || return 1
+}
+
+# gcp_instance_body <name> <source image> <type> <max run sec> [service account]
+# Print the Compute Engine instance a compute type runs on, from its env file
+# (MACHINE_TYPE, DISK_GB, DISK_TYPE) and project.env (ZONE, NETWORK, SUBNET):
+# nested virtualization for the emulator, no external IP (egress through Cloud
+# NAT), deleted by Compute Engine at <max run sec> whatever happens, guest
+# attributes on and the serial console sent to Cloud Logging. With no service
+# account the VM gets none. Callers add their own labels and metadata items;
+# nothing secret goes through here (arguments are visible in a process list).
+gcp_instance_body() {
+	local name="$1" image="$2" type="$3" max_run="$4" account="${5:-}"
+	jq -cn --arg name "$name" --arg image "$image" --arg type "$type" --arg max_run "$max_run" \
+		--arg account "$account" --arg zone "$ZONE" --arg machine "$MACHINE_TYPE" \
+		--arg disk_gb "$DISK_GB" --arg disk_type "$DISK_TYPE" --arg network "$NETWORK" --arg subnet "$SUBNET" '
+		{
+			name: $name,
+			machineType: "zones/\($zone)/machineTypes/\($machine)",
+			labels: {"managed-by": "agent-images", "agent-images-type": $type},
+			disks: [{boot: true, autoDelete: true, initializeParams: {
+				sourceImage: $image, diskSizeGb: $disk_gb, diskType: "zones/\($zone)/diskTypes/\($disk_type)"}}],
+			networkInterfaces: [{network: $network, subnetwork: $subnet}],
+			serviceAccounts: (if $account == "" then []
+				else [{email: $account, scopes: ["https://www.googleapis.com/auth/cloud-platform"]}] end),
+			advancedMachineFeatures: {enableNestedVirtualization: true},
+			scheduling: {provisioningModel: "STANDARD", automaticRestart: false,
+				maxRunDuration: {seconds: $max_run}, instanceTerminationAction: "DELETE"},
+			metadata: {items: [
+				{key: "enable-guest-attributes", value: "TRUE"},
+				{key: "serial-port-logging-enable", value: "TRUE"}
+			]}
+		}'
 }

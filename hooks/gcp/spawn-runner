@@ -2,17 +2,25 @@
 # Orchestrator hook for GCP; the counterpart of hooks/linux/spawn-runner
 # (specs/gcp.md, "The hook"). `claude self-hosted-runner orchestrator` runs it
 # once per queued session that needs a runner, and once per missing standby
-# (--min-idle). It starts one execution of the type's Cloud Run job, agent-<type>,
-# with the work order as an env override, and returns without waiting for it.
+# (--min-idle). By the type's BACKEND (infra/gcp/<type>.env) it starts one
+# runner and returns without waiting for it to serve:
+#
+#   run      (the default) one execution of the type's Cloud Run job,
+#            agent-<type>, with the work order as an env override;
+#   compute  one Compute Engine VM, agent-<type>-<order id>, from the type's
+#            image family, with the work order in instance metadata
+#            (images/android/gce/files/agent-gce-order.sh reads it at boot).
 #
 # The supervisor sets RUNNER_TYPE and runs one orchestrator per type, each with
-# this hooks directory. Calls go to the Storage and Cloud Run REST APIs with curl
-# and the VM's metadata-server token (hooks/gcp/lib.sh); no gcloud.
+# this hooks directory. Calls go to the Storage, Cloud Run and Compute Engine
+# REST APIs with curl and the VM's metadata-server token (hooks/gcp/lib.sh); no
+# gcloud.
 #
 # Exit codes (the orchestrator's contract): 0 submitted or already submitted;
-# 1 retry later; 2 don't retry (this setup is broken: no job, no permission, no
-# env file). stderr's tail shows in the environment's Activity tab, so it never
-# carries the work order, the token or a request body.
+# 1 retry later (including Compute Engine quota and capacity); 2 don't retry
+# (this setup is broken: no job or image, no permission, no env file). stderr's
+# tail shows in the environment's Activity tab, so it never carries the work
+# order, the token or a request body.
 set -euo pipefail
 
 # The orchestrator's own credential; nothing downstream of this hook needs it.
@@ -67,6 +75,15 @@ trap on_exit EXIT
 readonly order_id="$CLAUDE_RUNNER_ORDER_ID"
 gcp_load_env "$RUNNER_TYPE" || fail 2 "no infra/gcp/project.env or $RUNNER_TYPE.env in the image"
 : "${PROJECT_ID:?}" "${REGION:?}" "${ORDER_BUCKET:?}"
+: "${BACKEND:=run}"
+case "$BACKEND" in
+run | compute) ;;
+*) fail 2 "unknown BACKEND=$BACKEND in infra/gcp/$RUNNER_TYPE.env (run or compute)" ;;
+esac
+# Seconds the hook waits for a VM insert to finish, so quota and capacity
+# errors (reported on the operation, not the request) retry instead of leaving
+# the order marked with no VM. The hook timeout is 60 s.
+: "${INSTANCE_INSERT_WAIT_SEC:=40}"
 [[ -s "$CLAUDE_RUNNER_WORK_ORDER_FILE" ]] || fail 1 "the work order file is empty"
 
 token="$(gcp_token)" || fail 1 "no access token from the metadata server"
@@ -86,19 +103,117 @@ case "$GCP_STATUS" in
 *) fail_for_status "creating gs://$ORDER_BUCKET/$object" ;;
 esac
 
-# 2. One execution, the work order and label as container env overrides. The
-#    body goes in on stdin, built from the file, so the work order is in no
-#    command line.
+# The runner's label in the Anthropic console: <type>-<order id prefix>.
 label="$RUNNER_TYPE-${order_id:0:8}"
 label="${label,,}"
-readonly job="agent-$RUNNER_TYPE"
-gcp_call "$token" POST "$GCP_RUN_URL/v2/projects/$PROJECT_ID/locations/$REGION/jobs/$job:run" - \
-	< <(jq -cn --rawfile order "$CLAUDE_RUNNER_WORK_ORDER_FILE" --arg label "$label" '
-		{overrides: {containerOverrides: [{name: "runner", env: [
-			{name: "SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET", value: ($order | rtrimstr("\n"))},
-			{name: "RUNNER_LABEL", value: $label}
-		]}]}}')
-[[ "$GCP_STATUS" == 2* ]] || fail_for_status "running $job"
+readonly label
 
-execution="$(jq -r '.metadata.name // .name // "?"' <<<"$GCP_BODY" 2>/dev/null || echo '?')"
-log "$label: started ${execution##*/} for order $order_id${CLAUDE_RUNNER_SESSION_ID:+ (session $CLAUDE_RUNNER_SESSION_ID)}"
+# 2a. One Cloud Run execution, the work order and label as container env
+#     overrides. The body goes in on stdin, built from the file, so the work
+#     order is in no command line.
+run_job() {
+	local job="agent-$RUNNER_TYPE" execution
+	gcp_call "$token" POST "$GCP_RUN_URL/v2/projects/$PROJECT_ID/locations/$REGION/jobs/$job:run" - \
+		< <(jq -cn --rawfile order "$CLAUDE_RUNNER_WORK_ORDER_FILE" --arg label "$label" '
+			{overrides: {containerOverrides: [{name: "runner", env: [
+				{name: "SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET", value: ($order | rtrimstr("\n"))},
+				{name: "RUNNER_LABEL", value: $label}
+			]}]}}')
+	[[ "$GCP_STATUS" == 2* ]] || fail_for_status "running $job"
+	execution="$(jq -r '.metadata.name // .name // "?"' <<<"$GCP_BODY" 2>/dev/null || echo '?')"
+	log "$label: started ${execution##*/} for order $order_id${CLAUDE_RUNNER_SESSION_ID:+ (session $CLAUDE_RUNNER_SESSION_ID)}"
+}
+
+# Compute Engine names and label values: lowercase letters, digits and dashes.
+# The whole order id, not a prefix, so two orders never share a VM name and a
+# name that exists already means this order's VM.
+name_safe() { tr '[:upper:]' '[:lower:]' <<<"$1" | tr -c 'a-z0-9\n' '-' | tr -d '\n'; }
+
+# runner.env for the guest (agent-gce-order keeps only KEY=value lines).
+runner_env() {
+	local now
+	now="$(date +%s)"
+	printf '%s\n' \
+		"AGENT_TYPE=$RUNNER_TYPE" \
+		"RUNNER_LABEL=$label" \
+		"CLAUDE_BASE_DIR=/scratch/workspace" \
+		"CLAUDE_RETIRE_AT=$((now + MAX_RUN_DURATION_SEC - ${RETIRE_MARGIN_SEC:-900}))" \
+		"CLAUDE_EXIT_IF_UNUSED_MIN=${EXIT_IF_UNUSED_MIN:-}" \
+		"CLAUDE_RELEASE_IDLE_SESSION_MIN=${RELEASE_IDLE_SESSION_MIN:-}" \
+		"CLAUDE_KILL_SESSION_AFTER_MIN=${KILL_SESSION_AFTER_MIN:-}"
+}
+
+# The API's reason for a failed request or operation, as a retry decision:
+# quota, capacity and rate limits pass with time; anything else at 403 or 404
+# (no image family, no permission) won't.
+compute_fail() {
+	local what="$1" detail="$2"
+	case "$detail" in
+	*QUOTA* | *quotaExceeded* | *rateLimitExceeded* | *RESOURCE_POOL_EXHAUSTED* | *STOCKOUT* | *resourceExhausted*)
+		fail 1 "$what: $detail"
+		;;
+	esac
+	case "$GCP_STATUS" in
+	403 | 404) fail 2 "$what: $detail" ;;
+	*) fail 1 "$what: $detail" ;;
+	esac
+}
+
+# 2b. One Compute Engine VM. Nested virtualization for the emulator, no
+#     external IP (egress through Cloud NAT), the runner's service account,
+#     and Compute Engine deletes it at MAX_RUN_DURATION_SEC whatever happens.
+#     The work order goes in on stdin, as above.
+create_instance() {
+	: "${ZONE:?}" "${NETWORK:?}" "${SUBNET:?}" "${RUNNER_SERVICE_ACCOUNT:?}"
+	: "${MACHINE_TYPE:?}" "${DISK_GB:?}" "${DISK_TYPE:?}" "${IMAGE_FAMILY:?}" "${MAX_RUN_DURATION_SEC:?}"
+	local instance safe_order zone_url detail
+	safe_order="$(name_safe "$order_id")"
+	instance="agent-$RUNNER_TYPE-$safe_order"
+	instance="${instance:0:63}"
+	instance="${instance%-}"
+	zone_url="$GCP_COMPUTE_URL/compute/v1/projects/$PROJECT_ID/zones/$ZONE"
+	gcp_call "$token" POST "$zone_url/instances" - < <(
+		gcp_instance_body "$instance" "projects/$PROJECT_ID/global/images/family/$IMAGE_FAMILY" \
+			"$RUNNER_TYPE" "$MAX_RUN_DURATION_SEC" "$RUNNER_SERVICE_ACCOUNT" |
+			jq -c --rawfile order "$CLAUDE_RUNNER_WORK_ORDER_FILE" --arg runner_env "$(runner_env)" \
+				--arg order_label "${safe_order:0:63}" '
+				.labels["agent-images-order"] = $order_label
+				| .metadata.items = [
+					{key: "work-order", value: ($order | rtrimstr("\n"))},
+					{key: "runner-env", value: $runner_env}
+				] + .metadata.items'
+	)
+	case "$GCP_STATUS" in
+	2*) ;;
+	409)
+		log "order $order_id already has VM $instance"
+		return
+		;;
+	*) compute_fail "creating VM $instance" "HTTP $GCP_STATUS: $(gcp_error) $(jq -r '[.error.errors[]?.reason] | join(" ")' <<<"$GCP_BODY" 2>/dev/null)" ;;
+	esac
+	local waited=0
+	gcp_compute_wait "$token" "$zone_url" "$INSTANCE_INSERT_WAIT_SEC" || waited=$?
+	case "$waited" in
+	0) log "$label: created VM $instance for order $order_id${CLAUDE_RUNNER_SESSION_ID:+ (session $CLAUDE_RUNNER_SESSION_ID)}" ;;
+	2) log "$label: VM $instance still being created after ${INSTANCE_INSERT_WAIT_SEC}s; leaving it to finish" ;;
+	*)
+		detail="$GCP_OP_ERROR"
+		[[ "$detail" != RESOURCE_ALREADY_EXISTS* ]] || {
+			log "order $order_id already has VM $instance"
+			return
+		}
+		# The operation's errors carry no HTTP status; not-found and permission
+		# codes mean the setup is broken, as a 404 or 403 would.
+		case "$detail" in
+		RESOURCE_NOT_FOUND* | *PERMISSION* | *FORBIDDEN*) GCP_STATUS=404 ;;
+		*) GCP_STATUS=500 ;;
+		esac
+		compute_fail "creating VM $instance" "$detail"
+		;;
+	esac
+}
+
+case "$BACKEND" in
+run) run_job ;;
+compute) create_instance ;;
+esac

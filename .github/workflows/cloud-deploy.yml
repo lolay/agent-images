@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       targets:
-        description: "What to deploy: all, or types and/or orchestrator, space-separated (linux orchestrator)"
+        description: "What to deploy: all, or types and/or orchestrator, space-separated (linux android orchestrator)"
         required: true
         default: all
       no-cache:
@@ -40,6 +40,8 @@ jobs:
     outputs:
       types: ${{ steps.targets.outputs.types }}
       has-types: ${{ steps.targets.outputs.has-types }}
+      vms: ${{ steps.targets.outputs.vms }}
+      has-vms: ${{ steps.targets.outputs.has-vms }}
       orchestrator: ${{ steps.targets.outputs.orchestrator }}
       prune: ${{ steps.targets.outputs.prune }}
       claude-version: ${{ steps.claude.outputs.version }}
@@ -61,6 +63,7 @@ jobs:
               plan="$(jq -c --arg requested "$REQUESTED" '
                 ($requested | split(" ") | map(select(. != ""))) as $names
                 | {types: [.types[] | select(.type as $type | $names | index($type))],
+                   vms: [.vms[] | select(.type as $type | $names | index($type))],
                    orchestrator: ($names | index("orchestrator") != null),
                    prune: false}' <<<"$plan")"
             fi
@@ -74,6 +77,8 @@ jobs:
           {
             echo "types=$(jq -c '{include: .types}' <<<"$plan")"
             echo "has-types=$(jq '.types | length > 0' <<<"$plan")"
+            echo "vms=$(jq -c '{include: .vms}' <<<"$plan")"
+            echo "has-vms=$(jq '.vms | length > 0' <<<"$plan")"
             echo "orchestrator=$(jq '.orchestrator' <<<"$plan")"
             echo "prune=$(jq '.prune' <<<"$plan")"
           } >>"$GITHUB_OUTPUT"
@@ -168,13 +173,67 @@ jobs:
           scripts/cloud/deploy.sh type "$TYPE" "$image" "$GITHUB_SHA"
           echo "agent-$TYPE: $image" >>"$GITHUB_STEP_SUMMARY"
 
-  # After the types, so a first deploy creates the job before the orchestrator
-  # can spawn into it; skipped if a type failed, and the next push retries both.
+  # The Compute Engine types (BACKEND=compute): Packer builds the image in GCP
+  # (its build VM has nested virtualization, to boot the emulator once for its
+  # snapshot), a smoke VM boots from it, and only then does it join the family
+  # the hook creates VMs from. The build VM has no external IP; Packer reaches it
+  # through IAP, which is why gcloud is set up.
+  vm-images:
+    needs: plan
+    if: needs.plan.outputs.has-vms == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.vms) }}
+    name: vm image (${{ matrix.type }})
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Project settings
+        run: grep -E '^[A-Z_]+=' infra/gcp/project.env >>"$GITHUB_ENV"
+      - uses: google-github-actions/auth@v3.0.0
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.CI_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3.0.1
+      # Keep in step with required_version in images/<type>/gce/plugins.pkr.hcl.
+      - uses: hashicorp/setup-packer@v3.4.0
+        with:
+          version: "1.16.2"
+      - name: Image name
+        id: name
+        env:
+          TYPE: ${{ matrix.type }}
+        run: echo "image=agent-$TYPE-$(date -u +%Y%m%d)-${GITHUB_SHA::12}" >>"$GITHUB_OUTPUT"
+      - name: Build
+        env:
+          TYPE: ${{ matrix.type }}
+          IMAGE: ${{ steps.name.outputs.image }}
+          # packer init looks plugins up through GitHub's API (see ci.yml).
+          PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/cloud/deploy.sh vm-build "$TYPE" "$IMAGE" "$GITHUB_SHA"
+      - name: Smoke and promote
+        env:
+          TYPE: ${{ matrix.type }}
+          IMAGE: ${{ steps.name.outputs.image }}
+        run: |
+          scripts/cloud/deploy.sh vm-promote "$TYPE" "$IMAGE" "$GITHUB_SHA"
+          echo "agent-$TYPE: $IMAGE" >>"$GITHUB_STEP_SUMMARY"
+
+  # After the types and VM images, so a first deploy creates the job or image
+  # before the orchestrator can spawn into it; skipped if one failed, and the
+  # next push retries.
   orchestrator:
-    needs: [plan, types]
+    needs: [plan, types, vm-images]
     if: >-
       always() && needs.plan.result == 'success' && needs.plan.outputs.orchestrator == 'true'
       && (needs.types.result == 'success' || needs.types.result == 'skipped')
+      && (needs.vm-images.result == 'success' || needs.vm-images.result == 'skipped')
     runs-on: ubuntu-24.04
     environment: production
     permissions:
@@ -225,10 +284,11 @@ jobs:
           echo "agent-orchestrator: $ARTIFACT_REGISTRY/agent-orchestrator@$digest" >>"$GITHUB_STEP_SUMMARY"
 
   prune:
-    needs: [plan, types, orchestrator]
+    needs: [plan, types, vm-images, orchestrator]
     if: >-
       always() && needs.plan.result == 'success' && needs.plan.outputs.prune == 'true'
-      && needs.types.result != 'failure' && needs.orchestrator.result != 'failure'
+      && needs.types.result != 'failure' && needs.vm-images.result != 'failure'
+      && needs.orchestrator.result != 'failure'
     runs-on: ubuntu-24.04
     environment: production
     permissions:
@@ -243,5 +303,5 @@ jobs:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.CI_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v3.0.1
-      - name: Delete jobs whose type is gone
+      - name: Delete jobs and images whose type is gone
         run: scripts/cloud/deploy.sh prune

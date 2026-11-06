@@ -16,10 +16,18 @@
 #     Rss of its orchestrator and child processes (/proc/<pid>/smaps_rollup) and
 #     whether its /healthz says connected, then a total with the VM's available
 #     memory. Read them from Cloud Logging: "supervisor: memory".
+#   - reaper: every REAPER_INTERVAL_SEC, for each type with BACKEND=compute, it
+#     deletes that type's VMs that have stopped (a runner VM powers off after
+#     its session) or outlived MAX_RUN_DURATION_SEC, and removes the work-order
+#     metadata key from VMs whose guest has marked it read (guest attribute
+#     agent-images/order). The VMs can't delete themselves: that would put a
+#     delete permission inside the session. Read it from Cloud Logging:
+#     "supervisor: reaper".
 #
-# One loop owns every child: it waits for whichever of the orchestrators or its
-# own tick timer finishes first (wait -n), so signals, restarts and the memory
-# log never race each other.
+# One loop owns every child: it waits for whichever of the orchestrators, its
+# own tick timer or the reaper finishes first (wait -n), so signals, restarts
+# and the memory log never race each other. The reaper runs in the background,
+# so a slow API call can't hold up a signal.
 set -euo pipefail
 
 : "${AGENT_ORCHESTRATOR_ROOT:=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
@@ -35,6 +43,10 @@ set -euo pipefail
 # A run this long counts as healthy, so the next restart starts from the minimum.
 : "${RESTART_RESET_SEC:=300}"
 : "${TICK_SEC:=5}"
+: "${REAPER_INTERVAL_SEC:=60}"
+# A VM this much past its max run duration is deleted even if it's running
+# (Compute Engine should have deleted it already).
+: "${REAPER_GRACE_SEC:=300}"
 
 # shellcheck source=hooks/gcp/lib.sh
 source "$AGENT_ORCHESTRATOR_ROOT/hooks/gcp/lib.sh"
@@ -86,6 +98,95 @@ fetch_secret() {
 }
 
 prefix_lines() { sed -u "s/^/[$1] /"; }
+
+compute_types=()
+for type in "${types[@]}"; do
+	[[ "$(type_setting "$type" BACKEND run)" == compute ]] && compute_types+=("$type")
+done
+if ((${#compute_types[@]} > 0)) && [[ -z "${ZONE:-}" || -z "${PROJECT_ID:-}" ]]; then
+	log "reaper: no PROJECT_ID or ZONE in project.env; not reaping ${compute_types[*]}"
+	compute_types=()
+fi
+
+# reap_type <token> <type>: one pass of the reaper over the type's VMs.
+reap_type() {
+	local token="$1" type="$2" max_run zone_url page="" instance name status created now age
+	max_run="$(type_setting "$type" MAX_RUN_DURATION_SEC 34200)"
+	zone_url="$GCP_COMPUTE_URL/compute/v1/projects/$PROJECT_ID/zones/$ZONE"
+	now="$(date +%s)"
+	while :; do
+		gcp_call "$token" GET "$zone_url/instances?filter=$(gcp_uri "labels.agent-images-type=$type")${page:+&pageToken=$(gcp_uri "$page")}"
+		if [[ "$GCP_STATUS" != 200 ]]; then
+			log "reaper: $type: listing VMs: HTTP $GCP_STATUS: $(gcp_error)"
+			return
+		fi
+		local body="$GCP_BODY"
+		while read -r instance; do
+			# The deploy's smoke VMs are its own to read and delete: one powers
+			# off once its result is in, and deleting it then could beat the
+			# deploy to the result.
+			[[ "$(jq -r '.labels["agent-images-role"] // empty' <<<"$instance")" != smoke ]] || continue
+			name="$(jq -r '.name' <<<"$instance")"
+			status="$(jq -r '.status' <<<"$instance")"
+			created="$(date -d "$(jq -r '.creationTimestamp' <<<"$instance")" +%s 2>/dev/null || echo "$now")"
+			age=$((now - created))
+			case "$status" in
+			TERMINATED | STOPPED | SUSPENDED) reap_delete "$token" "$zone_url" "$type" "$name" "$status" ;;
+			*)
+				if ((age > max_run + REAPER_GRACE_SEC)); then
+					reap_delete "$token" "$zone_url" "$type" "$name" "$status, ${age}s old"
+				elif jq -e '.metadata.items // [] | any(.key == "work-order")' <<<"$instance" >/dev/null; then
+					reap_order "$token" "$zone_url" "$type" "$instance"
+				fi
+				;;
+			esac
+		done < <(jq -c '.items // [] | .[]' <<<"$body")
+		page="$(jq -r '.nextPageToken // empty' <<<"$body")"
+		[[ -n "$page" ]] || break
+	done
+}
+
+# reap_delete <token> <zone url> <type> <name> <why>: delete, without waiting.
+reap_delete() {
+	gcp_call "$1" DELETE "$2/instances/$4"
+	case "$GCP_STATUS" in
+	2*) log "reaper: $3: deleting $4 ($5)" ;;
+	404) ;;
+	*) log "reaper: $3: deleting $4: HTTP $GCP_STATUS: $(gcp_error)" ;;
+	esac
+}
+
+# reap_order <token> <zone url> <type> <instance json>: drop the work-order key
+# once the guest has read it. The fingerprint makes a concurrent change fail
+# rather than be overwritten; the next pass tries again.
+reap_order() {
+	local token="$1" zone_url="$2" type="$3" instance="$4" name state
+	name="$(jq -r '.name' <<<"$instance")"
+	gcp_call "$token" GET "$zone_url/instances/$name/getGuestAttributes?queryPath=$(gcp_uri agent-images/order)"
+	[[ "$GCP_STATUS" == 200 ]] || return 0
+	state="$(jq -r '.queryValue.items // [] | map(select(.key == "order")) | .[0].value // empty' <<<"$GCP_BODY" | tr -d '[:space:]')"
+	[[ "$state" == read ]] || return 0
+	gcp_call "$token" POST "$zone_url/instances/$name/setMetadata" - < <(
+		jq -c '{fingerprint: .metadata.fingerprint, items: [.metadata.items[] | select(.key != "work-order")]}' <<<"$instance"
+	)
+	if [[ "$GCP_STATUS" == 2* ]]; then
+		log "reaper: $type: removed the spent work order from $name"
+	else
+		log "reaper: $type: removing the work order from $name: HTTP $GCP_STATUS: $(gcp_error)"
+	fi
+}
+
+# reap: one pass over every compute type; runs in the background.
+reap() {
+	local token type
+	token="$(gcp_token)" || {
+		log "reaper: no access token from the metadata server"
+		return 0
+	}
+	for type in "${compute_types[@]}"; do
+		reap_type "$token" "$type"
+	done
+}
 
 declare -A pid_of=() type_of=() started_at=() next_start=() backoff=() port_of=()
 index=0
@@ -238,6 +339,12 @@ reap_exited() {
 	done
 }
 
+reaper_pid=""
+start_reaper() {
+	reap &
+	reaper_pid=$!
+}
+
 tick_pid=""
 start_tick() {
 	sleep "$TICK_SEC" &
@@ -252,9 +359,10 @@ running_count() {
 	printf '%s' "$count"
 }
 
-log "runner types: ${types[*]}"
+log "runner types: ${types[*]}${compute_types[*]:+ (VMs reaped: ${compute_types[*]})}"
 start_tick
 next_memory=$(($(date +%s) + MEMORY_LOG_INTERVAL_SEC))
+next_reap=0
 
 while :; do
 	reap_exited
@@ -269,10 +377,14 @@ while :; do
 			log_memory
 			next_memory=$((now + MEMORY_LOG_INTERVAL_SEC))
 		fi
+		if ((${#compute_types[@]} > 0)) && [[ -z "$reaper_pid" ]] && ((now >= next_reap)); then
+			start_reaper
+			next_reap=$((now + REAPER_INTERVAL_SEC))
+		fi
 	else
 		forward_signal
 		if (($(running_count) == 0)); then
-			kill "$tick_pid" 2>/dev/null || true
+			kill "$tick_pid" ${reaper_pid:+"$reaper_pid"} 2>/dev/null || true
 			log "every orchestrator has stopped"
 			exit 0
 		fi
@@ -285,6 +397,10 @@ while :; do
 	[[ -n "${exited:-}" ]] || continue
 	if [[ "$exited" == "$tick_pid" ]]; then
 		start_tick
+		continue
+	fi
+	if [[ "$exited" == "$reaper_pid" ]]; then
+		reaper_pid=""
 		continue
 	fi
 	type="${type_of[$exited]:-}"

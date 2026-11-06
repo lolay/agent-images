@@ -1,10 +1,11 @@
 # GCP runners
 
 Status: **m1 (`linux`) done, 2026-11-05**: sessions run on Cloud Run, tested twice
-([m1 results](#m1-results)). **m2: `gis` done, 2026-11-06**
-([m2 `gis` results](#m2-gis-results)); `android` in progress. Written 2026-11-04; the foundation is applied
-(`lolay/infrastructure`, `stacks/gcp/agents`). m2 is next
-([handoffs/handoff-m2-gis-android.md](handoffs/handoff-m2-gis-android.md)). Recheck
+([m1 results](#m1-results)). Written 2026-11-04; the foundation is applied
+(`lolay/infrastructure`, `stacks/gcp/agents`). m2 is under way
+([handoffs/handoff-m2-gis-android.md](handoffs/handoff-m2-gis-android.md)): **`gis`
+done, 2026-11-06** ([m2 `gis` results](#m2-gis-results)), and `android` (a Compute
+Engine VM per session) is built and waiting for its first deploy. Recheck
 anything marked preview before building on it.
 
 The same model as the Mac and Linux runners, with Google running the hardware: Claude's
@@ -255,7 +256,9 @@ matrix. A failed deploy makes the next one redeploy more, never less:
 | `hooks/gcp/**`, `images/cloud/orchestrator/**` | The orchestrator host (new image, then the host restarts its container) |
 | `infra/gcp/<type>.env` (CPU, memory, GPU, timeout, `--min-idle`) | That type's job and orchestrator settings, no image build |
 | `scripts/cloud/job-spec.sh` | Every type's job, no image build |
-| Anything else (`specs/`, the macOS and Linux images, README) | Nothing |
+| `images/android/**` (the LXD image's scripts and files, and `gce/`), the toolsets in `images/android/toolsets.txt`, `images/shared/**`, the two toolset scripts | The `android` Compute Engine image: Packer build, smoke VM, then family `agent-android` ([below](#compute-engine-vm-per-session-android-and-the-gpu-fallback)) |
+| `infra/gcp/android.env` | The orchestrator only: the hook reads it at each spawn, from the orchestrator image |
+| Anything else (`specs/`, the macOS image, README) | Nothing |
 
 The `FROM` chain comes from the Dockerfiles themselves, so adding a type doesn't mean
 editing the map. `infra/gcp/project.env` changes everything. When the diff can't be
@@ -443,8 +446,8 @@ gets a single-use work order instead, and a session gets nothing.
 | 2 | The orchestrator host, at container start | Its service account (`agent-orchestrator`, allowed only `claude-env-*`) reads each type's secret from Secret Manager (REST, metadata-server token) and writes it to a file per type in `/dev/shm`, mode 600 |
 | 3 | Each type's orchestrator | Starts with `--environment-secret-file` pointing at its own file only, and polls Anthropic with it |
 | 4 | Anthropic, per queued session | Sends that orchestrator a spawn request carrying a work order: a signed, single-use token for one runner |
-| 5 | The hook | Unsets the environment key from its own environment, then starts a Cloud Run execution (or an `android` VM) with the work order as `SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET` |
-| 6 | The entrypoint | Moves the work order to `~/.claude-runner/environment-secret` (mode 600) and unsets the variable, so sessions don't inherit it |
+| 5 | The hook | Unsets the environment key from its own environment, then starts a Cloud Run execution with the work order as `SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET`, or an `android` VM with it as instance metadata key `work-order` |
+| 6 | The entrypoint, or the VM's `agent-gce-order` at boot | Moves the work order to `~/.claude-runner/environment-secret` (mode 600) and unsets the variable, so sessions don't inherit it. On a VM, the guest marks the order read (guest attribute `agent-images/order`) and the reaper removes the metadata key within a minute |
 | 7 | The runner | Registers with the work order, which is spent at that moment, then claims the session |
 
 So a session that reads its environment or the execution's metadata finds a spent
@@ -473,9 +476,16 @@ already running does nothing.
    that reads it gets nothing, the same reasoning as design.md. If that's not enough,
    write it to a GCS object only the runner's service account can read and pass the
    path instead.
+   For a compute type (`BACKEND=compute`, today `android`), it creates
+   `agent-<type>-<order id>` instead (`instances.insert`, the body from
+   `gcp_instance_body` in `hooks/gcp/lib.sh`), with the work order and the runner's
+   settings in instance metadata, and waits up to 40 s for the insert's operation:
+   quota and capacity errors arrive there, not on the request.
 4. Any failure after the marker deletes the marker (the orchestrator has
    `storage.objectUser` on the bucket for that) and exits 1, or 2 when the API says
-   403 or 404: no job, or no permission, which retrying won't fix.
+   403 or 404: no job or image family, or no permission, which retrying won't fix.
+   Compute Engine quota, capacity and rate limits exit 1 whatever their status; a VM
+   that already exists for the order exits 0.
 
 Orchestrator flags: `--expected-spawn-seconds` set from measured cold starts (multi-GB
 GPU images are minutes, not seconds), `--hook-timeout 60`, `--shutdown-drain-sec 70`
@@ -510,6 +520,11 @@ it's one process per type inside one container:
   orchestrator's memory (`Pss` from `/proc/<pid>/smaps_rollup`, with its child
   processes) and whether its `/healthz` reports `connected`, so the host's memory is
   measured from Cloud Logging, with no SSH.
+- **Reaper:** for each compute type, once a minute (in the background, so a slow
+  API call can't hold up a signal): delete its stopped VMs and any past
+  `MAX_RUN_DURATION_SEC` plus 5 minutes, and remove the `work-order` key from VMs
+  whose guest has marked it read. The deploy's smoke VMs are left to the deploy.
+  Logged as `supervisor: reaper`.
 - **Deploys:** a push to `main` that touches `hooks/gcp/**`, `images/cloud/orchestrator/**`
   or `infra/gcp/*.env` rebuilds it and restarts it on the host. Sessions in flight are
   unaffected: they belong to runners, not to the orchestrator.
@@ -737,26 +752,53 @@ Tart issue reports VMs failing to start on a headless `mac2.metal`.
 Cloud Run gives a container no KVM, so `android` runs as a Compute Engine VM per
 session, the cloud version of the Linux host's LXD VMs. The same path is the GPU
 fallback if Cloud Run can't render, and the answer for any type that needs Docker in
-the session or a full GPU desktop.
+the session or a full GPU desktop. Built in m2
+([handoffs/plan-gcp-android-kestrel.md](handoffs/plan-gcp-android-kestrel.md)); not yet
+deployed.
 
-- **Image:** Packer's `googlecompute` builder, run from GitHub Actions (the build VM
-  runs in GCP, so nothing is pulled out), provisioned by the same scripts as the LXD
-  image (`images/android/scripts`, `images/shared`): Android SDK, emulator, a booted
-  and snapshotted AVD. Published to the image family `agent-android`; the `-next`
-  pattern becomes "build, boot a test VM from it, then add it to the family", and
-  older images in the family are deleted, keeping one.
-- **Machine:** an Intel series with nested virtualization on (`n2-standard-8` to
-  start; the emulator needs KVM inside the VM), no external IP, egress through Cloud
-  NAT, the `agent-runner` service account, `--max-run-duration` as a backstop. Set
-  in `infra/gcp/android.env`, like every type.
-- **Hook:** the same contract as the Cloud Run hook. After the order marker, it
-  creates `agent-android-<order id prefix>` from the family's latest image through
-  the Compute Engine REST API, with the work order in instance metadata. The guest
-  reads it once, deletes the key, and runs `agent-runner` with `EPHEMERAL=true`, as
-  the LXD VMs do: one session, then power off.
+- **Image:** Packer's `googlecompute` builder (`images/android/gce`), run by the
+  deploy on `main`: a build VM with nested virtualization, no external IP (Packer
+  reaches it through IAP, tag `packer`) and no service account. `provision.sh`
+  creates the `ubuntu` user (Ubuntu's Compute Engine image has none) and runs the
+  LXD image's own provisioners (`images/android/scripts`, from the same staged
+  layout), which boot the emulator once for its quickboot snapshot; then it adds the
+  guest pieces in `gce/files`, and fails the build on any provisioner stderr. The
+  image lands in family `agent-android-next`; `deploy.sh vm-promote` boots a smoke VM
+  from it and only then moves it to `agent-android` (`images.patch` takes `family`),
+  deleting the type's older images, keeping one.
+- **Smoke VM:** metadata `agent-smoke=true` and no service account. The guest runs
+  `agent-gce-smoke` (Claude, sudo, `kvm-ok`, Java, adb, scratch, and the emulator
+  booted twice from its snapshot: once from a disk Compute Engine is still restoring
+  from the image, which reads lazily, and once warm), reports through guest
+  attributes, and powers off. The deploy prints the log and puts the boot times in
+  the run's summary, so every image build measures the emulator.
+- **Machine:** from `infra/gcp/android.env`: `n2-standard-8` (nested virtualization
+  needs an Intel series or AMD `n4d`), a 100 GB `pd-balanced` boot disk, no external
+  IP (egress through Cloud NAT), the `agent-runner` service account, and
+  `maxRunDuration` 9 h 30 min with `instanceTerminationAction` `DELETE` as the
+  backstop. `automaticRestart` is off: a VM that dies stays dead and is reaped.
+- **Hook:** after the order marker, `agent-android-<order id>` (the whole id, so two
+  orders never share a name) from the family's latest image, with metadata
+  `work-order`, `runner-env` (label, base dir, retire time, the runner limits) and
+  guest attributes on.
+- **Guest:** `agent-gce-order.service` runs once at boot as root: it writes the work
+  order to `~ubuntu/.claude-runner/environment-secret` (600), writes `runner.env`
+  from `runner-env` (plain `KEY=value` lines only) with `EPHEMERAL=true`, which
+  starts `agent-runner` as on the LXD VMs: one session, then power off. It marks the
+  order read in a guest attribute rather than deleting the metadata key: deleting it
+  would need `compute.instances.setMetadata` on `agent-runner`, and granted
+  project-wide that would let one session rewrite another session VM's
+  `startup-script`. The key is spent at registration anyway, as the Cloud Run
+  override is. Any failure, or no order, powers the VM off. `agent-debug=true`
+  leaves a VM started by hand alone.
 - **Cleanup:** the VM doesn't delete itself (that would mean a delete permission
-  inside the session). A reaper in the orchestrator container deletes stopped
-  `agent-android-*` instances every minute, plus any past `--max-run-duration`.
+  inside the session). The reaper in the orchestrator container does
+  ([above](#the-orchestrator-container)).
+- **Logs:** the guest's journal goes to the serial console (`ForwardToConsole`), and
+  the VM sets `serial-port-logging-enable`, so it reaches Cloud Logging after the VM
+  is gone, unless the org policy `compute.disableSerialPortLogging` is enforced.
+- **Storage:** `$AGENT_SCRATCH` is `/scratch` on the boot disk. `$AGENT_OUTPUTS` and
+  `$AGENT_DATASETS` aren't mounted on the VMs yet (open item).
 - **Warm starts:** none at first (`--min-idle 0`); a managed instance group standby
   pool of suspended VMs later if cold starts hurt.
 
@@ -812,7 +854,9 @@ deploys found:
 - `android`: the Compute Engine path above: Packer image, the hook's Compute Engine
   branch, the reaper (Cloud NAT is already there). Done when
   [tests/sessions/android.md](../tests/sessions/android.md) passes, with the emulator
-  boot time compared against the Linux host's.
+  boot time compared against the Linux host's. Plan:
+  [handoffs/plan-gcp-android-kestrel.md](handoffs/plan-gcp-android-kestrel.md); built,
+  waiting for its first deploy.
 
 #### m2 `gis` results
 
@@ -855,7 +899,9 @@ any time after m1.
 | Graphics libraries on Cloud Run GPUs | Decides whether a virtual head runs on Cloud Run |
 | Cold start of a multi-GB GPU image | Sets `--expected-spawn-seconds` and whether a standby is worth paying for |
 | Cloud Run GPU quota grant | New projects get a default grant; may need a request for RTX PRO 6000 |
-| Emulator speed under nested virtualization on Compute Engine | Decides whether `android` stays on GCP or on the Linux host; m2 measures it |
+| Emulator speed under nested virtualization on Compute Engine | Decides whether `android` stays on GCP or on the Linux host; every image build's smoke VM measures it, then m2's session test |
+| Outputs and datasets on the `android` VMs | gcsfuse mounts like the Cloud Run types'; left out of m2, since its test doesn't use them |
+| Serial port logging for the `android` VMs | Their journal reaches Cloud Logging only if `compute.disableSerialPortLogging` isn't enforced; m2's first deploy shows which |
 | Data | Keep data-heavy work next to wherever its data is: cross-cloud egress is about $0.08 to $0.12 per GB |
 
 ## References

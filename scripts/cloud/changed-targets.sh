@@ -4,10 +4,14 @@
 #   changed-targets.sh <base> <head>    the targets the diff touches
 #   changed-targets.sh --all            every target
 #
-# Prints {"types": [{"type": "linux", "build": true}, ...], "orchestrator": bool,
-# "prune": bool}. build is false when only the type's env file changed: the
-# deploy rewrites the job and reuses the live image. prune is true when a type's
-# env file was deleted, so its jobs go too. A base that isn't a commit here (none yet, or
+# Prints {"types": [{"type": "linux", "build": true}, ...], "vms": [{"type":
+# "android"}, ...], "orchestrator": bool, "prune": bool}. types are the Cloud
+# Run types (BACKEND=run, the default): build is false when only the type's env
+# file changed, so the deploy rewrites the job and reuses the live image. vms
+# are the Compute Engine types (BACKEND=compute) whose image needs a Packer
+# build; their env file alone rebuilds nothing, since the hook reads it from
+# the orchestrator image. prune is true when a type's env file was deleted, so
+# its jobs and images go too. A base that isn't a commit here (none yet, or
 # gone after a force push) means everything. Run from the repo root.
 set -euo pipefail
 
@@ -80,8 +84,39 @@ readonly every_type=(
 	"images/cloud/docker-bake.hcl" ".dockerignore" "infra/gcp/project.env"
 )
 
+# backend_of <type>: run (a Cloud Run job, the default) or compute (a VM).
+backend_of() {
+	local backend
+	backend="$(sed -n -E 's/^BACKEND=([a-z]+).*/\1/p' "infra/gcp/$1.env" | tail -n 1)"
+	printf '%s' "${backend:-run}"
+}
+
+# vm_image_paths <type>: a Compute Engine type's image is built by Packer from
+# images/<type> (images/<type>/gce), with the toolsets in its toolsets.txt.
+vm_image_paths() {
+	local toolset
+	printf 'images/%s/*\n' "$1"
+	while read -r toolset; do
+		printf 'images/toolsets/%s/*\n' "$toolset"
+	done < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "images/$1/toolsets.txt" 2>/dev/null)
+}
+
+# What every Compute Engine image is built from, besides its own paths.
+readonly every_vm=(
+	"images/shared/*" "images/toolsets/install-toolset.sh" "images/toolsets/write-claude-md.sh"
+	"infra/gcp/project.env"
+)
+
 entries=()
+vms=()
 for type in "${types[@]}"; do
+	if [[ "$(backend_of "$type")" == compute ]]; then
+		mapfile -t own < <(vm_image_paths "$type")
+		if $all || touched "${every_vm[@]}" "${own[@]}"; then
+			vms+=("$(jq -cn --arg type "$type" '{type: $type}')")
+		fi
+		continue
+	fi
 	mapfile -t own < <(image_paths "$type")
 	if $all || touched "${every_type[@]}" "${own[@]}"; then
 		entries+=("$(jq -cn --arg type "$type" '{type: $type, build: true}')")
@@ -101,5 +136,6 @@ if $all || ((${#deleted[@]} > 0)); then
 	prune=true
 fi
 
-printf '%s\n' "${entries[@]}" | jq -cs --argjson orchestrator "$orchestrator" --argjson prune "$prune" \
-	'{types: map(select(. != null)), orchestrator: $orchestrator, prune: $prune}'
+vms_json="$(printf '%s\n' "${vms[@]}" | jq -cs 'map(select(. != null))')"
+printf '%s\n' "${entries[@]}" | jq -cs --argjson vms "$vms_json" --argjson orchestrator "$orchestrator" \
+	--argjson prune "$prune" '{types: map(select(. != null)), vms: $vms, orchestrator: $orchestrator, prune: $prune}'

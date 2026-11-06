@@ -23,7 +23,8 @@ Design, constraints, and open items are in [specs/design.md](specs/design.md). M
 targets are documented in [Makefile.md](Makefile.md).
 
 A third backend, Google Cloud (Cloud Run jobs per session, GPU types, Android on a
-Compute Engine VM), is being built, `linux` first (m1): [specs/gcp.md](specs/gcp.md),
+Compute Engine VM), is being built: `linux` runs (m1), `gis` and `android` are m2.
+See [specs/gcp.md](specs/gcp.md),
 with the infrastructure it runs on in [specs/gcp-infrastructure.md](specs/gcp-infrastructure.md)
 a test session per runner type in [tests/sessions](tests/sessions/README.md), and
 how each type picks its tools in [specs/image-toolsets.md](specs/image-toolsets.md). It

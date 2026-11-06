@@ -164,5 +164,134 @@ class DeployTests(unittest.TestCase):
         self.assertEqual(self.gcp.requests("PATCH", "/jobs/")[2:], [], "status writes nothing")
 
 
+FAKE_PACKER = """
+printf '%s\\n' "$*" >>"$FAKE_OUT/packer.log"
+exit "${FAKE_PACKER_STATUS:-0}"
+"""
+
+ANDROID_IMAGE = "agent-android-20261106-abc123def456"
+SMOKE = "agent-android-smoke-abc123def456"
+ZONE_PATH = "/compute/v1/projects/lolay-agents/zones/us-central1-a"
+
+
+def image(name, family, created="2026-11-06T10:00:00.000-08:00", type_="android"):
+    return {
+        "name": name,
+        "family": family,
+        "creationTimestamp": created,
+        "labels": {"managed-by": "agent-images", "agent-images-type": type_, "agent-images-sha": "abc123def456"},
+    }
+
+
+class VmDeployTests(DeployTests):
+    def setUp(self):
+        super().setUp()
+        write_executable(self.tmp / "bin/packer", FAKE_PACKER)
+        self.gcp.state.images[ANDROID_IMAGE] = image(ANDROID_IMAGE, "agent-android-next")
+        self.gcp.state.images["agent-android-older"] = image("agent-android-older", "agent-android")
+        self.gcp.state.images["agent-android-failed"] = image("agent-android-failed", "agent-android-next")
+
+    def deploy(self, *args, **env):
+        return super().deploy(*args, **{"GCP_POLL_SEC": "0", "VM_SMOKE_POLL_SEC": "0.1", **env})
+
+    def smoke_reports(self, result="pass"):
+        self.gcp.state.instance_guest_attributes[SMOKE] = {
+            "agent-images/emulator-boot-sec-cold": "41.2\n",
+            "agent-images/emulator-boot-sec-warm": "9.8\n",
+            "agent-images/smoke-log": "ok    claude: 2.1.400\nok    kvm: KVM acceleration can be used\n",
+            "agent-images/smoke": f"{result}\n",
+        }
+
+    def test_vm_build_runs_packer_with_the_type_settings(self):
+        result = self.deploy("vm-build", "android", ANDROID_IMAGE, "abc123def456")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        init, build = (self.out / "packer.log").read_text().splitlines()
+        self.assertEqual(init, f"init {REPO}/images/android/gce")
+        for expected in (
+            "build -force -color=false",
+            "-var project_id=lolay-agents",
+            "-var zone=us-central1-a",
+            "-var subnetwork=projects/lolay-agents/regions/us-central1/subnetworks/agents-us-central1",
+            f"-var image_name={ANDROID_IMAGE}",
+            "-var image_family=agent-android-next",
+            "-var commit=abc123def456",
+            "-var machine_type=n2-standard-8",
+            "-var disk_size_gb=100",
+        ):
+            self.assertIn(expected, build)
+        self.assertTrue(build.endswith(f"{REPO}/images/android/gce"))
+
+    def test_vm_build_fails_with_packer(self):
+        result = self.deploy("vm-build", "android", ANDROID_IMAGE, "abc", FAKE_PACKER_STATUS="1")
+        self.assertEqual(result.returncode, 1)
+
+    def test_vm_commands_refuse_a_cloud_run_type(self):
+        for command in ("vm-build", "vm-promote"):
+            result = self.deploy(command, "linux", ANDROID_IMAGE, "abc")
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("isn't a Compute Engine type", result.stderr)
+
+    def test_type_refuses_a_compute_type(self):
+        result = self.deploy("type", "android", IMAGE, "abc")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("deploys with vm-build and vm-promote", result.stderr)
+
+    def test_vm_promote_smokes_then_moves_the_family_and_keeps_one(self):
+        self.smoke_reports("pass")
+        summary = self.tmp / "summary.md"
+        result = self.deploy("vm-promote", "android", ANDROID_IMAGE, "abc123def456789",
+                             GITHUB_STEP_SUMMARY=str(summary))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        insert = self.gcp.requests("POST", f"{ZONE_PATH}/instances")[0].json()
+        self.assertEqual(insert["name"], SMOKE)
+        self.assertEqual(insert["serviceAccounts"], [], "the smoke VM gets no GCP access")
+        self.assertEqual(insert["disks"][0]["initializeParams"]["sourceImage"],
+                         f"projects/lolay-agents/global/images/{ANDROID_IMAGE}")
+        self.assertEqual(insert["advancedMachineFeatures"], {"enableNestedVirtualization": True})
+        metadata = {item["key"]: item["value"] for item in insert["metadata"]["items"]}
+        self.assertEqual(metadata["agent-smoke"], "true")
+        self.assertNotIn("work-order", metadata)
+        self.assertNotIn(SMOKE, self.gcp.state.instances, "deleted afterwards")
+        self.assertEqual(list(self.gcp.state.images), [ANDROID_IMAGE], "keep one")
+        self.assertEqual(self.gcp.state.images[ANDROID_IMAGE]["family"], "agent-android")
+        self.assertIn("  ok    kvm: KVM acceleration can be used", result.stdout)
+        self.assertIn("| emulator-boot-sec-cold | 41.2 |", summary.read_text())
+
+    def test_a_failed_smoke_leaves_the_family_alone(self):
+        self.smoke_reports("fail")
+        result = self.deploy("vm-promote", "android", ANDROID_IMAGE, "abc123def456789")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("agent-android keeps its image", result.stderr)
+        self.assertEqual(self.gcp.state.images[ANDROID_IMAGE]["family"], "agent-android-next")
+        self.assertIn("agent-android-older", self.gcp.state.images)
+        self.assertNotIn(SMOKE, self.gcp.state.instances, "deleted even so")
+
+    def test_no_smoke_result_times_out(self):
+        result = self.deploy("vm-promote", "android", ANDROID_IMAGE, "abc123def456789", VM_SMOKE_TIMEOUT_SEC="1")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no smoke result", result.stderr)
+        self.assertEqual(self.gcp.state.images[ANDROID_IMAGE]["family"], "agent-android-next")
+        self.assertNotIn(SMOKE, self.gcp.state.instances)
+
+    def test_a_leftover_smoke_vm_is_replaced(self):
+        self.gcp.state.instances[SMOKE] = {"name": SMOKE, "metadata": {}}
+        self.smoke_reports("pass")
+        result = self.deploy("vm-promote", "android", ANDROID_IMAGE, "abc123def456789")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.gcp.requests("DELETE", f"/instances/{SMOKE}")), 2)
+
+    def test_prune_deletes_images_whose_type_is_gone(self):
+        self.gcp.state.images["agent-retired-1"] = image("agent-retired-1", "agent-retired", type_="retired")
+        result = self.deploy("prune")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("agent-retired-1", self.gcp.state.images)
+        self.assertIn("agent-android-older", self.gcp.state.images)
+
+    def test_status_shows_the_familys_image(self):
+        result = self.deploy("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("agent-android-older (family agent-android)  commit abc123def456", result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
