@@ -147,10 +147,38 @@ Two things differ from agent-linux, both forced by Anthropic's image:
   rest name `/root/.ccr/ca-bundle.crt`, which `ubuntu` can't read (curl exits 77).
   The system store has the proxy's CA already, so Homebrew works without them.
 
-Measured in this session (as the image's `claude` user, without the sudoers and
-profile changes, which this session wasn't allowed to make): see the table below.
+Measured 2026-11-06 in a `cloud_default` session, running the same toolsets the
+same way as the image's `claude` user (which has passwordless sudo already); the
+sudoers, wrapper and profile steps weren't run, since the session's permission mode
+blocked them. Every toolset installed, nothing failed TLS through the proxy, and
+Homebrew ended at 1.7 GB:
 
-<!-- timing -->
+| Toolset | Seconds | What took the time |
+| --- | --- | --- |
+| core | 79.5 | Homebrew's own install, then its formulae |
+| native | 5.1 | Nearly all already on Anthropic's image |
+| jvm | 3.0 | Already there |
+| browser | 3.2 | Already there |
+| node | 51.8 | Homebrew's node |
+| python | 15.2 | |
+| go | 14.8 | |
+| rust | 49.8 | rustup's stable toolchain |
+| proto | 16.6 | |
+| terraform | 15.8 | |
+| **Total** | **254.9** | |
+
+What it got, all newer than Anthropic's own: Go 1.27.3 (against 1.24.7), Node 26.13
+(22.23), Python 3.15.2 (3.13.18), Cargo 1.99.1 (1.97), plus sops 3.13.3, actionlint
+1.7.12, shellcheck, nowline 0.12.1, protoc 36.2, buf 1.75, Terraform 1.17.1 and
+tflint 0.65.
+
+So the setup script adds about four and a quarter minutes to every session start,
+on top of Anthropic's own spawn, since the setup script runs per session. agent-linux's
+cold start on Cloud Run is about 55 s, the toolsets being in the image. Most of the
+four minutes is `core`, `node` and `rust`; a script that skipped what Anthropic's
+image already has (keeping Anthropic's Node, Rust and Go) would cut it to about
+two, but then the versions aren't agent-linux's. The prompt below measures the
+whole start, setup script included, from the click.
 
 ### The report prompt
 
