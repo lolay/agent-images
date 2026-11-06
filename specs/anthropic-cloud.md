@@ -246,9 +246,26 @@ version. The Bash tool's shell had Anthropic's PATH: eight smoke checks failed
 there (sops, actionlint, shellcheck, pre-commit, protoc, buf, grpcurl,
 terraform), Rust was root's 1.97, and Terraform failed as root. Both fixes were
 checked here by hand (root running the user's toolchains gets Rust 1.99.1 and
-Terraform 1.17.1); the hook is untested in a session until the cache rebuilds.
+Terraform 1.17.1).
 `java -version` passes its smoke check on Anthropic's image but prints the
 `JAVA_TOOL_OPTIONS` notice first, so the reported version line is that notice.
+
+The report from a fresh environment with the hook, 2026-11-06: the script ran in
+211.4 s (core 66.9, native 4.6, jvm 2.5, browser 2.4, display 5.3, node 41.4,
+python 11.4, go 18.3, rust 34.4, proto 12.3, terraform 11.7) and ended 36 ms
+before that session's `CCR_SPAWN_TIMESTAMP_MS`, so the hook applies in the
+session that runs the script, not only in cached ones. In the Bash tool's shell,
+PATH starts with `/opt/agent-images/bin` and Homebrew's directories,
+`RUSTUP_HOME`, `TENV_ROOT` and `DISPLAY=:99` are set, every tool but tflint
+(`/usr/local/bin`, from the terraform toolset) resolves to Homebrew's copy at
+`agent-linux`'s version, all 32 smoke checks pass, Xvfb runs at `:99`, and
+`brew install hello` took 5.5 s. `/home/linuxbrew` itself is root's, as
+Homebrew's installer leaves it; the prefix under it is `ubuntu`'s.
+
+Hooks don't get this PATH. A SessionStart hook runs with Claude Code's own
+environment, and `CLAUDE_ENV_FILE` applies only to Bash tool commands, so a hook
+that runs a repo's `make doctor` (the personal plugin's) sees Anthropic's PATH:
+in that session it reported `triage` missing, while the Bash tool found it.
 
 Measured 2026-11-06 in a `cloud_default` session, running the same toolsets the
 same way as the image's `claude` user (which has passwordless sudo already). The
