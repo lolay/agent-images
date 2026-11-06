@@ -13,7 +13,13 @@ from `main` at `154787f`. Plan: [plan-gpu-types-ember.md](plan-gpu-types-ember.m
 ## Pending
 
 Layout decided (owner): one base Dockerfile with `BASE_IMAGE`, `linux-gpu` reusing
-`linux`'s Dockerfile, and a `gpu` toolset on top of each GPU type. s2 is next.
+`linux`'s Dockerfile, and a `gpu` toolset on top of each GPU type.
+
+s2 in progress: the files are committed; the local build of `linux-gpu-tools`
+(`docker buildx bake -f images/cloud/docker-bake.hcl linux-gpu-tools`) was running
+and hasn't been checked. On resume, rerun it, then check in the image: the `ubuntu`
+user, `nvcc`, `agent-cuda-probe` (`cuobjdump --list-elf` shows sm_89 and sm_120),
+`vglrun`, `eglinfo`, `vulkaninfo`, and the two vendor JSON files.
 The owner acts on [infra-ask-m3-gpu.md](infra-ask-m3-gpu.md).
 
 The owner chose to skip the review gate: the full review of `main` covering m1 and

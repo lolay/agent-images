@@ -1,7 +1,8 @@
 # Plan: m3, the GPU types on GCP
 
 Status: s1 done 2026-11-06 ([infra-ask-m3-gpu.md](infra-ask-m3-gpu.md)). Layout
-decided (owner, 2026-11-06); s2 next.
+decided (owner, 2026-11-06). s2 in progress: files committed (`59231b3`), the
+local `linux-gpu-tools` build not yet verified.
 Branch `claude/vigilant-tesla-m2ipbw` (assigned by the harness), from `main` at
 `154787f`.
 
