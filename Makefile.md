@@ -193,16 +193,17 @@ or deploys: only a push to `main` does, through `.github/workflows/cloud-deploy.
 | Target | What it does |
 | --- | --- |
 | `cloud-build` | `docker buildx bake -f images/cloud/docker-bake.hcl --load <TYPE>`: `agent-<TYPE>:local`. `TYPE=linux` (default), any type, `orchestrator`, or `all` (`cloud-targets`). `agent-base` comes along as `linux`'s build context and isn't loaded on its own |
-| `cloud-smoke` | Runs `agent-<TYPE>:local smoke` (the entrypoint's checks, what the deploy runs on `agent-<type>-next`) with anonymous volumes standing in for scratch, outputs and the read-only datasets |
+| `cloud-smoke` | Runs `agent-<TYPE>:local smoke $(SMOKE)` (the entrypoint's checks: Claude, every toolset's binary checks and smoke tests, the mounts; what the deploy runs on `agent-<type>-next`) with anonymous volumes standing in for scratch, outputs and the read-only datasets. What the pull request check runs on each loaded runner type |
 | `cloud-lint` | `shellcheck` and `shfmt -d` on the cloud scripts (the android VM's guest scripts included), the cloud settings JSON, and `packer fmt -check` and `packer validate` on the android Compute Engine image's template (`images/android/gce`) |
-| `cloud-test` | `python3 -m unittest discover -s tests/unit`: the entrypoint, SessionStart hook, spawn hook (both backends), supervisor and its reaper, the android VM's order script, job spec, path map and deploy script, against fakes (`tests/unit/fake_gcp.py` for the GCP APIs and the metadata server), and that the bake file has every type's targets (needs `docker buildx`). Linux only |
-| `cloud-ci` | `cloud-lint`, `cloud-test`, then a build of every cloud image with no output: what the pull request check (`cloud-build.yml`) runs, there split across runners |
+| `cloud-test` | `python3 -m unittest discover -s tests/unit`: the entrypoint, the toolset checks runner, SessionStart hook, spawn hook (both backends), supervisor and its reaper, the android VM's order script, job spec, path map and deploy script, against fakes (`tests/unit/fake_gcp.py` for the GCP APIs and the metadata server), and that the bake file has every type's targets (needs `docker buildx`). Linux only |
+| `cloud-ci` | `cloud-lint`, `cloud-test`, then a build of every cloud image with no output. The pull request check (`cloud-build.yml`) runs the same, split across runners, and also loads each runner type and runs `cloud-smoke` on it |
 | `cloud-targets` | Prints every Cloud Run type (the `BACKEND=run` files in `infra/gcp`, from `changed-targets.sh --all`) and `orchestrator`, one a line: what `cloud-build TYPE=all` and `cloud-ci` build, and the pull request check's build matrix |
 | `cloud-status` | `scripts/cloud/deploy.sh status`, with your gcloud login: each job's image, deployed commit and last execution, and the orchestrator VM's `orchestrator-image` |
 
 | Variable | Default | Used by |
 | --- | --- | --- |
 | `TYPE` | `linux` | `cloud-build`, `cloud-smoke` |
+| `SMOKE` | `pr` | `cloud-smoke`: `pr` skips the smoke tests marked `# smoke: live` (they need a GPU); empty runs them all, as the deploy does |
 | `CLAUDE_VERSION` | `latest` | `cloud-build`, `cloud-ci`: an exact version (the deploy resolves one per run, so the layer cache can't keep an old one) or a channel |
 
 Where things live:

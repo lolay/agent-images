@@ -310,10 +310,13 @@ cloud-build: ## Build a cloud image locally as agent-<TYPE>:local: TYPE=linux|or
 	CLAUDE_VERSION=$(CLAUDE_VERSION) $(CLOUD_BAKE) --load $(if $(filter all,$(TYPE)),$(CLOUD_TARGETS),$(TYPE))
 
 # Anonymous volumes stand in for the job's mounts (a disk for scratch, writable
-# outputs, read-only datasets); --rm removes them.
-cloud-smoke: ## Run a built image's smoke checks against stand-in volumes: TYPE=linux
+# outputs, read-only datasets); --rm removes them. SMOKE=pr (the default, what the
+# pull request check runs) skips the smoke tests that need what a plain host
+# lacks, a GPU; SMOKE= runs them all, as the deploy does.
+SMOKE ?= pr
+cloud-smoke: ## Run a built image's binary checks and smoke tests against stand-in volumes: TYPE=linux [SMOKE=pr]
 	docker run --rm -v /scratch -v /mnt/outputs \
-	  --mount type=volume,target=/mnt/datasets,readonly agent-$(TYPE):local smoke
+	  --mount type=volume,target=/mnt/datasets,readonly agent-$(TYPE):local smoke $(SMOKE)
 
 cloud-lint: ## Lint the cloud scripts and settings, and validate the android Packer template (no writes)
 	shellcheck -x $(CLOUD_SCRIPTS)

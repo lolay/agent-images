@@ -61,21 +61,24 @@ jobs:
           echo "$targets"
           echo "targets=$targets" >>"$GITHUB_OUTPUT"
 
-  # One image per runner: together they don't fit on one. A build with no
-  # output is the check; nothing is loaded or pushed.
+  # One image per runner: together they don't fit on one. Each runner type is
+  # loaded and smoked as the deploy smokes agent-<type>-next (specs/gcp.md, m4):
+  # its binary checks and smoke tests, against local volumes for the mounts, with
+  # `smoke pr` skipping the smoke tests a hosted runner can't run (a GPU's). The
+  # orchestrator isn't a runner type: a build with no output is its check.
   build:
     needs: plan
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         target: ${{ fromJSON(needs.plan.outputs.targets) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Hosted runners leave about 14 GB free, and agent-gis alone is 9 GB. The
-      # preinstalled toolchains these jobs never use (.NET, Android, GHC,
-      # CodeQL) are about 30 GB more.
+      # Hosted runners leave about 44 GB free after this, and agent-gis alone is
+      # 9 GB. The preinstalled toolchains these jobs never use (.NET, Android,
+      # GHC, CodeQL) are about 30 GB of it.
       - name: Free disk
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
@@ -85,5 +88,15 @@ jobs:
         env:
           TARGET: ${{ matrix.target }}
         run: |
+          set -euo pipefail
+          load=(--load)
+          [[ "$TARGET" != orchestrator ]] || load=()
           CLAUDE_VERSION="$(curl -fsSL https://downloads.claude.ai/claude-code-releases/latest)" \
-            docker buildx bake -f images/cloud/docker-bake.hcl "$TARGET"
+            docker buildx bake -f images/cloud/docker-bake.hcl "${load[@]}" "$TARGET"
+          df -h /
+          docker system df
+      - name: Smoke ${{ matrix.target }}
+        if: matrix.target != 'orchestrator'
+        env:
+          TARGET: ${{ matrix.target }}
+        run: make cloud-smoke TYPE="$TARGET"
