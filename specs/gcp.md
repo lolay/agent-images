@@ -455,7 +455,9 @@ Off the shelf instead: Renovate (as a GitHub Action) handles the base digest, Gi
 releases and a custom source for Claude, with a pull request per change. It doesn't
 resolve an apt dependency closure or Homebrew on Linux, and a pull request per bump
 is a lot of churn for "track latest". One small resolver script and one lock commit
-fit better. Dependabot still suits the pinned GitHub Actions versions.
+fit better. Renovate does handle the GitHub Actions, which are pinned by SHA
+([design.md](design.md), the CI gate), and only those (`enabledManagers` in
+`.github/renovate.json`).
 
 ## Pinning a dependency
 

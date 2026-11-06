@@ -1,0 +1,26 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "GitHub Actions only, pinned to commit SHAs (specs/design.md, the CI gate). Image contents track latest through the lock and m4's watch, not Renovate (specs/gcp.md).",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "enabledManagers": ["github-actions"],
+  "timezone": "America/Los_Angeles",
+  "schedule": ["* 0-5 * * 1"],
+  "minimumReleaseAge": "7 days",
+  "dependencyDashboard": false,
+  "packageRules": [
+    {
+      "description": "One weekly PR for minor, patch and digest bumps, merged without review once ci and cloud-build pass.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
+      "groupName": "GitHub Actions",
+      "automerge": true
+    },
+    {
+      "description": "Majors change inputs, and no PR check runs auth or setup-gcloud, so a broken major would surface first in a production deploy. Held for review.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "GitHub Actions (major)",
+      "automerge": false
+    }
+  ]
+}
