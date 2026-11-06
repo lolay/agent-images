@@ -36,6 +36,14 @@ class State:
     jobs: dict = field(default_factory=dict)  # full job name -> Job body
     attributes: dict = field(default_factory=dict)  # instance metadata key -> value
     guest_attributes: dict = field(default_factory=dict)  # "namespace/key" -> value
+    instances: dict = field(default_factory=dict)  # Compute Engine instance name -> body
+    instance_guest_attributes: dict = field(default_factory=dict)  # name -> {"ns/key": value}
+    images: dict = field(default_factory=dict)  # Compute Engine image name -> body
+    # Compute Engine operations: name -> body. An operation listed in
+    # operation_errors finishes with that error code; pending ones stay RUNNING.
+    compute_operations: dict = field(default_factory=dict)
+    operation_errors: dict = field(default_factory=dict)  # resource name -> error code
+    pending_operations: bool = False
     operations: int = 0
     requests: list = field(default_factory=list)
     failures: dict = field(default_factory=dict)  # (method, path suffix) -> (status, body)
@@ -100,6 +108,7 @@ class FakeGcp:
             "GCP_STORAGE_URL": self.url,
             "GCP_RUN_URL": self.url,
             "GCP_SECRETS_URL": self.url,
+            "GCP_COMPUTE_URL": self.url,
             "GCP_CURL_MAX_TIME": "5",
         }
 
@@ -148,6 +157,9 @@ def route(state: State, request: Request):
             return 404, {"error": {"message": "no such object"}}
         return 204, None
 
+    if path.startswith("/compute/v1/"):
+        return route_compute(state, request)
+
     if "/jobs" in path and path.startswith("/v2/") and not path.endswith(":run"):
         return route_jobs(state, request)
 
@@ -186,6 +198,99 @@ def route_metadata(state: State, request: Request):
         state.guest_attributes[rest.removeprefix("guest-attributes/")] = request.body.decode()
         return 200, None
     return 404, None
+
+
+def route_compute(state: State, request: Request):
+    """Compute Engine v1: instances, their metadata and guest attributes, images, operations."""
+    path = request.path.removeprefix("/compute/v1/")
+    segments = path.split("/")
+    # projects/<p>/zones/<z>/... or projects/<p>/global/...
+    scope = "/".join(segments[:4]) if segments[2] == "zones" else "/".join(segments[:3])
+    rest = segments[4:] if segments[2] == "zones" else segments[3:]
+
+    def operation(target: str, kind: str):
+        state.operations += 1
+        name = f"operation-{state.operations}"
+        body = {"name": name, "operationType": kind, "targetLink": target, "status": "DONE"}
+        if state.pending_operations:
+            body["status"] = "RUNNING"
+        elif target in state.operation_errors:
+            code = state.operation_errors[target]
+            body["error"] = {"errors": [{"code": code, "message": f"fake {code}"}]}
+        state.compute_operations[name] = body
+        return 200, body
+
+    if rest[:1] == ["operations"] and request.method == "GET":
+        body = state.compute_operations.get(rest[1])
+        return (200, body) if body else (404, {"error": {"message": "no such operation"}})
+
+    if rest[:1] == ["instances"]:
+        if len(rest) == 1 and request.method == "POST":
+            body = request.json()
+            name = body["name"]
+            if name in state.instances:
+                return 409, {"error": {"code": 409, "message": f"{name} already exists",
+                                       "errors": [{"reason": "alreadyExists"}]}}
+            if name not in state.operation_errors:
+                state.instances[name] = {
+                    **body,
+                    "status": "RUNNING",
+                    "creationTimestamp": "2026-11-06T10:00:00.000-08:00",
+                    "metadata": {**body.get("metadata", {}), "fingerprint": "fp-1"},
+                }
+            return operation(name, "insert")
+        if len(rest) == 1 and request.method == "GET":
+            wanted = request.query.get("filter", "")
+            items = [i for i in state.instances.values() if all(
+                term.strip("()") in _filter_terms(i) for term in wanted.split(" AND ") if term)]
+            return 200, {"items": items} if items else {}
+        name = rest[1]
+        if name not in state.instances:
+            return 404, {"error": {"message": f"instance {name} not found"}}
+        instance = state.instances[name]
+        if len(rest) == 2 and request.method == "GET":
+            return 200, instance
+        if len(rest) == 2 and request.method == "DELETE":
+            del state.instances[name]
+            return operation(name, "delete")
+        if rest[2:] == ["setMetadata"] and request.method == "POST":
+            body = request.json()
+            if body.get("fingerprint") != instance["metadata"].get("fingerprint"):
+                return 412, {"error": {"message": "fingerprint mismatch"}}
+            instance["metadata"] = {"items": body.get("items", []), "fingerprint": "fp-2"}
+            return operation(name, "setMetadata")
+        if rest[2:] == ["getGuestAttributes"] and request.method == "GET":
+            prefix = request.query.get("queryPath", "")
+            values = state.instance_guest_attributes.get(name, {})
+            items = [{"namespace": k.split("/")[0], "key": k.split("/", 1)[1], "value": v}
+                     for k, v in values.items() if k.startswith(prefix)]
+            if not items:
+                return 404, {"error": {"message": "no guest attributes"}}
+            return 200, {"queryValue": {"items": items}}
+
+    if rest[:1] == ["images"]:
+        if len(rest) == 1 and request.method == "GET":
+            return 200, {"items": list(state.images.values())} if state.images else {}
+        name = rest[1]
+        if name not in state.images:
+            return 404, {"error": {"message": f"image {name} not found"}}
+        if request.method == "PATCH":
+            state.images[name] = {**state.images[name], **request.json()}
+            return operation(name, "patch")
+        if request.method == "DELETE":
+            del state.images[name]
+            return operation(name, "delete")
+        if request.method == "GET":
+            return 200, state.images[name]
+
+    return 404, {"error": {"message": f"no fake for {request.method} {scope} {rest}"}}
+
+
+def _filter_terms(instance: dict) -> set:
+    """The filter terms an instance matches, for the fake list call: labels.k=v and status=S."""
+    terms = {f"labels.{key}={value}" for key, value in instance.get("labels", {}).items()}
+    terms.add(f"status={instance.get('status')}")
+    return terms
 
 
 class RawText(str):

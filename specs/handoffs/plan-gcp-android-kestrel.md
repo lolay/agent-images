@@ -1,6 +1,6 @@
 # Plan: m2, `android` on Compute Engine
 
-Status: s1 and s2 done; s2 to s6 approved 2026-11-06 (no GCP spend), s7 waits for a second go.
+Status: s1 to s3 done; s2 to s6 approved 2026-11-06 (no GCP spend), s7 waits for a second go.
 Branch `claude/youthful-dijkstra-09v7kk` (assigned by the harness), cut
 from `main` at `ecc54c2`, after lolay/agent-images#18, #19 and #20.
 
@@ -101,7 +101,7 @@ both families, keeping one.
 - `packer fmt -check` and `packer validate` (with `-syntax-only` where it needs GCP)
   in `make cloud-lint` and the pull request check.
 
-#### s3 - The hook's Compute Engine branch [deep]
+#### s3 - The hook's Compute Engine branch [deep] (done)
 
 - `hooks/gcp/lib.sh`: `GCP_COMPUTE_URL`. `spawn-runner`: branch on `BACKEND`; build
   the instance body with `jq` from the env files (work order from the file on stdin,
