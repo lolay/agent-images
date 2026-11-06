@@ -95,6 +95,41 @@ class JobSpecTests(unittest.TestCase):
             result = render("linux", IMAGE, env_dir=env_dir)
         self.assertEqual(json.loads(result.stdout)["launchStage"], "BETA")
 
+    def custom_job(self, extra):
+        with tempfile.TemporaryDirectory() as tmp:
+            env_dir = Path(tmp)
+            (env_dir / "project.env").write_text((REPO / "infra/gcp/project.env").read_text())
+            lines = [
+                line for line in (REPO / "infra/gcp/linux.env").read_text().splitlines()
+                if not line.startswith(("EXIT_IF_UNUSED_MIN=", "RELEASE_IDLE_SESSION_MIN=",
+                                        "KILL_SESSION_AFTER_MIN=", "RETIRE_MARGIN_SEC="))
+            ]
+            (env_dir / "linux.env").write_text("\n".join(lines + extra) + "\n")
+            return render("linux", IMAGE, env_dir=env_dir)
+
+    def custom_env(self, extra):
+        result = self.custom_job(extra)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        container = json.loads(result.stdout)["template"]["template"]["containers"][0]
+        return {item["name"]: item["value"] for item in container["env"]}
+
+    def test_unset_runner_settings_are_left_to_claude_sh(self):
+        env = self.custom_env([])
+        for name in ("CLAUDE_EXIT_IF_UNUSED_MIN", "CLAUDE_RELEASE_IDLE_SESSION_MIN",
+                     "CLAUDE_KILL_SESSION_AFTER_MIN"):
+            self.assertNotIn(name, env)
+        self.assertEqual(env["AGENT_RETIRE_MARGIN_SEC"], "900")
+
+    def test_empty_runner_settings_pass_through_as_never(self):
+        env = self.custom_env(["KILL_SESSION_AFTER_MIN=", "RETIRE_MARGIN_SEC=600"])
+        self.assertEqual(env["CLAUDE_KILL_SESSION_AFTER_MIN"], "")
+        self.assertEqual(env["AGENT_RETIRE_MARGIN_SEC"], "600")
+
+    def test_refuses_a_margin_not_less_than_the_timeout(self):
+        result = self.custom_job(["RETIRE_MARGIN_SEC=34200"])
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("RETIRE_MARGIN_SEC is not less than TASK_TIMEOUT_SEC", result.stderr)
+
     def gpu_job(self, gpu_type):
         with tempfile.TemporaryDirectory() as tmp:
             env_dir = Path(tmp)

@@ -70,11 +70,13 @@ fi
 # Take the latest Claude Code on every start. A failed upgrade shouldn't block work.
 # The upgrade's chatter (including "already installed") goes to stdout, into the
 # runner's log like everything else; a failure is flagged on stderr. macOS
-# installs Claude as a Homebrew cask, Linux with the native installer.
+# installs Claude as a Homebrew cask, Linux with the native installer. Choose by
+# platform, not by whether brew is on PATH: the Linux images have Homebrew too,
+# and casks are macOS only.
 # The host runner sets CLAUDE_UPGRADE=false: that Claude Code is the host user's.
 if [[ "$CLAUDE_UPGRADE" != "true" ]]; then
 	:
-elif command -v brew >/dev/null 2>&1; then
+elif [[ "$(uname -s)" == "Darwin" ]]; then
 	brew upgrade --cask claude-code@latest 2>&1 || warn "claude upgrade failed; continuing"
 	# Homebrew quarantines what a cask downloads, so Gatekeeper asks "downloaded
 	# from the Internet, are you sure you want to open it?" at the next launch,
