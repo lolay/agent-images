@@ -294,7 +294,10 @@ class ReaperTests(SupervisorCase):
         self.wait_for(
             lambda: "agent-android-done" not in self.instances()
             and "agent-android-overdue" not in self.instances()
-            and self.instances()["agent-android-busy"]["metadata"]["fingerprint"] == "fp-2",
+            and self.instances()["agent-android-busy"]["metadata"]["fingerprint"] == "fp-2"
+            # The supervisor logs the removal after the fake API answers, so the
+            # state can change before the line is read.
+            and any("removed the spent work order from agent-android-busy" in line for line in self.lines),
             what="a reaper pass",
         )
         busy_keys = [item["key"] for item in self.instances()["agent-android-busy"]["metadata"]["items"]]
