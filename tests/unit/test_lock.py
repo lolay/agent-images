@@ -56,7 +56,13 @@ if args[:3] == ["-fsSL", "--retry", "3"] and len(args) == 4:
     if url not in urls:
         sys.exit("curl: (22) The requested URL returned error: 404")
     log("get " + url)
-    sys.stdout.write(urls[url])
+    # Like curl: a reader that closes the pipe early fails the transfer (23).
+    try:
+        sys.stdout.write(urls[url])
+        sys.stdout.flush()
+    except BrokenPipeError:
+        sys.stderr.write("curl: (23) Failure writing output to destination\n")
+        os._exit(23)
     sys.exit(0)
 if args[:7] == ["-fsSLI", "--retry", "3", "-o", "/dev/null", "-w", "%{url_effective}"] and len(args) == 8:
     url = args[7]
@@ -106,7 +112,10 @@ if args[:3] == ["info", "--json=v2", "--formula"] and len(args) > 3:
 sys.exit("Error: Unknown command: brew " + " ".join(args))
 '''
 
-RUST_MANIFEST = '[pkg.cargo]\nversion = "0.100.0 (abc 2026-10-01)"\n\n[pkg.rust]\nversion = "1.99.1 (58cf8f9c3 2026-10-13)"\n'
+# Real channel manifests run to megabytes past the version line, which is what
+# exposed a reader that stops early (the fake curl then fails, as curl does).
+RUST_MANIFEST = ('[pkg.cargo]\nversion = "0.100.0 (abc 2026-10-01)"\n\n[pkg.rust]\nversion = "1.99.1 (58cf8f9c3 2026-10-13)"\n'
+                 + '[pkg.rust.target.x86_64-unknown-linux-gnu]\nurl = "https://static.rust-lang.org/x"\n' * 20000)
 RUST_191_MANIFEST = '[pkg.rust]\nversion = "1.91.1 (aaaaaaaaa 2025-11-10)"\n'
 TERRAFORM_INDEX = json.dumps({"name": "terraform", "versions": {
     v: {} for v in ("1.14.2", "1.14.9", "1.17.0", "1.17.1", "1.18.0-beta1", "1.9.8")

@@ -124,15 +124,17 @@ resolve_claude() {
 }
 
 resolve_rust() {
-	local file=images/toolsets/rust/install.sh constraint version
+	local file=images/toolsets/rust/install.sh constraint manifest version
 	constraint="$(declared "$file" RUST_TOOLCHAIN)"
 	if [[ "$constraint" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 		printf 'rust - %s\npinned rust %s\n' "$constraint" "$(pin_note "$file" 'RUST_TOOLCHAIN:-')"
 		return
 	fi
 	# stable, or a minor line (1.91): rustup's channel manifest names its version.
-	version="$(fetch "$rust_dist/channel-rust-$constraint.toml" |
-		awk '/^\[pkg\.rust\]/ {found = 1} found && /^version = / {gsub(/"/, "", $3); print $3; exit}')"
+	# Fetched whole first: the manifest is large, and a reader that stops at the
+	# version would close curl's pipe, which fails it (curl exits 23).
+	manifest="$(fetch "$rust_dist/channel-rust-$constraint.toml")"
+	version="$(awk '/^\[pkg\.rust\]/ {found = 1} found && /^version = / {gsub(/"/, "", $3); print $3; exit}' <<<"$manifest")"
 	[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "rust $constraint: no version in its channel manifest"
 	[[ "$constraint" == stable ]] || printf 'pinned rust %s\n' "$(pin_note "$file" 'RUST_TOOLCHAIN:-')"
 	printf 'rust - %s\n' "$version"
