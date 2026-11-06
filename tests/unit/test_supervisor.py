@@ -284,6 +284,9 @@ class ReaperTests(SupervisorCase):
             vm("agent-android-new"),
             vm("agent-android-almost", age_sec=3600 + 100, work_order=False),
             vm("agent-gis-other", status="TERMINATED", type_="gis"),
+            {**vm("agent-android-smoke-abc", status="TERMINATED"),
+             "labels": {"managed-by": "agent-images", "agent-images-type": "android",
+                        "agent-images-role": "smoke"}},
         ):
             self.instances()[instance["name"]] = instance
         self.gcp.state.instance_guest_attributes["agent-android-busy"] = {"agent-images/order": "read\n"}
@@ -300,6 +303,7 @@ class ReaperTests(SupervisorCase):
         self.assertIn("work-order", new_keys, "not read yet, so kept")
         self.assertIn("agent-android-almost", self.instances(), "within the grace")
         self.assertIn("agent-gis-other", self.instances(), "not a compute type")
+        self.assertIn("agent-android-smoke-abc", self.instances(), "the deploy's to delete")
         log = "\n".join(self.lines)
         self.assertIn("supervisor: reaper: android: deleting agent-android-done (TERMINATED)", log)
         self.assertIn("reaper: android: deleting agent-android-overdue (RUNNING, ", log)

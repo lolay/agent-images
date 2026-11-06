@@ -122,6 +122,10 @@ reap_type() {
 		fi
 		local body="$GCP_BODY"
 		while read -r instance; do
+			# The deploy's smoke VMs are its own to read and delete: one powers
+			# off once its result is in, and deleting it then could beat the
+			# deploy to the result.
+			[[ "$(jq -r '.labels["agent-images-role"] // empty' <<<"$instance")" != smoke ]] || continue
 			name="$(jq -r '.name' <<<"$instance")"
 			status="$(jq -r '.status' <<<"$instance")"
 			created="$(date -d "$(jq -r '.creationTimestamp' <<<"$instance")" +%s 2>/dev/null || echo "$now")"
