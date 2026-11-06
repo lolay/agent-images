@@ -16,7 +16,8 @@ Installed at their latest release when the image was built, so check a repo's
   `docker build` don't work here.
 
 Install anything else with `brew install` (Homebrew is yours) or the project's
-own package manager.
+own package manager. `/etc/agent-images/versions.md` lists everything the image
+holds, with versions; `/agent-toolset-checks` checks that its toolchains work.
 
 ## No cloud access
 

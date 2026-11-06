@@ -139,6 +139,8 @@ class ChangedTargetsTests(unittest.TestCase):
         self.assertEqual(self.change("images/toolsets/toolset-checks.sh")["types"], both)
         self.base = self.head()
         self.assertEqual(self.change("images/toolsets/write-versions.sh")["types"], both)
+        self.base = self.head()
+        self.assertEqual(self.change("images/toolsets/skills/agent-toolset-checks/SKILL.md")["types"], both)
 
     def test_the_android_images_toolset_list_deploys_nothing(self):
         self.assertEqual(
@@ -268,7 +270,7 @@ class ComputeTypeTests(ChangedTargetsTests):
 
     def test_the_toolset_scripts_rebuild_it_and_every_type(self):
         for name in ("images/toolsets/install-toolset.sh", "images/toolsets/toolset-checks.sh",
-                     "images/toolsets/write-versions.sh"):
+                     "images/toolsets/write-versions.sh", "images/toolsets/skills/agent-toolset-checks/SKILL.md"):
             with self.subTest(name=name):
                 result = self.change(name)
                 self.assertEqual(result["vms"], self.ANDROID)

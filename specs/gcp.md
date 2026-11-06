@@ -267,13 +267,13 @@ matrix. A failed deploy makes the next one redeploy more, never less:
 
 | Path changed | Redeploys |
 | --- | --- |
-| `images/shared/**`, `images/toolsets/install-toolset.sh`, `images/toolsets/write-claude-md.sh`, `images/toolsets/toolset-checks.sh`, `images/toolsets/write-versions.sh`, `images/cloud/base/**`, `images/cloud/runner/**`, `images/cloud/entrypoint.sh`, `images/cloud/docker-bake.hcl`, `.dockerignore` | Every runner type |
+| `images/shared/**`, `images/toolsets/install-toolset.sh`, `images/toolsets/write-claude-md.sh`, `images/toolsets/toolset-checks.sh`, `images/toolsets/write-versions.sh`, `images/toolsets/skills/**`, `images/cloud/base/**`, `images/cloud/runner/**`, `images/cloud/entrypoint.sh`, `images/cloud/docker-bake.hcl`, `.dockerignore` | Every runner type |
 | `images/toolsets/<toolset>/**` | The types whose Dockerfiles (or build parents') install that toolset |
 | `images/cloud/<type>/**`, including its `versions.lock` | That type |
 | `hooks/gcp/**`, `images/cloud/orchestrator/**` | The orchestrator host (new image, then the host restarts its container) |
 | `infra/gcp/<type>.env` (CPU, memory, GPU, timeout, `--min-idle`, `REBUILD`, `DEPLOY`) | That type's job and orchestrator settings, no image build. `DEPLOY=false` builds and pushes the image but writes no job, runs no smoke and starts no orchestrator: a type waiting for its quota |
 | `scripts/cloud/job-spec.sh` | Every type's job, no image build |
-| `images/android/**` (the LXD image's scripts and files, and `gce/`), the toolsets in `images/android/toolsets.txt`, `images/shared/**`, the four toolset scripts | The `android` Compute Engine image: Packer build, smoke VM, then family `agent-android` ([below](#compute-engine-vm-per-session-android-and-the-gpu-fallback)) |
+| `images/android/**` (the LXD image's scripts and files, and `gce/`), the toolsets in `images/android/toolsets.txt`, `images/shared/**`, the four toolset scripts and `images/toolsets/skills/**` | The `android` Compute Engine image: Packer build, smoke VM, then family `agent-android` ([below](#compute-engine-vm-per-session-android-and-the-gpu-fallback)) |
 | `infra/gcp/android.env` | The orchestrator only: the hook reads it at each spawn, from the orchestrator image |
 | Anything else (`specs/`, the macOS image, README) | Nothing |
 
@@ -1111,8 +1111,9 @@ Until m5 the record is the image itself (the registry keeps two per type) and 90
 of Actions; from m5 the lock in git is the permanent one, and the report says what
 each build actually got.
 
-**The session skill.** `/agent-toolset-checks`, a Claude Code skill baked into every
-runner image's `~/.claude/skills`, so it exists only in sessions on them. It asks
+**The session skill.** `/agent-toolset-checks`
+(`images/toolsets/skills/agent-toolset-checks/SKILL.md`), a Claude Code skill baked
+into every runner image's `~/.claude/skills`, so it exists only in sessions on them. It asks
 what to run (everything, binary checks, or chosen smoke tests), runs it through
 `agent-toolset-checks`, reruns a failure once, and asks before filing an issue on
 lolay/agent-images. Its `SKILL.md` is the one source for what such an issue holds:

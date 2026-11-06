@@ -18,6 +18,7 @@ RUN --mount=type=bind,source=images/shared,target=/tmp/images/shared \
 	--mount=type=bind,source=images/cloud/entrypoint.sh,target=/tmp/images/entrypoint.sh \
 	--mount=type=bind,source=images/toolsets/write-claude-md.sh,target=/tmp/images/write-claude-md.sh \
 	--mount=type=bind,source=images/toolsets/toolset-checks.sh,target=/tmp/images/toolset-checks.sh \
+	--mount=type=bind,source=images/toolsets/skills,target=/tmp/images/skills \
 	<<'SCRIPT'
 set -eu
 shared=/tmp/images/shared
@@ -43,6 +44,10 @@ sudo install -m 644 "$runner/profile.sh" /etc/profile.d/agent-images.sh
 mv "$HOME/.bashrc.new" "$HOME/.bashrc"
 sudo install -m 755 /tmp/images/entrypoint.sh /usr/local/bin/agent-cloud-entrypoint
 sudo install -m 755 /tmp/images/toolset-checks.sh /usr/local/bin/agent-toolset-checks
+# The session skills that drive it (/agent-toolset-checks); the runner seeds
+# ~/.claude/skills into every session.
+install -d -m 755 "$HOME/.claude/skills"
+cp -R /tmp/images/skills/. "$HOME/.claude/skills/"
 # Mount points: Cloud Run mounts over them; a local docker volume (make
 # cloud-smoke) takes their owner, so the session user can write scratch and outputs.
 sudo install -d -m 755 -o ubuntu -g ubuntu /scratch /mnt/outputs

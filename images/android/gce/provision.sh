@@ -57,6 +57,12 @@ install -m 755 "$STAGING_DIR/gce/agent-gce-order.sh" "$libexec_dir/agent-gce-ord
 install -m 755 "$STAGING_DIR/gce/agent-gce-smoke.sh" "$libexec_dir/agent-gce-smoke"
 # On PATH, so sessions can run a toolset's checks too, as on the Cloud Run images.
 install -m 755 "$STAGING_DIR/toolsets/toolset-checks.sh" /usr/local/bin/agent-toolset-checks
+# The session skills that drive it (/agent-toolset-checks), beside android init's
+# android-cli; the runner seeds ~/.claude/skills into every session.
+guest_home="$(getent passwd "$GUEST_USER" | cut -d: -f6)"
+install -d -m 755 -o "$GUEST_USER" -g "$GUEST_USER" "$guest_home/.claude/skills"
+cp -R "$STAGING_DIR/toolsets/skills/." "$guest_home/.claude/skills/"
+chown -R "$GUEST_USER:$GUEST_USER" "$guest_home/.claude/skills"
 install -m 644 "$STAGING_DIR/gce/agent-gce-order.service" /etc/systemd/system/agent-gce-order.service
 install -m 644 "$STAGING_DIR/gce/journald-serial.conf" /etc/systemd/journald.conf.d/agent-images-serial.conf
 install -m 644 "$STAGING_DIR/gce/profile-gce.sh" /etc/profile.d/agent-images-gce.sh
