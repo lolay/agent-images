@@ -62,7 +62,7 @@ images/toolsets/
 | `core` | Homebrew itself; apt: build-essential, curl, ca-certificates, file, procps, zip, unzip, mandoc; Brewfile: gh, git, jq, ripgrep, tmux, age, sops, shellcheck, actionlint, nowline, triage | Every session on every platform. The Brewfile is the Mac's session tools too, so they're defined once |
 | `native` | apt: pkg-config, cmake, ninja-build, and the headers native builds look for (libssl-dev, zlib1g-dev, libffi-dev, libsqlite3-dev, libpq-dev, libbz2-dev, liblzma-dev, libreadline-dev), sqlite3, postgresql-client | The gap a no-sudo session can't fill: `cargo build` of anything on `openssl-sys`, or a Python package with a C extension and no wheel, fails without these |
 | `node` | node, pnpm | |
-| `python` | Homebrew's python, uv | Latest CPython for general work. Not for `gis` or `3d-gpu` (below) |
+| `python` | Homebrew's python, uv, ruff, pre-commit | Latest CPython for general work. Not for `gis` or `3d-gpu` (below) |
 | `go` | go | |
 | `rust` | rustup, stable with clippy and rustfmt | |
 | `proto` | protobuf, buf, grpcurl | |
@@ -96,7 +96,45 @@ Two patterns fall out of this:
 - **`android` is what Android development uses**, on the LXD host and on Compute
   Engine alike, provisioned by the same scripts: JDKs 21 and 17, the SDK with the
   NDK and Gradle, an emulator, Rust with cargo-ndk and Go with gomobile for native
-  libraries, Node for React Native, Expo and the Firebase CLI, and the display. Not everything `linux` has (below).
+  libraries, Node for React Native, Expo and the Firebase CLI, and the display.
+  Not everything `linux` has (below).
+
+### What each type has
+
+Built from the lists above; versions are in the README, newest stable at build time.
+"Base" means it comes with the type's base image, not from a toolset. `linux-gpu`
+and `3d-gpu` are planned (m3).
+
+| | `linux` | `gis` | `android` | `mac` | `linux-gpu` | `3d-gpu` |
+| --- | --- | --- | --- | --- | --- | --- |
+| Base | `ubuntu:24.04` | `ubuntu:24.04` | Ubuntu 24.04 VM | Cirrus macOS with Xcode | CUDA 13 devel | CUDA 13 devel |
+| sudo in a session | no | no | yes | yes | no | no |
+| Session tools (gh, git, jq, ripgrep, tmux, age, sops, shellcheck, actionlint, nowline, triage) | yes | yes | yes | yes | yes | yes |
+| Claude Code | yes | yes | yes | yes | yes | yes |
+| C toolchain, cmake, ninja, pkg-config | yes | yes | yes | clang and make from Xcode (base) | yes | yes |
+| Native headers (OpenSSL, zlib, libffi, SQLite, libpq, and more) | yes | yes | yes | Xcode's SDK (base) | yes | yes |
+| Python | Homebrew's newest, with uv, ruff, pre-commit | conda-forge 3.14 (`/opt/gis`), with uv, ruff, pre-commit | 3.12 (base) | Xcode's (base) | as `linux` | pinned for PyTorch (`/opt/3d`), with uv |
+| Node, pnpm | yes | yes | yes | no | yes | no |
+| Go | yes | no | yes | no | yes | no |
+| Rust (rustup stable, clippy, rustfmt) | yes | no | yes | no | yes | no |
+| protobuf, buf, grpcurl | yes | no | no | no | yes | no |
+| Terraform (tenv), tflint | yes | no | no | no | yes | no |
+| JDK | 21 | no | 21 (default), 17 | no | 21 | no |
+| Gradle | no (projects' `./gradlew`) | no | yes | no | no | no |
+| Android SDK, emulator, AVD | no | no | yes | no | no | no |
+| Android NDK | no | no | newest stable | no | no | no |
+| Rust Android targets, cargo-ndk | no | no | yes | no | no | no |
+| gomobile, gobind | no | no | yes | no | no | no |
+| Chromium's libraries (Playwright) | yes | no | no | no | yes | no |
+| Display | Xvfb, llvmpipe | Xvfb, llvmpipe | Xvfb, llvmpipe | the VM's (base) | Xvfb, then GPU rendering (m3) | Xvfb, then GPU rendering (m3) |
+| GIS: QGIS, GDAL, PDAL, rasterio, geopandas, DuckDB spatial, STAC | no | yes | no | no | no | no |
+| CUDA toolkit | no | no | no | no | base | base |
+| 3D: Blender, COLMAP, PyTorch, gsplat, Open3D, ffmpeg | no | no | no | no | no | yes |
+| Xcode, swiftformat, swiftlint, xcbeautify, xcodegen, asc | no | no | no | yes | no | no |
+
+A type without something can still get it: on `android` and `mac` with sudo or
+Homebrew, and on the Cloud Run types with Homebrew, uv, rustup or pixi in user space,
+for anything that doesn't need apt.
 
 ### `android` is not `linux` plus Android
 
@@ -109,10 +147,11 @@ anything else is an `apt-get` or `brew install` away:
 | core, native, jvm | yes | The session tools; the headers a native build or `cargo build` needs; the JDK Gradle runs on |
 | android | yes | The SDK, emulator and AVD, now with the newest stable NDK (about 2 GB, too big to fetch per session), Gradle for starting a project, and JDK 17 for projects that pin `jvmToolchain(17)` (all three CI images below ship 17). The Android Gradle plugin still fetches the NDK a project pins, if it's another one |
 | display | yes | Desktop apps and screenshots of them; the emulator itself stays windowless, and the `android` CLI screenshots the device |
-| node | yes | React Native and Expo, and the Firebase CLI |
+| node | yes | React Native and Expo, the Firebase CLI (its emulators), and the `npx`-run tools agents use, many MCP servers among them. Native Kotlin work doesn't need it |
 | rust, android-rust | yes | Rust libraries for Android (UniFFI, or JNI through cargo-ndk) |
 | go, android-go | yes | Go libraries for Android through gomobile, which upstream still calls experimental and has never tagged; none of the CI images below ships it |
 | fastlane (Ruby) | no | All three CI images below ship it, but it's release automation, and releases run in CI with the store credentials, not here |
+| JDK 25 | no | Ubuntu has it (25.0.4), but Android Studio bundles 21, so that's what projects are built and tested with; 17 is there because projects pin it. Add 25 when a project pins it |
 | python | no | Ubuntu's `python3` stays, which is enough for SDK and build scripts |
 | proto, terraform | no | Not Android work; the protobuf Gradle plugin brings its own protoc |
 | browser | no | Playwright's libraries; Android has no headless-browser tests to run |
