@@ -1,0 +1,21 @@
+# GPU rendering and tools for the -gpu types (specs/image-toolsets.md, "gpu"). The
+# CUDA toolkit comes with the base image (CUDA's devel image); the driver comes
+# from the host: Cloud Run mounts it under /usr/local/nvidia/lib64. These are the
+# userspace pieces that route to it. VirtualGL comes from its own release
+# (install.sh); Xvfb and Mesa come from the display toolset.
+
+# The GL vendor-neutral dispatch (GLVND): EGL and GLES pick NVIDIA's library when
+# install.sh's vendor file finds it, and Mesa's otherwise.
+libglvnd0
+libegl1
+libgles2
+libopengl0
+
+# Vulkan's loader and vulkaninfo, with Mesa's software Vulkan (lavapipe), so
+# Vulkan works without the GPU too and the two can be compared.
+libvulkan1
+vulkan-tools
+mesa-vulkan-drivers
+
+# Watching the GPU from a session.
+nvtop

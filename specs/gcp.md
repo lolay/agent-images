@@ -149,8 +149,8 @@ Region: `us-central1`, the one with both L4 and RTX PRO 6000 on Cloud Run.
 ## Images
 
 Each type's tools are a list of toolsets ([image-toolsets.md](image-toolsets.md)),
-so no type inherits another's. `agent-base-gpu` (m3) is still to come, on CUDA's devel
-image rather than runtime.
+so no type inherits another's. The GPU types' parent, `base-gpu` (m3), is
+`agent-base`'s Dockerfile on CUDA's devel image rather than runtime.
 
 We manage them, in this repo, next to the macOS and Linux images, and they share
 `images/shared` so sessions behave the same everywhere.
@@ -158,9 +158,9 @@ We manage them, in this repo, next to the macOS and Linux images, and they share
 ```
 images/cloud/
   base/Dockerfile      ubuntu:24.04 through mirror.gcr.io, the runner user, and the
-                       core toolset; a build parent only
-  base-gpu/Dockerfile  (m3) the same on CUDA 13.0 devel; Xvfb, VirtualGL, mesa-utils,
-                       vulkan-tools; optional noVNC
+                       core toolset; a build parent only. Bake target base-gpu is
+                       the same on CUDA 13.0 devel (BASE_IMAGE), for the -gpu types,
+                       which add the gpu toolset (VirtualGL, Vulkan, EGL) last
   <type>/Dockerfile    FROM agent-base or agent-base-gpu, adds the type's toolsets,
                        one layer each (bake target <type>-tools)
   runner/Dockerfile    FROM the type's tools: images/shared (runner, watchdog, Stop
@@ -205,7 +205,7 @@ Choices, carried over from [design.md](design.md):
 Layer order, slowest-moving first, so a rebuild only redoes what changed:
 
 ```
-FROM <base>@<digest>      ubuntu:24.04, or nvidia/cuda 13.0 runtime for gpu,
+FROM <base>@<digest>      ubuntu:24.04, or nvidia/cuda 13.0 devel for -gpu,
                           both through mirror.gcr.io
 core toolset              apt, Homebrew, the shared session tools (agent-base)
 type toolsets             one layer each: apt at the locked snapshot, Brewfile,

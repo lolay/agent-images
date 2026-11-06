@@ -1,0 +1,4 @@
+# CUDA's toolkit (nvcc, cuobjdump, compute-sanitizer), from the base image.
+/usr/local/cuda/bin
+# The driver's tools (nvidia-smi), where Cloud Run mounts the driver.
+/usr/local/nvidia/bin

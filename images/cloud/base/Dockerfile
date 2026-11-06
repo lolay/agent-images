@@ -9,8 +9,11 @@
 # the Linux image's ubuntu and the macOS image's admin: sessions install what a
 # repo needs, and nothing outlives the execution.
 # Docker Hub's ubuntu through Google's mirror: Docker Hub rate-limits anonymous
-# pulls, and mirror.gcr.io caches the same images without that limit.
-FROM mirror.gcr.io/library/ubuntu:24.04
+# pulls, and mirror.gcr.io caches the same images without that limit. The GPU
+# types' parent, base-gpu, is this file on CUDA's devel image instead
+# (BASE_IMAGE in docker-bake.hcl), which is built on the same ubuntu:24.04.
+ARG BASE_IMAGE=mirror.gcr.io/library/ubuntu:24.04
+FROM ${BASE_IMAGE}
 
 RUN apt-get update \
 	&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends sudo ca-certificates curl \

@@ -73,7 +73,7 @@ images/toolsets/
 | `android-rust` | Rust's Android targets (aarch64, armv7, x86_64) and cargo-ndk | Rust libraries for an Android app, against the `android` toolset's NDK. Needs `rust` and `android` |
 | `android-go` | gomobile and gobind | Go libraries for an Android app (`.aar`), against the same NDK. Needs `go` and `android` |
 | `gis` | uv, and a pixi environment from conda-forge: GDAL, PDAL with python-pdal, QGIS with PyQGIS, rasterio, geopandas, shapely, pyproj, pystac-client, rioxarray, DuckDB with its spatial extension | Below |
-| `cuda` | Nothing installed: a marker that the base is NVIDIA's CUDA devel image | Below |
+| `gpu` | GLVND's EGL and GLES, Vulkan's loader and vulkaninfo with Mesa's lavapipe, nvtop, VirtualGL (its own release), vendor files pointing EGL and Vulkan at the driver Cloud Run mounts (`/usr/local/nvidia/lib64`), and `agent-cuda-probe`; CUDA's `PATH` and `CUDA_HOME` | The GPU types' last tools layer (m3): the CUDA toolkit comes with the base, the driver from the host, and this routes to it. Last rather than in the base while GPU rendering on Cloud Run is being worked out, so a change to it rebuilds only itself |
 | `display` | Xvfb (the entrypoint, or `agent-xvfb.service` on the VM types, starts it at `:99`, 1920x1080), Mesa's software OpenGL (llvmpipe), x11-utils, mesa-utils, ImageMagick for screenshots | A virtual display: headed browsers and desktop apps (QGIS) run and can be screenshotted without a GPU. apt-only, so baked in. GPU types add GPU rendering (VirtualGL, Vulkan) on top in m3 |
 | `3d` | Blender (blender.org's build), COLMAP built for compute capability 12.0, ffmpeg, uv, and a uv project with PyTorch's CUDA build, gsplat, Open3D | Below |
 
@@ -84,8 +84,8 @@ images/toolsets/
 | `linux` | `ubuntu:24.04` | core, native, node, python, go, rust, proto, terraform, jvm, browser, display |
 | `android` (LXD and Compute Engine) | Ubuntu 24.04 VM image | core, native, jvm, display, android, node, go, rust, android-go, android-rust |
 | `gis` | `ubuntu:24.04` | core, native, display, node, gis |
-| `linux-gpu` | `nvidia/cuda:13.0.x-devel-ubuntu24.04` | everything `linux` has, then cuda, display |
-| `3d-gpu` | the same CUDA image | core, native, display, 3d |
+| `linux-gpu` | `nvidia/cuda:13.0.x-devel-ubuntu24.04` | everything `linux` has (from `linux`'s own Dockerfile), then gpu |
+| `3d-gpu` | the same CUDA image | core, native, display, 3d, gpu |
 | `mac` | Cirrus macOS (Tart) | core (Brewfile only), then its own Brewfile: asccli, swiftformat, swiftlint, xcbeautify, xcodegen |
 
 Two patterns fall out of this:
@@ -347,7 +347,10 @@ tooling as PyO3 extensions, or Rust splatting like Brush). If that becomes true,
 
 ## Build wiring
 
-- **Cloud images:** `agent-base` is Ubuntu, the user and `core`. Each type's
+- **Cloud images:** `agent-base` is Ubuntu, the user and `core`; `base-gpu` is the
+  same Dockerfile on CUDA's devel image (`BASE_IMAGE`), the GPU types' parent.
+  `linux-gpu` builds `linux`'s Dockerfile on `base-gpu`, then its own adds `gpu`, so
+  it can't drift from `linux`. Each type's
   Dockerfile (bake target `<type>-tools`) adds one `RUN install-toolset.sh <name>`
   layer per toolset, slowest-moving first, and the shared `images/cloud/runner`
   stage (target `<type>`) adds the runner files, the session files and Claude Code
