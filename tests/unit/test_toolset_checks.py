@@ -1,5 +1,7 @@
 """images/toolsets/toolset-checks.sh: binary checks and smoke tests from a record."""
 
+import os
+import signal
 import subprocess
 import tempfile
 import unittest
@@ -102,13 +104,45 @@ class ToolsetChecksTests(unittest.TestCase):
         self.assertEqual(failed.returncode, 3)
         self.assertEqual(failed.stdout.splitlines(), ["6", "7", "8", "9", "go: vet failed"])
 
+    def alive(self, pid):
+        # A killed process nobody has reaped yet (a zombie) is gone for our purposes.
+        try:
+            state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+        except FileNotFoundError:
+            return False
+        return state != "Z"
+
+    def run_hung(self, body):
+        self.smoke_test("go", body)
+        result = self.run_checks(
+            "smoke", "go", "--brief", AGENT_SMOKE_TIMEOUT_SEC="1", AGENT_SMOKE_KILL_AFTER_SEC="1"
+        )
+        pid = int((self.out / "child").read_text())
+        self.addCleanup(lambda: self.alive(pid) and os.kill(pid, signal.SIGKILL))
+        return result, pid
+
     def test_a_hung_test_is_stopped_with_its_children(self):
-        # A child that ignores TERM still holds the output pipe; kill-after ends it.
-        self.smoke_test("go", "(trap '' TERM; sleep 60) &\nsleep 60\n")
-        result = self.run_checks("smoke", "go", "--brief", AGENT_SMOKE_TIMEOUT_SEC="1")
+        # A child that ignores TERM outlives the timeout's TERM; the group kill ends it.
+        result, pid = self.run_hung(
+            "(trap '' TERM; echo \"$BASHPID\" >\"$FAKE_OUT/child\"; exec sleep 60) &\nsleep 60\n"
+        )
         self.assertEqual(result.returncode, 124)
         self.assertEqual(result.stdout, "go: timed out after 1s\n")
+        self.assertFalse(self.alive(pid), "the test's child outlived the call")
         self.assertEqual(list(self.tmpdir.iterdir()), [])
+
+    def test_a_test_that_ignores_term_is_still_a_timeout(self):
+        # timeout's --kill-after KILLs its own group, so the status is 137, not 124.
+        result, pid = self.run_hung('trap \'\' TERM\necho "$$" >"$FAKE_OUT/child"\nwhile :; do sleep 1; done\n')
+        self.assertEqual(result.returncode, 124)
+        self.assertEqual(result.stdout, "go: timed out after 1s\n")
+        self.assertFalse(self.alive(pid), "the test outlived the call")
+
+    def test_a_test_killed_before_the_limit_keeps_its_own_status(self):
+        self.smoke_test("go", "kill -KILL $$\n")
+        result = self.run_checks("smoke", "go", AGENT_SMOKE_TIMEOUT_SEC="30")
+        self.assertEqual(result.returncode, 137)
+        self.assertNotIn("timed out", result.stdout)
 
     def test_refuses_what_it_cant_run(self):
         self.assertEqual(self.run_checks("smoke", "rust").returncode, 2)
