@@ -1,12 +1,9 @@
-# Smoke checks (images/cloud/entrypoint.sh): label: command, which must exit 0;
-# its first line of output is the reported version. These need the GPU, so they
-# fail in a build or local smoke without one.
-gpu: nvidia-smi --query-gpu=name,driver_version,compute_cap --format=csv,noheader
-cuda: agent-cuda-probe
+# Binary checks (toolset-checks.sh): label: command, which must exit 0; its first
+# line of output is the reported version. None needs a GPU, so they run on a
+# hosted runner too; smoke.sh runs the GPU itself.
 nvcc: nvcc --version | grep -m1 release
-# Report-only: these pass either way and say whether rendering reached the GPU
-# (NVIDIA) or fell back to Mesa. The session test decides (specs/gcp.md, "The head").
-driver-libs: agent-gpu-libs
-egl: eglinfo -B -p surfaceless 2>/dev/null | sed -n 's/^OpenGL core profile renderer: //p' | grep -m1 . || echo 'no EGL renderer'
-vulkan: vulkaninfo --summary 2>/dev/null | sed -n 's/^[[:space:]]*deviceName *= //p' | grep -m1 . || echo 'no Vulkan device'
+cuda-probe: command -v agent-cuda-probe
+driver-libs: command -v agent-gpu-libs
+eglinfo: command -v eglinfo
+vulkaninfo: command -v vulkaninfo
 virtualgl: vglrun -h 2>&1 | grep -m1 -i virtualgl || ls /opt/VirtualGL/bin/vglrun

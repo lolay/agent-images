@@ -1,6 +1,7 @@
-# Smoke checks (images/cloud/entrypoint.sh): label: command, which must exit 0;
-# its first line of output is the reported version.
-# The entrypoint starts Xvfb before these run, as it does before the runner.
-display: xdpyinfo -display "$DISPLAY" | grep -m1 dimensions
-opengl: glxinfo -B | grep -m1 'OpenGL renderer'
-screenshot: f="$(mktemp --suffix=.png)" && import -window root "$f" && identify -format '%wx%h PNG\n' "$f"; rc=$?; rm -f "$f"; exit $rc
+# Binary checks (toolset-checks.sh): label: command, which must exit 0; its first
+# line of output is the reported version. The tool is there and runs, nothing
+# more: smoke.sh shows the display works.
+xvfb: Xvfb -version 2>&1 | grep -m1 'X.Org X Server'
+xdpyinfo: command -v xdpyinfo
+glxinfo: command -v glxinfo
+imagemagick: import -version | head -n 1
