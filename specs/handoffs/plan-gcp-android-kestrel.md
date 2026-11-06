@@ -1,7 +1,7 @@
 # Plan: m2, `android` on Compute Engine
 
-Status: planned 2026-11-05, waiting for the owner's go on s1 to s6 (nothing in them
-spends money). Branch `claude/youthful-dijkstra-09v7kk` (assigned by the harness), cut
+Status: s1 done; s2 to s6 approved 2026-11-06 (no GCP spend), s7 waits for a second go.
+Branch `claude/youthful-dijkstra-09v7kk` (assigned by the harness), cut
 from `main` at `ecc54c2`, after lolay/agent-images#18, #19 and #20.
 
 The Android half of m2 in [specs/gcp.md](../gcp.md) ("Compute Engine VM per session").
@@ -78,7 +78,7 @@ both families, keeping one.
 
 ## Steps
 
-#### s1 - Type settings and guest flow [deep]
+#### s1 - Type settings and guest flow [deep] (done)
 
 - `infra/gcp/android.env`: `BACKEND=compute`, `MACHINE_TYPE=n2-standard-8`,
   `DISK_GB=100`, `DISK_TYPE=pd-balanced`, `IMAGE_FAMILY=agent-android`,

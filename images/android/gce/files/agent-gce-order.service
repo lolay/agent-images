@@ -1,0 +1,17 @@
+# Installed to /etc/systemd/system by the Packer build (images/android/gce).
+# Configures this runner VM from its instance metadata once per boot, before
+# anything else of agent-images runs: writing runner.env is what starts the
+# runner (agent-runner.path). See agent-gce-order.
+[Unit]
+Description=agent-images: configure this runner VM from its work order
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/agent-images/agent-gce-order
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

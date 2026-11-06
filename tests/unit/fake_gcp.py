@@ -1,7 +1,8 @@
 """A fake of the GCP endpoints the hook and the supervisor call, for the tests.
 
-One HTTP server stands in for the metadata server, Cloud Storage's JSON API, the
-Cloud Run Admin API and Secret Manager. It records every request and answers
+One HTTP server stands in for the metadata server (instance attributes and guest
+attributes included), Cloud Storage's JSON API, the Cloud Run Admin API, Compute
+Engine and Secret Manager. It records every request and answers
 from simple in-memory state; a test can make any route fail with `fail`.
 """
 
@@ -33,6 +34,8 @@ class State:
     objects: dict = field(default_factory=dict)  # (bucket, name) -> bytes
     secrets: dict = field(default_factory=dict)  # name -> value
     jobs: dict = field(default_factory=dict)  # full job name -> Job body
+    attributes: dict = field(default_factory=dict)  # instance metadata key -> value
+    guest_attributes: dict = field(default_factory=dict)  # "namespace/key" -> value
     operations: int = 0
     requests: list = field(default_factory=list)
     failures: dict = field(default_factory=dict)  # (method, path suffix) -> (status, body)
@@ -66,14 +69,17 @@ class FakeGcp:
                 with state.lock:
                     state.requests.append(request)
                     status, payload = route(state, request)
-                data = json.dumps(payload).encode() if payload is not None else b""
+                if isinstance(payload, RawText):
+                    data = payload.encode()
+                else:
+                    data = json.dumps(payload).encode() if payload is not None else b""
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
 
-            do_GET = do_POST = do_DELETE = do_PATCH = handle_any
+            do_GET = do_POST = do_DELETE = do_PATCH = do_PUT = handle_any
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
@@ -121,6 +127,9 @@ def route(state: State, request: Request):
             return 403, {"error": "missing Metadata-Flavor"}
         return 200, {"access_token": TOKEN, "expires_in": 3599, "token_type": "Bearer"}
 
+    if path.startswith("/computeMetadata/v1/instance/"):
+        return route_metadata(state, request)
+
     if not authorized:
         return 401, {"error": {"message": "bad token"}}
 
@@ -161,6 +170,26 @@ def route(state: State, request: Request):
         return 200, {"name": path, "payload": {"data": data}}
 
     return 404, {"error": {"message": f"no fake for {request.method} {path}"}}
+
+
+def route_metadata(state: State, request: Request):
+    """The metadata server's instance attributes (read) and guest attributes (write)."""
+    if request.headers.get("metadata-flavor") != "Google":
+        return 403, {"error": "missing Metadata-Flavor"}
+    rest = request.path.removeprefix("/computeMetadata/v1/instance/")
+    if request.method == "GET" and rest.startswith("attributes/"):
+        key = rest.removeprefix("attributes/")
+        if key not in state.attributes:
+            return 404, None
+        return 200, RawText(state.attributes[key])
+    if request.method == "PUT" and rest.startswith("guest-attributes/"):
+        state.guest_attributes[rest.removeprefix("guest-attributes/")] = request.body.decode()
+        return 200, None
+    return 404, None
+
+
+class RawText(str):
+    """A body sent as is, not as JSON (the metadata server's attribute values)."""
 
 
 def route_jobs(state: State, request: Request):
