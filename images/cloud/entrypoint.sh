@@ -1,8 +1,9 @@
 #!/bin/bash
 # agent-cloud-entrypoint: the Cloud Run runner images' entrypoint (specs/gcp.md,
 # "Images"). One execution serves one session: this prepares the scratch disk,
-# moves the work order to a file, writes runner.env, starts the watchdog loop,
-# then execs agent-runner, whose exit ends the execution.
+# moves the work order to a file, writes runner.env, starts the virtual display
+# (images with the display toolset) and the watchdog loop, then execs
+# agent-runner, whose exit ends the execution.
 #
 #   agent-cloud-entrypoint          run the runner (what every execution does)
 #   agent-cloud-entrypoint smoke    check the image and its mounts, then exit
@@ -30,6 +31,8 @@ set -euo pipefail
 : "${AGENT_WATCHDOG_INTERVAL_SEC:=30}"
 : "${AGENT_REQUIRE_SCRATCH_MOUNT:=true}"
 : "${AGENT_TYPE:=unknown}"
+: "${AGENT_DISPLAY_SCREEN:=1920x1080x24}"
+: "${AGENT_DISPLAY_WAIT_SEC:=10}"
 : "${AGENT_RETIRE_MARGIN_SEC:=900}"
 export AGENT_SCRATCH AGENT_OUTPUTS_ROOT AGENT_DATASETS AGENT_TYPE
 
@@ -42,6 +45,23 @@ die() {
 
 # shellcheck source=images/cloud/runner/profile.sh
 source "$AGENT_PROFILE"
+
+# The virtual display, for images with the display toolset: its profile sets
+# DISPLAY, and Xvfb serves it for the rest of the execution (it outlives this
+# process's exec into the runner). Returns non-zero if it doesn't answer.
+start_display() {
+	[[ -n "${DISPLAY:-}" ]] && command -v Xvfb >/dev/null 2>&1 || return 0
+	Xvfb "$DISPLAY" -screen 0 "$AGENT_DISPLAY_SCREEN" -nolisten tcp >/tmp/xvfb.log 2>&1 &
+	local deadline=$((SECONDS + AGENT_DISPLAY_WAIT_SEC))
+	until xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; do
+		((SECONDS < deadline)) || {
+			warn "Xvfb didn't answer on $DISPLAY within ${AGENT_DISPLAY_WAIT_SEC}s: $(tail -n 3 /tmp/xvfb.log 2>/dev/null | tr '\n' ' ')"
+			return 1
+		}
+		sleep 0.2
+	done
+	log "display $DISPLAY ($AGENT_DISPLAY_SCREEN)"
+}
 
 scratch_fstype() { findmnt -n -o FSTYPE --target "$AGENT_SCRATCH" 2>/dev/null || true; }
 
@@ -157,6 +177,8 @@ smoke() {
 }
 
 if [[ "${1:-}" == "smoke" ]]; then
+	# The display toolset's checks need the display running, as sessions get it.
+	start_display || true
 	if smoke; then
 		log "smoke passed"
 		exit 0
@@ -165,6 +187,8 @@ if [[ "${1:-}" == "smoke" ]]; then
 fi
 
 prepare_scratch
+# A session without its display still works, so a failure here only warns.
+start_display || true
 
 # The runner releases its session cleanly by this time, ahead of Cloud Run's
 # hard stop at the task timeout; the SessionStart hook reads it for the notice.

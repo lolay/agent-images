@@ -17,6 +17,9 @@ RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/tool
 	--mount=type=bind,source=images/toolsets/browser,target=/tmp/toolsets/browser \
 	bash /tmp/toolsets/install-toolset.sh browser
 RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
+	--mount=type=bind,source=images/toolsets/display,target=/tmp/toolsets/display \
+	bash /tmp/toolsets/install-toolset.sh display
+RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
 	--mount=type=bind,source=images/toolsets/node,target=/tmp/toolsets/node \
 	bash /tmp/toolsets/install-toolset.sh node
 RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \

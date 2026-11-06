@@ -72,16 +72,16 @@ images/toolsets/
 | `android` | Emulator runtime libraries, cpu-checker, the SDK, the AVD and its snapshot (`ensure-android-sdk.sh`), `agent-emulator` | Needs KVM, so VM types only |
 | `gis` | uv, and a pixi environment from conda-forge: GDAL, PDAL with python-pdal, QGIS with PyQGIS, rasterio, geopandas, shapely, pyproj, pystac-client, rioxarray, DuckDB with its spatial extension | Below |
 | `cuda` | Nothing installed: a marker that the base is NVIDIA's CUDA devel image | Below |
-| `display` | Xvfb, VirtualGL, mesa-utils, vulkan-tools, libegl1, x11-utils | GPU types' virtual head |
+| `display` | Xvfb (the entrypoint starts it at `:99`, 1920x1080), Mesa's software OpenGL (llvmpipe), x11-utils, mesa-utils, ImageMagick for screenshots | A virtual display: headed browsers and desktop apps (QGIS) run and can be screenshotted without a GPU. apt-only, so baked in. GPU types add GPU rendering (VirtualGL, Vulkan) on top in m3 |
 | `3d` | Blender (blender.org's build), COLMAP built for compute capability 12.0, ffmpeg, uv, and a uv project with PyTorch's CUDA build, gsplat, Open3D | Below |
 
 ## Types
 
 | Type | Base | Toolsets |
 | --- | --- | --- |
-| `linux` | `ubuntu:24.04` | core, native, node, python, go, rust, proto, terraform, jvm, browser |
+| `linux` | `ubuntu:24.04` | core, native, node, python, go, rust, proto, terraform, jvm, browser, display |
 | `android` (LXD and Compute Engine) | Ubuntu 24.04 VM image | everything `linux` has, then android |
-| `gis` | `ubuntu:24.04` | core, native, node, gis |
+| `gis` | `ubuntu:24.04` | core, native, display, node, gis |
 | `linux-gpu` | `nvidia/cuda:13.0.x-devel-ubuntu24.04` | everything `linux` has, then cuda, display |
 | `3d-gpu` | the same CUDA image | core, native, display, 3d |
 | `mac` | Cirrus macOS (Tart) | core (Brewfile only), then its own Brewfile: asccli, swiftformat, swiftlint, xcbeautify, xcodegen |
@@ -321,5 +321,11 @@ Steps for [gcp.md](gcp.md) m2, ahead of `gis` and `android`:
   the count, and once the builds agree nothing is dropped. The environment also
   carries the cloud-native stack: GeoParquet and Arrow, polars, Zarr, Dask,
   odc-stac, COPC through untwine, tippecanoe and PMTiles, H3, osmium.
+- s7: the `display` toolset in `linux` and `gis`: Xvfb at `:99`, which the entrypoint
+  starts before the runner (and before the smoke checks), with Mesa's software
+  OpenGL and ImageMagick for screenshots. The session tests' display steps (QGIS
+  desktop in `gis`, headed Chromium in `linux`) run instead of skipping.
 
-`linux-gpu` and `3d-gpu` follow in m3 on the same structure.
+`linux-gpu` and `3d-gpu` follow in m3 on the same structure, and both install
+`display` (it's in their lists above): the virtual display comes from s7, and m3
+adds GPU rendering on top of it (VirtualGL, Vulkan) where Cloud Run's driver allows.

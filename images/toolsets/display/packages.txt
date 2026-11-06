@@ -1,0 +1,17 @@
+# A virtual display for sessions (specs/image-toolsets.md, "display"): Xvfb, which
+# the entrypoint starts at :99, and Mesa's software OpenGL (llvmpipe), so headed
+# browsers and desktop apps (QGIS) run and can be screenshotted without a GPU. A
+# Cloud Run session can't apt-get, so it's here or nowhere. GPU types add their
+# own GPU rendering on top.
+xvfb
+x11-utils
+mesa-utils
+libgl1-mesa-dri
+libglx-mesa0
+libegl-mesa0
+
+# Screenshots of the whole display (import -window root).
+imagemagick
+
+# A plain UI font for desktop apps.
+fonts-dejavu-core
