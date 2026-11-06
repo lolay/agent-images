@@ -25,7 +25,7 @@ datasets buckets, no egress proxy, and full control of the image on ours.
 
 | | Anthropic `cloud_default` | Anthropic + `agent-linux` tools | `agent-linux` |
 | --- | --- | --- | --- |
-| Cold start | About 12 s, measured by hand | 3 min 55 s the first time, by hand; from the cache after (to measure) | About 55 s (m1), plus the orchestrator's queue |
+| Cold start | About 12 s, measured by hand | 2 min 45 s to 3 min 55 s, by hand; the cache hasn't been used yet (below) | About 55 s (m1), plus the orchestrator's queue |
 | Compute cost | None beyond the plan | None beyond the plan | About $0.37 an hour per session |
 | Tool versions | Fixed by Anthropic, months behind | Latest, as of the cache build | Latest, as of the nightly build |
 | Root, apt, Docker | Yes | Yes | No |
@@ -53,14 +53,21 @@ What a session waits for between the click and Claude's first command.
 
 | | Anthropic, no setup script | Anthropic + `agent-linux` tools | `agent-linux` |
 | --- | --- | --- | --- |
-| Measured | About 12 s, by hand, 2026-11-06 | First session, end to end: 3 min 55 s (235 s), by hand, 2026-11-06. From the cache: not yet | About 55 s for the 5.5 GB image (Cloud Run streams layers), m1 |
+| Measured | About 12 s, by hand, 2026-11-06 | First session 3 min 55 s; second 2 min 45 s, of which the script was 166 s, so the platform added almost nothing. Both by hand, 2026-11-06 | About 55 s for the 5.5 GB image (Cloud Run streams layers), m1 |
 | What's in it | VM from Anthropic's pool, repo clone | First session: the setup script, then Anthropic snapshots the filesystem. Later sessions start from the snapshot and skip the script | The orchestrator's spawn hook, the Cloud Run execution, the runner registering with the work order |
 | Repeats when | Every session | The script runs again when the script or the allowed hosts change, or the cache expires (about 7 days) | Every session: no standby (`MIN_IDLE=0`); one would cost about $270 a month |
 
 The cache is the thing to watch. Anthropic caches a setup script only when it
-finishes in roughly five minutes; past that, every session runs it. The first real session took 235 s end to end, so the script
-finished with more than a minute to spare and the cache should have built; this
-session timed the installs alone at 255 s, so expect some variance either way. If the report shows sessions paying the install every time, run
+finishes in roughly five minutes; past that, every session runs it. On 2026-11-06 it wasn't used: the second session ran the
+script again, though it exited 0 (no `setup-script-failed`) in 166 s, well inside
+the limit. Setup ended 40 ms before `CCR_SPAWN_TIMESTAMP_MS`, so that session
+paid for the script itself. The per-toolset times that session logged were core
+55.1, native 6.4, jvm 2.1, browser 2.0, node 32.4, python 10.2, go 10.0, rust
+27.4, proto 10.0 and terraform 10.5 s. The undocumented guess is that the
+snapshot builds in the background after the first session and the second came
+too soon; a third session 15 to 20 minutes later settles it. If that one runs
+the script too, caching isn't happening and it's a question for Anthropic
+support, since the docs promise it for scripts this fast. If the report shows sessions paying the install every time, run
 the toolsets in parallel or drop the ones Anthropic already covers.
 
 `EXPECTED_SPAWN_SECONDS` is 180 for `linux`, three times the measured cold start,
