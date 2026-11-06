@@ -1,9 +1,8 @@
 # Plan: m4, binary checks, smoke tests and the versions report
 
-Status: s1 and s2 done 2026-11-06, green on lolay/agent-images#48. s3 approved and
-built: lint and unit tests pass; waiting on the PR's `cloud-build` run, then
-Gary's review before s4. To resume: check out this branch, read this plan and
-the PR.
+Status: s1 to s3 done 2026-11-06, green on lolay/agent-images#48 at `385a84f`.
+Waiting on Gary's review of s3 before s4 (the remaining smoke tests, by Sonnet
+subagents). To resume: check out this branch, read this plan and the PR.
 Branch `claude/bold-albattani-fg54u5` (assigned by the harness), from `main` at
 `68115e6`.
 
@@ -276,7 +275,7 @@ leave the branch, promoted to gcp.md, as its last commit.
   similar for gis and linux-gpu, uploaded as `versions-<type>-pr48-<sha>.md`. `--push` and `--load` leave versions-<type>'s
   local output alone (`bake --print` shows it; `test_bake.py` checks it), so the
   deploy keeps `push: true` and the risk in s2 didn't happen.
-- [x] s3 (built; PR run pending). The skill's one source is
+- [x] s3, green at `385a84f`. The skill's one source is
   `images/toolsets/skills/agent-toolset-checks/SKILL.md`, installed where the
   runner is (the cloud runner Dockerfile, android's provision.sh), not on the Mac
   or the LXD android image. The `toolset-check` label doesn't exist on
