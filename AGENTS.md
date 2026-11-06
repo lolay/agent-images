@@ -17,3 +17,16 @@ the limit (429 Too Many Requests). Official images go under `library/`:
 The mirror is a pull-through cache, so digests match Docker Hub's, but a tag can trail
 Docker Hub's briefly after it moves. If the mirror doesn't have an image, say so
 rather than falling back to Docker Hub silently.
+
+## One source per fact
+
+A setting, list or default that more than one script needs lives in one helper or
+file, which every script reads; don't copy it. Copies drift: r1 found six that had
+(the runner settings' defaults, the toolset checks, the type list, `JAVA_HOME`, env
+parsing, the Anthropic toolset list; `specs/reviews/2026-11-06-r1-full.md`).
+
+## Test fakes
+
+A test fake rejects what the real API would reject: a malformed body, a failed
+operation, an unknown flag. A fake that accepts anything lets a broken error path
+pass every test (r1.f10, f11, f14).
