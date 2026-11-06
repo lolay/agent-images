@@ -211,9 +211,11 @@ Findings so far (runs 1 to 3 of `m5-spike`):
   a banner on stdout, so the resolver runs `--entrypoint /bin/bash`.
 - **apt on plain Ubuntu:** `apt-get` exits 100. The error wasn't visible in run
   2; run 3 prints it.
-- **Homebrew (linux):** 21 top formulae, a closure of 69 without build-only
-  dependencies (100 with them), against 68 in the image's `brew list`.
-  Comparing names is pending run 3. `brew trust --tap` exists (Homebrew
+- **Homebrew (linux):** 21 top formulae, a closure of 69 lines without
+  build-only dependencies (100 with them). Once `brew info` resolves the alias
+  `python` to `python@3.15`, that's the image's 68 exactly, in names and
+  versions (run 3, against m4's deploy report). So `brew deps --union` without
+  build dependencies is the right closure. `brew trust --tap` exists (Homebrew
   7.0.11).
 - **Sources:** Claude `latest` 2.1.319 and `stable` 2.1.311; Rust stable
   1.99.1 from `channel-rust-stable.toml`; tflint `v0.65.0`; VirtualGL `3.1.5`;
