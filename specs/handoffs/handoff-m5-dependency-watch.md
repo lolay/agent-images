@@ -37,6 +37,16 @@ android-go and android-rust included (gcp.md, "m4 results"). Left:
 If one fails, the `/agent-toolset-checks` skill in a session on that image
 reruns it and offers to file an issue.
 
+## Where m5 stands (2026-11-06)
+
+PR A (lolay/agent-images#54, `10f4e44`) builds every Cloud Run type from its lock.
+Group 4 (s10 to s12) is on `claude/m5-lock-watch`: `lock-watch.yml`,
+`scripts/cloud/lock-watch.sh`, cloud-build's `gate`, and `CLAUDE_UPGRADE=false` on
+`nightly` types. Before PR B can merge usefully, the owner's setup in the plan
+(after s12): the App, the `lock-bot` environment and its two secrets, auto-merge
+allowed, `gate` required with zero approvals, and the cleanup policy out of dry
+run. s13 verifies on `main` after PR B merges.
+
 ## Gotchas
 
 - **Cloud sessions have no Docker daemon.** `docker buildx bake --print` still
@@ -52,3 +62,12 @@ reruns it and offers to file an issue.
   "Test fakes").
 - **r1.f27 is only partly closed.** The PATH and profile assembly, and
   `android-image-smoke.yml`'s hand-listed checks, are still separate copies.
+- **`lock-watch.yml` runs only on `main`** (`resolve`'s `if`, and `lock-bot`'s
+  branch policy), so nothing on a branch exercises `propose` against GitHub. The
+  dry run of `resolve` on PR B's branch (a throwaway job, deleted) is the closest.
+- **`make cloud-lint` needs Go now,** for `actionlint` (`go run`, Go's module proxy
+  and checksum database). actionlint runs shellcheck on every `run:` block, so a
+  markdown printf in a workflow needs `# shellcheck disable=SC2016`.
+- **`cloud-build` runs on every pull request** and `gate` is the required check.
+  A new path the check covers goes in the `changes` job's pattern, not a trigger
+  filter.

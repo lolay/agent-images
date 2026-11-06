@@ -1,14 +1,11 @@
 # Plan: m5, the dependency watch
 
 Status: approved as written (owner, 2026-11-06), D1 to D9 as recommended, and the
-draft PR for s4. Groups 1 to 3 (s1 to s9) done, each approved to run in this
-session (owner, 2026-11-06). PR A, lolay/agent-images#54 (still a draft), builds
-every type from its lock, with `cloud-build` green (run 42304209917). s9 was done
-on `main` by lolay/agent-images#52, and `main` is merged in at `4381ac1` (r2's
-fixes in #52 and #53 overlapped s3 and s6; see the merge commit). STOP: PR A
-waits for your review and merge. Then Group 4 (s10 to s13, PR B).
-Branch `claude/admiring-bell-0c7a1d` (assigned by the harness), from `main` at
-`ba55d96`.
+draft PR for s4. Groups 1 to 3 (s1 to s9) done; PR A, lolay/agent-images#54,
+merged as `10f4e44`. Group 4 approved (owner, 2026-11-06): s10 to s12 done on
+branch `claude/m5-lock-watch` (from `main` at `10f4e44`). STOP: your setup (the
+list after s12), then PR B's walkthrough and your go to open it. s13 runs on
+`main` after PR B merges.
 
 The design is m5 in [specs/gcp.md](../gcp.md), with "The lock", "Watch", "The lock
 bot", "Rebuild cadence" and "Pinning a dependency" above it. Context:
@@ -323,7 +320,7 @@ merge.** The first push deploy after it builds every type from its lock.
 
 ### Group 4 `[deep]`: the watch
 
-#### s10 - `lock-watch.yml`, the bot and the gate `[deep]`
+#### s10 - `lock-watch.yml`, the bot and the gate `[deep]` (done)
 
 - **Triggers:** `cron: '17 8-22 * * *'` for the `nightly` class and `47 4 * * 0`
   for all types (D4), both `timezone: America/Los_Angeles`, plus
@@ -345,13 +342,45 @@ merge.** The first push deploy after it builds every type from its lock.
 - **Tests:** unit tests cover the path guard, the title and the
   pinned-issue summary. `actionlint` covers the workflow.
 
-#### s11 - Claude's self-update off on `nightly` types (D6) `[exec]`
+s10 as built (`scripts/cloud/lock-watch.sh`, `tests/unit/test_lock_watch.py`,
+31 tests, 13 guards shown red when deleted):
+
+- **Two jobs.** `resolve` (read-only `GITHUB_TOKEN`) resolves, decides and writes
+  the pins summary; `propose` (environment `lock-bot`) gets only the moved locks,
+  as a job output, so the App's key never shares a runner with the base images and
+  apt runs pulled from upstream. `propose` runs the path guard itself, on every
+  file it was handed, before any GitHub call.
+- **The token is minted in the script,** not by `actions/create-github-app-token`:
+  this session can't read other repositories to pin an action by SHA, and 30 lines
+  of `openssl` and `curl` keep the key out of a third-party action. It's narrowed
+  to this repository with Contents and Pull requests write, and revoked at the end.
+- **A staging branch.** The plan's "reset `lock/watch` to `main`" would mark the
+  open pull request merged (its head would be in `main`). The commit goes on
+  `lock/watch-staging` at `main`'s head, then `lock/watch` moves to it.
+- **One pull request across both schedules.** The hourly run carries the open
+  pull request's locks for types it didn't resolve; a run whose candidate the open
+  pull request already proposes on `main`'s head pushes nothing (no hourly rebuild
+  of a red candidate); a run where nothing moved closes an open one.
+- **`cloud-build` runs on every pull request.** With the trigger's `paths` filter,
+  a pull request touching only `specs/` would never get the required `gate`. A
+  `changes` job applies the same paths, and `gate` passes when nothing relevant
+  changed.
+- `lock.sh pins <type>` reads the pins with upstream's newest (it holds the
+  upstream URLs); `lock-watch.sh pins` adds the issue state.
+- `actionlint` (v1.7.12, through `go run` in `make cloud-lint`) covers the cloud
+  workflows and `lock-watch.yml`; three summary printfs needed SC2016 notes.
+
+#### s11 - Claude's self-update off on `nightly` types (D6) `[exec]` (done)
 
 `gcp_runner_settings` emits `CLAUDE_UPGRADE=false` when the type's class is
 `nightly`. `test_job_spec.py` asserts it both ways: on for `linux`, absent for
 `gis`. A test with the class helper deleted goes red.
 
-#### s12 - Docs `[fast]`
+Done: `gcp_runner_settings <type>` (callers `job-spec.sh` and `spawn-runner` pass
+the type). Three mutations (class read replaced, always emitted, never emitted)
+each go red.
+
+#### s12 - Docs `[fast]` (done)
 
 Update these to match what was built:
 
