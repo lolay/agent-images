@@ -120,10 +120,10 @@ smoke() {
 	outputs_round_trip() {
 		local dir="$AGENT_OUTPUTS_ROOT/_smoke" file
 		file="$dir/${CLOUD_RUN_EXECUTION:-local}-$$"
-		mkdir -p "$dir" && printf 'smoke\n' >"$file" && [[ "$(cat "$file")" == "smoke" ]] || {
+		if ! { mkdir -p "$dir" && printf 'smoke\n' >"$file" && [[ "$(cat "$file")" == "smoke" ]]; }; then
 			echo "can't write, then read $file"
 			return 1
-		}
+		fi
 		rm -f "$file" || return 1
 		echo "wrote, read and deleted $file"
 	}
