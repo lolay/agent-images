@@ -1,10 +1,13 @@
 # Plan: m5, the dependency watch
 
 Status: approved as written (owner, 2026-11-06), D1 to D9 as recommended, and the
-draft PR for s4. Group 1 (s1 to s3) done; Group 2 approved to run in the same
-session (owner, 2026-11-06). s4 and s5 in progress on draft PR A,
-lolay/agent-images#54. Group 2 (s4, s5) done; the spike job is deleted. Next:
-the STOP gate before Group 3 (`[exec]`, s6 to s9).
+draft PR for s4. Groups 1 and 2 (s1 to s5) done; Group 3 approved to run in the
+same session (owner, 2026-11-06). On draft PR A, lolay/agent-images#54: s6 and
+s8 are written, s7 is seeding the locks with a throwaway job (`m5-seed`), and s9
+was done on `main` by lolay/agent-images#52. `main` is merged in at `4381ac1`
+(r2's fixes, #52 and #53, overlapped s3 and s6; see the merge commit). Next:
+commit the seeded locks, see `cloud-build` go green building from them, then PR
+A's walkthrough and the STOP for your review.
 Branch `claude/admiring-bell-0c7a1d` (assigned by the harness), from `main` at
 `ba55d96`.
 
@@ -272,7 +275,7 @@ tests, and the resolver's eleven guards each go red when deleted.
 
 ### Group 3 `[exec]`: the build consumes the lock
 
-#### s6 - Build from the lock `[exec]`
+#### s6 - Build from the lock `[exec]` (done)
 
 - The base Dockerfile writes the snapshot config from `ARG APT_SNAPSHOT`, and the
   runner stage removes it last (D5).
@@ -298,14 +301,14 @@ draft PR's runner (or `make cloud-lock` on a host with Docker). The PR's
 report against its lock: the apt list matches exactly, and the Homebrew set
 matches, versions aside (s4).
 
-#### s8 - `make cloud-lock` and the scheduled rebuilds `[exec]`
+#### s8 - `make cloud-lock` and the scheduled rebuilds `[exec]` (done)
 
 - `make cloud-lock TYPE=<type>` resolves locally and shows the diff, writing
   nothing unless `WRITE=1`. Makefile.md gets a row.
 - The scheduled rebuilds build from the lock on `main`, already true after s6. A
   test pins it, so a schedule can't drift back to `latest`.
 
-#### s9 - android's report to the summary (D2) `[exec]`
+#### s9 - android's report to the summary (D2) `[exec]` (done on `main`, #52)
 
 Packer downloads `/etc/agent-images/versions.md` (`provisioner "file"`,
 `direction = "download"`). `vm-images` appends it to the summary and uploads it as
