@@ -33,6 +33,28 @@ How `linux` compares with Anthropic's default cloud environment is in
 deploys only from `main`; `make cloud-status` shows what's live, and the `cloud-*`
 targets in [Makefile.md](Makefile.md#cloud-gcp) build and check it locally.
 
+### Types, images and where they run
+
+A **type** is what a session picks in claude.ai, named for what the work is for
+(plus `-gpu` when it has one). Its **image** is always `agent-<name>`, whatever it runs
+on. Where it runs is the backend's choice, not part of either name: `android` runs
+on two backends from the same provisioning scripts.
+
+| Type | Image | Backend | Root in the session | Status |
+| --- | --- | --- | --- | --- |
+| `mac` | `agent-macos` | A Tart VM per session on our Apple Silicon Macs | Yes (passwordless sudo) | Running |
+| `android` | `agent-android` | An LXD VM per session on an x86_64 Linux box | Yes (passwordless sudo) | Built; waiting for a box ([specs/linux.md](specs/linux.md)) |
+| `android` | `agent-android` (GCE image family) | A Compute Engine VM per session, nested KVM | Yes (passwordless sudo) | Built; waiting for its first deploy (m2) |
+| `linux` | `agent-linux` | A Cloud Run job execution per session | No: Cloud Run sets no-new-privileges | Running (m1) |
+| `gis` | `agent-gis` | A Cloud Run job execution per session | No | Running (m2) |
+| `linux-gpu` | `agent-linux-gpu` | Cloud Run job with an RTX PRO 6000 | No | Planned (m3) |
+| `3d-gpu` | `agent-3d-gpu` | Cloud Run job with an RTX PRO 6000 | No | Planned (m3) |
+
+Not types: `agent-base` and `agent-base-gpu` are build parents, never deployed;
+`agent-orchestrator` runs Claude's orchestrator on the GCP `e2-micro`; the host
+runner uses no image. Anthropic's own cloud environment isn't ours either; how it
+compares with `linux` is in [specs/anthropic-cloud.md](specs/anthropic-cloud.md).
+
 ## Requirements
 
 Hosts: Apple Silicon Macs on macOS 27 (Golden Gate). Guests are Golden Gate too.
