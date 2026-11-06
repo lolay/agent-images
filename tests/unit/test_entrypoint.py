@@ -199,6 +199,17 @@ class RefusalTests(EntrypointCase):
         self.assertIn("not a mount", result.stderr)
         self.assertFalse((self.out / "env").exists())
 
+    def test_refuses_a_task_timeout_without_a_margin(self):
+        result = self.run_entrypoint(AGENT_TASK_TIMEOUT_SEC="34200")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("AGENT_RETIRE_MARGIN_SEC is required", result.stderr)
+        self.assertFalse((self.out / "env").exists())
+
+    def test_a_margin_alone_is_not_needed_without_a_task_timeout(self):
+        result = self.run_entrypoint()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("CLAUDE_RETIRE_AT", read_env_file(self.out / "runner.env"))
+
     def test_refuses_a_timeout_inside_the_margin(self):
         result = self.run_entrypoint(AGENT_TASK_TIMEOUT_SEC="600", AGENT_RETIRE_MARGIN_SEC="900")
         self.assertEqual(result.returncode, 1)
