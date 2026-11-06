@@ -321,10 +321,14 @@ Steps for [gcp.md](gcp.md) m2, ahead of `gis` and `android`:
   the count, and once the builds agree nothing is dropped. The environment also
   carries the cloud-native stack: GeoParquet and Arrow, polars, Zarr, Dask,
   odc-stac, COPC through untwine, tippecanoe and PMTiles, H3, osmium.
-- s7: the `display` toolset in `linux` and `gis`: Xvfb at `:99`, which the entrypoint
-  starts before the runner (and before the smoke checks), with Mesa's software
-  OpenGL and ImageMagick for screenshots. The session tests' display steps (QGIS
-  desktop in `gis`, headed Chromium in `linux`) run instead of skipping.
+- s7 (done): the `display` toolset in `linux` and `gis`: Xvfb at `:99`, which the
+  entrypoint starts before the runner (and before the smoke checks), with Mesa's
+  software OpenGL, ImageMagick for screenshots, xdotool to size windows (there's no
+  window manager) and Open Sans (QGIS downloads it at start otherwise). The session
+  tests' display steps (QGIS desktop in `gis`, headed Chromium in `linux`) run
+  instead of skipping. Checked in both images: smoke passes the display, OpenGL
+  (llvmpipe) and screenshot checks; QGIS 4.2 desktop runs full-screen with a layer
+  drawn; headed Chromium runs full-screen with WebGL 1.0. About 100 MB per image.
 
 `linux-gpu` and `3d-gpu` follow in m3 on the same structure, and both install
 `display` (it's in their lists above): the virtual display comes from s7, and m3
