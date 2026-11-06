@@ -1,7 +1,7 @@
 # Plan: m3, the GPU types on GCP
 
-Status: s1 done 2026-11-06 ([infra-ask-m3-gpu.md](infra-ask-m3-gpu.md)). The base
-image and `gpu` toolset decisions are still open; s2 waits on them.
+Status: s1 done 2026-11-06 ([infra-ask-m3-gpu.md](infra-ask-m3-gpu.md)). Layout
+decided (owner, 2026-11-06); s2 next.
 Branch `claude/vigilant-tesla-m2ipbw` (assigned by the harness), from `main` at
 `154787f`.
 
@@ -19,13 +19,15 @@ that code.
 
 ```
 mirror.gcr.io/nvidia/cuda:13.0.x-devel-ubuntu24.04
-  base-gpu    images/cloud/base/Dockerfile with BASE_IMAGE overridden: user, core,
-              then the gpu toolset (CUDA env, GLVND/EGL and Vulkan ICD files for
-              the driver Cloud Run mounts, VirtualGL, vulkan-tools)
-    linux-gpu-tools   images/cloud/linux/Dockerfile, agent-base = base-gpu
-      linux-gpu       the shared runner stage (Claude last)
+  base-gpu    images/cloud/base/Dockerfile with BASE_IMAGE overridden: user, core
+    linux-tools-gpu   images/cloud/linux/Dockerfile, agent-base = base-gpu
+      linux-gpu-tools images/cloud/linux-gpu/Dockerfile: FROM linux-tools-gpu,
+                      then the gpu toolset (CUDA env, GLVND/EGL and Vulkan ICD
+                      files for the driver Cloud Run mounts, VirtualGL,
+                      vulkan-tools, a CUDA probe)
+        linux-gpu     the shared runner stage (Claude last)
     3d-gpu-tools      images/cloud/3d-gpu/Dockerfile: native, display, 3d
-                      (COLMAP from a builder stage, Blender, /opt/3d)
+                      (COLMAP from a builder stage, Blender, /opt/3d), then gpu
       3d-gpu          the shared runner stage
 
 infra/gcp/linux-gpu.env, 3d-gpu.env
@@ -34,20 +36,25 @@ infra/gcp/linux-gpu.env, 3d-gpu.env
      zonal redundancy off
 ```
 
-## Decisions made here (say if you want otherwise)
+## Decisions
 
-- **One base Dockerfile, two bases.** `images/cloud/base/Dockerfile` takes
-  `ARG BASE_IMAGE` (default Ubuntu through the mirror); bake target `base-gpu`
-  overrides it with the CUDA devel image. `linux-gpu-tools` reuses
-  `images/cloud/linux/Dockerfile` unchanged, with `agent-base` pointed at
-  `base-gpu`. So `linux-gpu` really is `linux` plus the GPU, and can't drift from
-  it. gcp.md's separate `images/cloud/base-gpu/Dockerfile` isn't needed.
-- **A `gpu` toolset in `base-gpu` instead of `cuda` in `linux-gpu`.** Both GPU
-  types need GPU rendering, and image-toolsets.md gives `3d-gpu` no `cuda` toolset.
-  So the GPU pieces (CUDA's `PATH`, the GLVND EGL vendor file and the Vulkan ICD
-  file pointing at NVIDIA's libraries, VirtualGL, `vulkan-tools`, `nvtop`) go in a
-  `gpu` toolset that `base-gpu` installs after `core`. The CUDA toolkit itself comes
-  with the base image. image-toolsets.md's tables change to match.
+- **One base Dockerfile, two bases (owner, 2026-11-06).**
+  `images/cloud/base/Dockerfile` takes `ARG BASE_IMAGE` (default Ubuntu through the
+  mirror); bake target `base-gpu` overrides it with the CUDA devel image.
+  `linux-tools-gpu` reuses `images/cloud/linux/Dockerfile` unchanged, with
+  `agent-base` pointed at `base-gpu`, so `linux-gpu` is `linux` plus the GPU and
+  can't drift from it. gcp.md's separate `images/cloud/base-gpu/Dockerfile` isn't
+  needed. If `linux-gpu` ever has to differ from `linux`, it gets its own copy then.
+- **A `gpu` toolset on top of each GPU type (owner, 2026-11-06).** The GPU pieces
+  (CUDA's `PATH`, the GLVND EGL vendor file and the Vulkan ICD file pointing at
+  NVIDIA's libraries, VirtualGL, `vulkan-tools`, `nvtop`, a small CUDA probe) are
+  the `gpu` toolset, the last tools layer of `linux-gpu` and `3d-gpu`. On top
+  rather than in `base-gpu`, because s2 to s7 iterate on those files and a change
+  low in the stack would rebuild every toolset above it. Each GPU type gets a small
+  `images/cloud/<type>/Dockerfile`, which also gives `changed-targets.sh` a
+  directory to map. Once s7 settles graphics and the files stop moving, moving it
+  into `base-gpu` is optional. It replaces image-toolsets.md's `cuda` toolset (the
+  CUDA toolkit comes with the base image); its tables change to match.
 - **Build for the L4 and Blackwell both (owner, 2026-11-06):** `sm_89` and `sm_120`, plus PTX for
   `compute_120`, everywhere we compile CUDA (COLMAP, gsplat, the smoke probe). It
   costs build time, and it lets the cheap L4 run the same image while we test.
@@ -71,12 +78,16 @@ and 3 RTX PRO 6000 automatically, so the quota likely needs no Terraform.
 #### s2 - `base-gpu` and the `gpu` toolset [deep]
 
 - `ARG BASE_IMAGE` in `images/cloud/base/Dockerfile`; bake target `base-gpu`.
+  The CUDA image is built on `ubuntu:24.04`, so its `ubuntu` user (uid 1000)
+  should be there; check rather than assume.
 - `images/toolsets/gpu`: `packages.txt` (VirtualGL from its own apt repo or
   release `.deb`, `vulkan-tools`, `libvulkan1`, `libglvnd`'s EGL pieces, `nvtop`),
   `install.sh` writing the EGL vendor JSON and Vulkan ICD JSON for the driver
   libraries under `/usr/local/nvidia/lib64` plus an `ld.so.conf.d` entry,
   `profile.sh` (CUDA on `PATH`), `CLAUDE.md`, `check.txt`.
-- Build `base-gpu` locally or in CI without a GPU; nothing in it may need one.
+- `images/cloud/linux-gpu/Dockerfile` (`FROM` `linux-tools-gpu`, then `gpu`) and
+  its bake targets, so s2 builds a whole `linux-gpu-tools` image.
+- Build it locally or in CI without a GPU; nothing in it may need one.
 
 #### s3 - GPU in the job spec [exec]
 
@@ -97,8 +108,9 @@ device probe (built into the `gpu` toolset at image time); `eglinfo -B` and
 
 - `infra/gcp/linux-gpu.env` on the L4 (CPU and memory at the L4's minimums or the
   `linux` job's, whichever is larger), `MIN_IDLE=0`.
-- Bake targets `base-gpu`, `linux-gpu-tools`, `linux-gpu`; `changed-targets.sh`
-  knows `linux-gpu` depends on the `gpu` toolset and on everything `linux` does.
+- Bake target `linux-gpu` (the runner stage) and the deploy's target list;
+  `changed-targets.sh` follows `linux-gpu`'s Dockerfile chain through
+  `linux-tools-gpu` to `linux`'s toolsets and `base`.
 - The deploy's disk: measure the image against the hosted runner's free disk
   (about 14 GB after "Free disk"); if it doesn't fit, a larger runner or
   pruning between stages, decided here.

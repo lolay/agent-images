@@ -12,9 +12,8 @@ from `main` at `154787f`. Plan: [plan-gpu-types-ember.md](plan-gpu-types-ember.m
 
 ## Pending
 
-Pending question to the owner: one base Dockerfile with `BASE_IMAGE` (linux-gpu reuses
-linux's Dockerfile), or gcp.md's separate `base-gpu` Dockerfile; and with it, the
-`gpu` toolset in `base-gpu` or a `cuda` toolset per type. s2 starts after the answer.
+Layout decided (owner): one base Dockerfile with `BASE_IMAGE`, `linux-gpu` reusing
+`linux`'s Dockerfile, and a `gpu` toolset on top of each GPU type. s2 is next.
 The owner acts on [infra-ask-m3-gpu.md](infra-ask-m3-gpu.md).
 
 The owner chose to skip the review gate: the full review of `main` covering m1 and
