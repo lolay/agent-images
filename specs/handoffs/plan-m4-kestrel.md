@@ -1,8 +1,9 @@
 # Plan: m4, binary checks, smoke tests and the versions report
 
-Status: s1 done 2026-11-06; draft PR lolay/agent-images#48 green at `e29d598`.
-Waiting on Gary's review of s1 before s2 (STOP: approval is per step). To resume:
-check out this branch, read this plan and the PR.
+Status: s1 done 2026-11-06. s2 approved and built: lint and unit tests pass in the
+session; waiting on lolay/agent-images#48's `cloud-build` run for the reports, then
+Gary's review before s3. To resume: check out this branch, read this plan and
+the PR.
 Branch `claude/bold-albattani-fg54u5` (assigned by the harness), from `main` at
 `68115e6`.
 
@@ -271,7 +272,9 @@ leave the branch, promoted to gcp.md, as its last commit.
   `make cloud-smoke` had never run in CI and Docker refuses a read-only anonymous
   volume (now a read-only tmpfs); `Xvfb -version` prints no version line (now
   `command -v`).
-- [ ] s2
+- [x] s2 (built; PR run pending). `--push` and `--load` leave versions-<type>'s
+  local output alone (`bake --print` shows it; `test_bake.py` checks it), so the
+  deploy keeps `push: true` and the risk in s2 didn't happen.
 - [ ] s3 (session skill)
 - [ ] s4
 - [ ] s5
