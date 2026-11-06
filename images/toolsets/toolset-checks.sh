@@ -60,7 +60,7 @@ versions() {
 			fi
 		done <"$dir/$name.check"
 	done <"$dir/toolsets.txt"
-	if ((! checked)); then
+	if ((checked == 0)); then
 		printf 'agent-toolset-checks: no recorded toolset has a .check file in %s: nothing was checked\n' "$dir" >&2
 		return 1
 	fi
