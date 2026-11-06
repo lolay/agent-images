@@ -49,6 +49,13 @@ class ToolsetChecksTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertEqual(result.stdout.splitlines(), ["go: go1.99", "nvcc: missing (not found)"])
 
+    def test_versions_fails_when_no_toolset_recorded_a_check(self):
+        """An empty record passed every gate, having checked nothing (r2.f1)."""
+        self.smoke_test("go", "true\n")
+        result = self.run_checks("versions")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no binary checks recorded", result.stdout)
+
     def test_smoke_list_is_the_toolsets_with_a_test_in_install_order(self):
         self.smoke_test("gpu", "true\n")
         self.smoke_test("go", "true\n")

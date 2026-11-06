@@ -337,6 +337,27 @@ class SmokeTestTests(EntrypointCase):
         self.assertIn("smoke: pass smoke-first (first: ok)", lines)
         self.assertIn("smoke: skip smoke-second (live only: needs a GPU)", lines)
 
+    def test_pr_passes_with_a_live_test_skipped(self):
+        """Every check passing, with a live test skipped, is a pass (r2.f2): fake a
+        scratch mount and a datasets mount that refuses writes, which a temp dir
+        under root can't be."""
+        write_executable(self.fake_bin / "mountpoint", '[[ "$1" == -q ]] || exit 2\nexit 0\n')
+        write_executable(
+            self.fake_bin / "findmnt", '[[ "$*" == "-n -o FSTYPE --target $AGENT_SCRATCH" ]] || exit 2\necho ext4\n'
+        )
+        write_executable(
+            self.fake_bin / "touch",
+            '[[ "$1" != "$AGENT_DATASETS"/* ]] || { echo "touch: Read-only file system" >&2; exit 1; }\n'
+            'exec /usr/bin/touch "$@"\n',
+        )
+        self.record("first", 'echo "first: ok"\n')
+        self.record("second", "exit 1\n", live="needs a GPU")
+        result = self.run_entrypoint("smoke", "pr")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("smoke: skip smoke-second (live only: needs a GPU)", self.smoke_lines(result))
+        self.assertNotIn("smoke: FAIL", result.stdout)
+        self.assertIn("smoke passed", result.stdout + result.stderr)
+
     def test_without_pr_live_tests_run(self):
         self.record("second", "exit 1\n", live="needs a GPU")
         result = self.run_entrypoint("smoke")

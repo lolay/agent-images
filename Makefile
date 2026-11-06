@@ -315,7 +315,8 @@ cloud-build: ## Build a cloud image locally as agent-<TYPE>:local: TYPE=linux|or
 # pull request check runs) skips the smoke tests that need what a plain host
 # lacks, a GPU; SMOKE= runs them all, as the deploy does.
 SMOKE ?= pr
-cloud-smoke: ## Run a built image's binary checks and smoke tests against stand-in volumes: TYPE=linux [SMOKE=pr]
+cloud-smoke: ## Check a built image's toolset record, then run its binary checks and smoke tests against stand-in volumes: TYPE=linux [SMOKE=pr]
+	scripts/cloud/record-check.sh $(TYPE) agent-$(TYPE):local
 	docker run --rm -v /scratch -v /mnt/outputs --tmpfs /mnt/datasets:ro \
 	  agent-$(TYPE):local smoke $(SMOKE)
 

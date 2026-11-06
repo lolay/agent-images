@@ -8,7 +8,8 @@
 #   agent-toolset-checks versions
 #       Every binary check (<name>.check, `label: command`), in install order:
 #       `label: <first line of output>`, or `label: missing (<last line>)` for one
-#       that failed. Exits 1 if any failed.
+#       that failed. Exits 1 if any failed, or if no toolset recorded a check
+#       (an empty record would otherwise pass having checked nothing; r2.f1).
 #   agent-toolset-checks smoke-list
 #       The toolsets with a smoke test (<name>.smoke.sh), in install order.
 #   agent-toolset-checks live <name>
@@ -40,9 +41,10 @@ readonly offline=(GOPROXY=off GOFLAGS=-mod=mod GOTOOLCHAIN=local CARGO_NET_OFFLI
 	UV_OFFLINE=1 UV_PYTHON_DOWNLOADS=never npm_config_offline=true CHECKPOINT_DISABLE=1)
 
 versions() {
-	local name line label command output failed=0
+	local name line label command output failed=0 recorded=0
 	while read -r name; do
 		[[ -f "$dir/$name.check" ]] || continue
+		recorded=$((recorded + 1))
 		while IFS= read -r line; do
 			[[ -n "$line" && "$line" != \#* ]] || continue
 			label="${line%%: *}" command="${line#*: }"
@@ -55,6 +57,10 @@ versions() {
 			fi
 		done <"$dir/$name.check"
 	done <"$dir/toolsets.txt"
+	if ((recorded == 0)); then
+		printf 'no binary checks recorded in %s\n' "$dir"
+		return 1
+	fi
 	return "$failed"
 }
 

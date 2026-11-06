@@ -1,7 +1,8 @@
 # Plan: m5, the dependency watch
 
 Status: approved as written (owner, 2026-11-06), D1 to D9 as recommended, and the
-draft PR for s4. s1 and s2 done.
+draft PR for s4. Group 1 (s1 to s3) done. Next: s4 on Opus 5.5 (high),
+which opens PR A as a draft so CI can run the spike job. No PR is open yet.
 Branch `claude/admiring-bell-0c7a1d` (assigned by the harness), from `main` at
 `ba55d96`.
 
@@ -144,7 +145,7 @@ in `hooks/gcp/lib.sh`, because the orchestrator image carries that file for
 sources it. `test_changed_targets.py` must stay green unchanged. Fix r2.f5 (temp
 repos inherit the host's git config) while in those tests.
 
-#### s3 - Make the gate fail when it checked nothing (r2.f1, r2.f2) `[exec]`
+#### s3 - Make the gate fail when it checked nothing (r2.f1, r2.f2) `[exec]` (done)
 
 - `AGENT_TOOLSETS_DIR` overrides `record_dir` in `install-toolset.sh` and the
   readers (D7). Test that `record` installs `<name>.check` and `<name>.smoke.sh`
@@ -158,6 +159,13 @@ repos inherit the host's git config) while in those tests.
 - Under AGENTS.md "Tests that can fail", each new test is shown red with its guard
   deleted (r2's mutations: `smoke.sh:smoke` at `install-toolset.sh:64`, and
   `failed=1` in the live-skip branch), and the step's commit says so.
+
+Done as `scripts/cloud/record-check.sh`, which `make cloud-smoke` runs first. It
+reads the record through one `docker run`, using the image's own
+`AGENT_TOOLSETS_DIR`. Eight mutations each turned a test red. D7 is only part
+done: `install-toolset.sh` now honors `AGENT_TOOLSETS_DIR`, but the readers still
+default the path themselves. Making `write-versions.sh` the one writer of
+`versions.md` goes with s6 (the runner Dockerfile) and s9 (`provision.sh`).
 
 **STOP: swap to `[deep]`** (Opus 5.5, high).
 
