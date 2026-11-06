@@ -187,6 +187,16 @@ class StartTests(SupervisorCase):
         self.assertIn("--health-port 18080", self.start_record("gis")["args"])
         self.assertIn("--health-port 18081", self.start_record("linux")["args"])
 
+    def test_deploy_false_on_a_compute_type_is_refused(self):
+        (self.env_dir / "android.env").write_text("BACKEND=compute\nDEPLOY=false\n")
+        self.start()
+        self.assertEqual(self.process.wait(timeout=10), 1)
+        self.wait_for(
+            lambda: any("android: DEPLOY=false is for Cloud Run types only" in line for line in self.lines),
+            what="the refusal",
+        )
+        self.assertEqual(self.starts("linux"), [])
+
     def test_only_deploy_false_types_is_an_error(self):
         for name in ("linux", "gis"):
             (self.env_dir / f"{name}.env").write_text("DEPLOY=false\n")

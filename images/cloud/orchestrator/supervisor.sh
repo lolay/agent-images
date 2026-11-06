@@ -105,6 +105,13 @@ prefix_lines() { sed -u "s/^/[$1] /"; }
 deployed=()
 for type in "${types[@]}"; do
 	if [[ "$(type_setting "$type" DEPLOY true)" == false ]]; then
+		# DEPLOY=false is for Cloud Run types: deploy.sh builds and promotes a
+		# compute type's image regardless, so dropping its orchestrator would
+		# leave a VM image nothing serves. Refuse it rather than skip it.
+		if [[ "$(type_setting "$type" BACKEND run)" == compute ]]; then
+			log "$type: DEPLOY=false is for Cloud Run types only, not BACKEND=compute; remove it from its env file"
+			exit 1
+		fi
 		log "$type: DEPLOY=false in its env file; not starting its orchestrator"
 	else
 		deployed+=("$type")
