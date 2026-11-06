@@ -1,6 +1,6 @@
 # Per-type rebuild cadence for the GCP images
 
-Status: s1 done; s2 next.
+Status: s1, s2 done; s3 next.
 
 ## Context
 
@@ -48,7 +48,7 @@ last commit before merge.
 - Side effect, intended: touching the env files redeploys each job (no image build) and
   the orchestrator on the next push. Harmless.
 
-### s2 - `changed-targets.sh --schedule <class>` [exec]
+### s2 - `changed-targets.sh --schedule <class>` [exec] (done)
 
 - `scripts/cloud/changed-targets.sh`: new mode `--schedule nightly|weekly` that
   emits the same JSON shape as `--all`, filtered to types whose `REBUILD` matches
@@ -80,6 +80,11 @@ last commit before merge.
   self-updates regardless); rewrite "Nightly" to point at it; m4: the hourly watch
   covers `nightly` types only and `CLAUDE_UPGRADE=false` applies only to them;
   deploy-map table notes `REBUILD`.
+- `specs/gcp.md`, the `android` image bullet: say why it builds in GCP, not on the
+  GitHub runner (asked for mid-session): the output is a Compute Engine image, the
+  emulator snapshot needs KVM in the build VM, and building a 100 GB raw disk on a
+  hosted runner to upload and import is slower and more fragile; the GitHub job only
+  drives Packer and waits.
 - `specs/claude-releases.md` "Proposal": one line that the hourly watch and nightly
   apply to the fast types, slow ones keep self-updating.
 
