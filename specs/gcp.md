@@ -887,6 +887,7 @@ with nothing installed during the session. What it found:
   GPU types move to the Compute Engine path (G4).
 - `3d-gpu`: COLMAP, Blender and the splatting library built for compute capability
   12.0. Done when [tests/sessions/3d-gpu.md](../tests/sessions/3d-gpu.md) passes.
+- Handoff: [handoffs/handoff-m3-gpu-types.md](handoffs/handoff-m3-gpu-types.md).
 
 ### m4 - Dependency watch
 
