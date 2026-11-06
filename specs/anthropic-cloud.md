@@ -11,26 +11,25 @@ on its own schedule, so re-measure before relying on a version.
 
 ## Summary
 
-Same hardware, opposite philosophies. Anthropic's is a fat, root, general-purpose VM
-with many runtimes at fixed, older versions, Docker, browsers, and a proxy in front
-of every request that keeps credentials out of the VM. `agent-linux` is a lean,
-non-root image with the latest of each toolchain and the Lolay session tools, picked
-by the rule in [image-toolsets.md](image-toolsets.md).
-
-Anthropic's environment can carry `agent-linux`'s tools too, and measured, it
-starts faster than `agent-linux` does: about 12 s from Anthropic's cache against
-about 55 s on Cloud Run. The setup script takes 3 to 4 minutes, paid by the
-sessions that start while the cache builds, then again about weekly or after the
-script changes. That leaves the real differences as cost, root and Docker on
-Anthropic's side, and the outputs and datasets buckets, no egress proxy, larger
-machines (`gis`, the GPU types) and full control of the image on ours.
+The differences, side by side. Each section below has the detail and the source.
 
 | | Anthropic `cloud_default` | Anthropic + `agent-linux` tools | `agent-linux` |
 | --- | --- | --- | --- |
-| Cold start | About 12 s, measured by hand | About 12 s from the cache; 2 min 45 s to 3 min 55 s while it builds (below) | About 55 s (m1), plus the orchestrator's queue |
-| Compute cost | None beyond the plan | None beyond the plan | About $0.37 an hour per session |
-| Tool versions | Fixed by Anthropic, months behind | Latest, as of the cache build | Latest, as of the nightly build |
+| Runs on | Anthropic's VM | Anthropic's VM, plus `scripts/anthropic/setup.sh` | Cloud Run, our image |
+| CPU, memory | 4 vCPU, 16 GB | 4 vCPU, 16 GB | 4 vCPU, 16 GiB |
+| Disk | 30 GB | 30 GB | 10 GiB scratch; the rest is memory |
+| Larger machines | No | No | `gis` (8 vCPU, 32 GiB), GPU types (m3) |
 | Root, apt, Docker | Yes | Yes | No |
+| Cold start | About 12 s | About 12 s from the cache; 2:45 to 3:55 while it builds | About 55 s |
+| Cache rebuild | n/a | After a script change, or about weekly | Nightly image build in CI |
+| Compute cost | None beyond the plan | None beyond the plan | About $0.37 an hour per session |
+| Toolchains | Set by Anthropic: Node 22, Go 1.24, Python 3.13 | Latest at the cache build | Latest at the nightly build |
+| Other runtimes | Ruby, PHP, Bun, Maven, Gradle, Nix, Chrome, Postgres, Redis | The same as `cloud_default` | No |
+| Lolay session tools | About half of `core` | All of `core`, `proto`, `terraform` | All of `core`, `proto`, `terraform` |
+| Egress | Anthropic's proxy: allowlist, re-terminated TLS | The same | Direct, through Cloud NAT |
+| Credentials | Outside the VM; the proxy attaches them, network secrets available | The same | None; no network secrets |
+| Persistence | Git | Git | Git, `$AGENT_OUTPUTS`, `$AGENT_DATASETS` |
+| Image | Anthropic's | Anthropic's, extended | Ours |
 
 ## Hardware
 
@@ -91,11 +90,8 @@ waits on it.
 | Model usage | The plan's usage limits | The same plan's usage limits: self-hosted moves only the compute |
 | Limits | Rate limits shared with all the account's Claude use; parallel sessions draw them down faster | The same, plus our own Cloud Run quotas |
 
-So the cost question is only about compute. An 8-hour `linux` session is about
-$3 at list price; the same session on Anthropic's VM is nothing extra. What
-`agent-linux` buys for that is the buckets, no proxy, a 10 GiB disk we can grow, the
-`gis` and GPU types (which Anthropic's 4 vCPU and 16 GB can't serve), and control
-over the image.
+An 8-hour session is about $3 of compute on `linux` at list price, and nothing
+beyond the plan on Anthropic's VM.
 
 ## Tool versions
 
@@ -150,9 +146,9 @@ Everything from Ubuntu's archive is the same on both, since both are Ubuntu 24.0
 | gcloud, gsutil, bq | 570 | No |
 | Homebrew | No | Yes, owned by the session user |
 
-Read across: Anthropic covers more languages; `agent-linux` covers the Lolay session
-tools and is a major version or two ahead on Node, Go and Python. Neither is a
-superset of the other.
+Anthropic's image has more languages; `agent-linux` has the Lolay session tools and
+is a major version or two ahead on Node, Go and Python. Neither is a superset of the
+other.
 
 ## Network and proxy
 
@@ -207,8 +203,8 @@ at container start and the setup script's output:
 
 ## Matching agent-linux on Anthropic's cloud
 
-An experiment, not a decision: give an Anthropic environment `agent-linux`'s tools
-and compare how fast sessions start and what they get.
+Gives an Anthropic environment `agent-linux`'s tools, and records how fast its
+sessions start.
 
 `scripts/anthropic/setup.sh` installs `agent-linux`'s toolsets in `agent-linux`'s
 order, with the same `install-toolset.sh`, timing each into
