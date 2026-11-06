@@ -31,6 +31,12 @@ def base_env(home: Path, fake_bin: Path, **extra: str) -> dict:
     return env
 
 
+def git_env() -> dict:
+    """The environment for git in a test's temp repo: the host's global and system
+    config (commit signing, hooks, includes) must not reach it."""
+    return {**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"}
+
+
 def read_env_file(path: Path) -> dict:
     """Parse KEY=value lines (as written by printf %q for plain values)."""
     values = {}

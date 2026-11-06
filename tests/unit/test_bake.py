@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from support import REPO
+from support import REPO, git_env
 
 BAKE_FILE = "images/cloud/docker-bake.hcl"
 CHANGED_TARGETS = REPO / "scripts/cloud/changed-targets.sh"
@@ -111,7 +111,7 @@ class BakeTests(unittest.TestCase):
 
         def git(*args):
             return subprocess.run(
-                ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True
+                ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True, env=git_env()
             ).stdout.strip()
 
         git("init", "-q", "-b", "main")
@@ -131,6 +131,7 @@ class BakeTests(unittest.TestCase):
                 plan = subprocess.run(
                     ["bash", str(CHANGED_TARGETS), base, git("rev-parse", "HEAD")],
                     cwd=repo,
+                    env=git_env(),
                     check=True,
                     capture_output=True,
                     text=True,
