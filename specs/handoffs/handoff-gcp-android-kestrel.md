@@ -6,21 +6,24 @@ Branch `claude/youthful-dijkstra-09v7kk` (assigned by the harness), from `main` 
 ## Done
 
 - Checked that lolay/agent-images#18 merged; cut the branch from the latest `main`.
-- Read the brief's files and wrote the plan (s1 to s8). Nothing built yet.
+- Wrote the plan (s1 to s8); built s1 to s6 (commits m2.s1 to m2.s6), and the PR draft `plan-gcp-android-kestrel-review.md`.
 
 ## Pending: the owner's answer, verbatim
 
-> Go on s1 to s6 (no GCP spend)? And the one departure from the brief: the reaper
-> removes the work-order metadata key once the guest marks it read in a guest
-> attribute, instead of the guest deleting it, because that would need
-> `compute.instances.setMetadata` on `agent-runner`, which lets one session rewrite
-> another session VM's startup-script.
+> s1 to s6 are done and pushed. Go on s7: open the PR (draft in
+> plan-gcp-android-kestrel-review.md) and, once you merge it, the first deploy builds
+> the image and boots a smoke VM (about $0.50)? Before s8 you also need the "Agent:
+> Android" environment in claude.ai and the `claude-env-android` secret.
 
 ## Resume
 
-Read the plan, then start at s1 if the answer is go. s7 (the first deploy) waits for
-a second go: it spends money, and needs the "Agent: Android" environment and
-`claude-env-android` from the owner.
+If the answer is go: on a runner, `git rm` the review draft, commit, push, then open the
+PR with the draft's text as the body (REST, not `gh pr create`), and subscribe to it.
+After the merge, watch `cloud-deploy`'s `vm image (android)` job: the Packer build
+(does the build VM's nested KVM boot the emulator?), the smoke VM's boot times in the
+run summary, and the promotion. Then s8 (the session test) once the environment and
+secret exist. Remove this handoff and the plan, or promote them, before the m2 PR
+that closes the milestone merges.
 
 ## Gotchas found while planning
 
