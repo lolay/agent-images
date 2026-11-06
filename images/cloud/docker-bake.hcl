@@ -45,9 +45,15 @@ function "versions_output" {
   result = ["type=local,dest=out/versions/${name}"]
 }
 
+# The CPU types' base image: Docker Hub's ubuntu through Google's mirror (Docker
+# Hub rate-limits anonymous pulls). The tag is the constraint; the build passes
+# the digest the type's lock resolved it to (scripts/cloud/lock.sh bake-args).
 target "base" {
   context    = "."
   dockerfile = "images/cloud/base/Dockerfile"
+  args = {
+    BASE_IMAGE = "mirror.gcr.io/library/ubuntu:24.04"
+  }
 }
 
 # The runner stage every type ends with; a type's target inherits it and names

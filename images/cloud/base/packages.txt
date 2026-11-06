@@ -1,0 +1,5 @@
+# What agent-base installs before any toolset (images/cloud/base/Dockerfile):
+# sudo for the session user, and curl for Homebrew's installer.
+sudo
+ca-certificates
+curl

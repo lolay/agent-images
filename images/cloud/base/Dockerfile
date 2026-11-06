@@ -8,15 +8,18 @@
 # The user is the stock image's ubuntu (uid 1000) with passwordless sudo, like
 # the Linux image's ubuntu and the macOS image's admin: sessions install what a
 # repo needs, and nothing outlives the execution.
-# Docker Hub's ubuntu through Google's mirror: Docker Hub rate-limits anonymous
-# pulls, and mirror.gcr.io caches the same images without that limit. The GPU
-# types' parent, base-gpu, is this file on CUDA's devel image instead
-# (BASE_IMAGE in docker-bake.hcl), which is built on the same ubuntu:24.04.
-ARG BASE_IMAGE=mirror.gcr.io/library/ubuntu:24.04
+# BASE_IMAGE comes from docker-bake.hcl, the one place it's declared: Ubuntu
+# through Google's mirror for base, CUDA's devel image (on the same Ubuntu) for
+# base-gpu. The build passes the lock's digest for it (scripts/cloud/lock.sh).
+ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
-RUN apt-get update \
-	&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends sudo ca-certificates curl \
+# packages.txt: what the base needs before any toolset (sudo, and curl for
+# Homebrew's installer); the lock resolves it with the toolsets' lists.
+RUN --mount=type=bind,source=images/cloud/base/packages.txt,target=/tmp/base-packages.txt \
+	apt-get update \
+	&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+		$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' /tmp/base-packages.txt) \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/ubuntu \
 	&& chmod 440 /etc/sudoers.d/ubuntu

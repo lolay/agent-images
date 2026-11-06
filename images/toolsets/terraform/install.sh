@@ -1,15 +1,24 @@
 #!/bin/bash
-# The terraform toolset's latest Terraform (tenv only manages versions) and
-# tflint. Run by install-toolset.sh after the Brewfile, with Homebrew on PATH.
+# The terraform toolset's Terraform (tenv only manages versions) and tflint. Run by install-toolset.sh after the Brewfile, with Homebrew on PATH.
 set -euo pipefail
 
+# Each a version (a pin, or what the lock resolved) or latest; Terraform also
+# takes a constraint tenv understands (~> 1.14). The Cloud Run build passes the
+# locked versions (scripts/cloud/lock.sh); the VM images take these defaults.
+terraform="${TERRAFORM_VERSION:-latest}"
+tflint="${TFLINT_VERSION:-latest}"
+
 # tenv reports progress on stderr, which a green build doesn't allow.
-tenv tf install latest 2>&1
-tenv tf use latest 2>&1
+tenv tf install "$terraform" 2>&1
+tenv tf use "$terraform" 2>&1
 
 # tflint, from its release (Homebrew dropped it after its license change),
 # checked against the release's checksums.
-readonly release=https://github.com/terraform-linters/tflint/releases/latest/download
+if [[ "$tflint" == latest ]]; then
+	release=https://github.com/terraform-linters/tflint/releases/latest/download
+else
+	release="https://github.com/terraform-linters/tflint/releases/download/$tflint"
+fi
 work="$(mktemp -d)"
 curl -fsSL -o "$work/tflint_linux_amd64.zip" "$release/tflint_linux_amd64.zip"
 curl -fsSL -o "$work/checksums.txt" "$release/checksums.txt"

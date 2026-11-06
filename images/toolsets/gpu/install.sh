@@ -2,7 +2,8 @@
 # The gpu toolset's own steps (images/toolsets/gpu), run by install-toolset.sh at
 # image build, where there's no GPU: nothing here may need one.
 #
-# - VirtualGL, newest release, from its GitHub release (it isn't in Ubuntu).
+# - VirtualGL from its GitHub release (it isn't in Ubuntu): VIRTUALGL_VERSION, a
+#   version (the lock's, scripts/cloud/lock.sh, or a pin), else the newest.
 # - Vendor files that point GLVND's EGL and Vulkan's loader at NVIDIA's libraries
 #   where Cloud Run mounts them. Docker's NVIDIA runtime writes these itself;
 #   Cloud Run documents only the library mount, so the image carries them. If the
@@ -21,12 +22,15 @@ apt() { sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get -q
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-# VirtualGL: the latest release's tag, from the redirect GitHub gives for
-# /releases/latest (no API call, so no rate limit), then its amd64 .deb.
-latest="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/VirtualGL/virtualgl/releases/latest)"
-version="${latest##*/}"
+# VirtualGL's amd64 .deb for that version. latest is the tag GitHub redirects
+# /releases/latest to (no API call, so no rate limit).
+version="${VIRTUALGL_VERSION:-latest}"
+if [[ "$version" == latest ]]; then
+	latest="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/VirtualGL/virtualgl/releases/latest)"
+	version="${latest##*/}"
+fi
 [[ "$version" =~ ^[0-9]+(\.[0-9]+)+$ ]] || {
-	printf '==> gpu: unexpected VirtualGL release %s\n' "$latest" >&2
+	printf '==> gpu: unexpected VirtualGL release %s\n' "$version" >&2
 	exit 1
 }
 log "VirtualGL $version"
