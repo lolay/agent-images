@@ -306,7 +306,7 @@ secret-set: ## Store a runner secret (prompts, or pipe it in): NAME=claude-envir
 
 ##@ Cloud (GCP runners; specs/gcp.md. Deploys run only from main, in GitHub Actions)
 
-cloud-build: ## Build a cloud image locally as agent-<TYPE>:local, a runner type from its lock with its versions report: TYPE=linux|orchestrator|all
+cloud-build: ## Build a cloud image locally as agent-<TYPE>:local, a runner type from its lock with its versions report in out/versions/<TYPE>: TYPE=linux|orchestrator|all [COMMIT=<sha>]
 	@for target in $(if $(filter all,$(TYPE)),$(CLOUD_TARGETS),$(TYPE)); do \
 	  CLAUDE_VERSION=$(CLAUDE_VERSION) scripts/cloud/bake.sh "$$target" --load || exit 1; \
 	done

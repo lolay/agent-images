@@ -21,7 +21,11 @@ modules=(osgeo.gdal rasterio geopandas pdal qgis.core pystac_client duckdb pyarr
 out="$(
 	IFS=,
 	python3 -c "import ${modules[*]}" 2>&1
-)"
+)" || {
+	echo "$out"
+	echo "gis: importing the Python modules failed"
+	exit 1
+}
 [[ -z "$out" ]] || {
 	echo "$out"
 	echo "gis: importing the Python modules printed the above"

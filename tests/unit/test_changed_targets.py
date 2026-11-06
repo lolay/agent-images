@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from support import REPO, isolated_git_env
+from support import REPO, git_env
 
 SCRIPT = REPO / "scripts/cloud/changed-targets.sh"
 
@@ -61,8 +61,7 @@ class ChangedTargetsTests(unittest.TestCase):
 
     def git(self, *args):
         return subprocess.run(
-            ["git", "-C", str(self.repo), *args], check=True, capture_output=True, text=True,
-            env=isolated_git_env(),
+            ["git", "-C", str(self.repo), *args], check=True, capture_output=True, text=True, env=git_env()
         ).stdout.strip()
 
     def write(self, name, text):
@@ -81,6 +80,7 @@ class ChangedTargetsTests(unittest.TestCase):
         result = subprocess.run(
             ["bash", str(SCRIPT), *(args or (self.base, self.head()))],
             cwd=self.repo,
+            env=git_env(),
             capture_output=True,
             text=True,
             timeout=30,

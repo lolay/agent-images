@@ -29,7 +29,7 @@ set -euo pipefail
 toolsets_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly toolsets_dir
 readonly brew=/home/linuxbrew/.linuxbrew/bin/brew
-# AGENT_TOOLSETS_DIR moves the record, as it does for its readers (tests).
+# AGENT_TOOLSETS_DIR is the same variable toolset-checks.sh reads (tests set it).
 readonly record_dir="${AGENT_TOOLSETS_DIR:-/etc/agent-images/toolsets}"
 
 log() { printf '==> install-toolset: %s\n' "$*"; }

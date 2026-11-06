@@ -44,7 +44,10 @@ case "$1 $2" in
 			fi
 		done
 		exit "${{FAKE_SMOKE_STATUS:-0}}" ;;
-	executions) allow --job --project --region --sort-by --limit --format; echo agent-linux-next-p5rqf ;;
+	executions)
+		[[ "$4" == list ]] || {{ echo "ERROR: (gcloud.run.jobs.executions) invalid choice: '$4'" >&2; exit 2; }}
+		allow --job --project --region --sort-by --limit --format; echo agent-linux-next-p5rqf ;;
+	*) echo "ERROR: (gcloud.run.jobs) Invalid choice: '$3'" >&2; exit 2 ;;
 	esac ;;
 "logging read")
 	allow --project --order --limit --format
@@ -56,6 +59,7 @@ case "$1 $2" in
 	describe)
 		allow --project --zone --format
 		echo '{{"metadata": {{"items": [{{"key": "orchestrator-image", "value": "{REGISTRY}/agent-orchestrator@sha256:cc"}}]}}}}' ;;
+	*) echo "ERROR: (gcloud.compute.instances) Invalid choice: '$3'" >&2; exit 2 ;;
 	esac ;;
 *) echo "ERROR: (gcloud) the fake doesn't know $*" >&2; exit 2 ;;
 esac
@@ -213,6 +217,14 @@ class DeployTests(unittest.TestCase):
 
 FAKE_PACKER = """
 printf '%s\\n' "$*" >>"$FAKE_OUT/packer.log"
+# The real build downloads the versions report to -var versions_file (the file
+# provisioner), and fails if the destination's directory can't be written.
+for arg; do
+  case "$arg" in versions_file=*) file="${arg#versions_file=}" ;; esac
+done
+if [ "${FAKE_PACKER_REPORT:-1}" = 1 ] && [ -n "${file:-}" ]; then
+  printf '# agent-android\\n' >"$file" || exit 1
+fi
 exit "${FAKE_PACKER_STATUS:-0}"
 """
 
@@ -264,6 +276,7 @@ class VmDeployTests(DeployTests):
             "-var commit=abc123def456",
             "-var machine_type=n2-standard-8",
             "-var disk_size_gb=100",
+            f"-var versions_file={REPO}/out/versions/android/versions.md",
         ):
             self.assertIn(expected, build)
         self.assertTrue(build.endswith(f"{REPO}/images/android/gce"))
@@ -277,6 +290,19 @@ class VmDeployTests(DeployTests):
         self.assertLessEqual(len(name), 63)
         self.assertEqual(self.deploy("vm-build", "android", name, "abc123def456").returncode, 0)
 
+    def test_vm_build_keeps_the_versions_report_where_the_workflow_reads_it(self):
+        report = REPO / "out/versions/android/versions.md"
+        self.addCleanup(report.unlink, missing_ok=True)
+        self.assertEqual(self.deploy("vm-build", "android", ANDROID_IMAGE, "abc").returncode, 0)
+        self.assertTrue(report.read_text().startswith("# agent-android"))
+        workflow = (REPO / ".github/workflows/cloud-deploy.yml").read_text()
+        self.assertIn("out/versions/$TYPE/versions.md", workflow)
+
+    def test_vm_build_fails_without_a_versions_report(self):
+        result = self.deploy("vm-build", "android", ANDROID_IMAGE, "abc", FAKE_PACKER_REPORT="0")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no versions report", result.stderr)
+
     def test_vm_build_fails_with_packer(self):
         result = self.deploy("vm-build", "android", ANDROID_IMAGE, "abc", FAKE_PACKER_STATUS="1")
         self.assertEqual(result.returncode, 1)
@@ -286,6 +312,19 @@ class VmDeployTests(DeployTests):
             result = self.deploy(command, "linux", ANDROID_IMAGE, "abc")
             self.assertEqual(result.returncode, 1)
             self.assertIn("isn't a Compute Engine type", result.stderr)
+
+    def test_vm_commands_refuse_deploy_false(self):
+        # The supervisor would drop the orchestrator, and nothing would serve the VM.
+        env_dir = self.tmp / "infra"
+        env_dir.mkdir()
+        (env_dir / "project.env").write_text((REPO / "infra/gcp/project.env").read_text())
+        (env_dir / "android.env").write_text((REPO / "infra/gcp/android.env").read_text() + "DEPLOY=false\n")
+        for command in ("vm-build", "vm-promote"):
+            with self.subTest(command=command):
+                result = self.deploy(command, "android", ANDROID_IMAGE, "abc123def456", AGENT_GCP_ENV_DIR=str(env_dir))
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("DEPLOY=false is for Cloud Run types only", result.stderr)
+                self.assertFalse((self.out / "packer.log").exists())
 
     def test_type_refuses_a_compute_type(self):
         result = self.deploy("type", "android", IMAGE, "abc")

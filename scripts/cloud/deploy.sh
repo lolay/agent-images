@@ -10,9 +10,11 @@
 #       writes no job and runs no smoke (a GPU type waiting for its quota).
 #   deploy.sh vm-build <type> <image name> <commit>
 #       a Compute Engine type (BACKEND=compute): build its image with Packer
-#       from images/<type>/gce into family <IMAGE_FAMILY>-next.
+#       from images/<type>/gce into family <IMAGE_FAMILY>-next, and keep its
+#       versions report at out/versions/<type>/versions.md.
 #   deploy.sh vm-promote <type> <image name> <commit>
-#       boot a smoke VM from that image (agent-gce-smoke: claude, KVM, the
+#       boot a smoke VM from that image (agent-gce-smoke: every binary check and
+#       smoke test through agent-toolset-checks, plus sudo, KVM, scratch and the
 #       emulator's boot time), and only if it passes move the image to family
 #       <IMAGE_FAMILY>, which the hook creates VMs from, and delete the type's
 #       older images (keep one).
@@ -153,6 +155,7 @@ cmd_type() {
 load_compute_type() {
 	[[ -f "$AGENT_GCP_ENV_DIR/$1.env" ]] || die "no infra/gcp/$1.env"
 	[[ "$(gcp_backend "$1")" == compute ]] || die "$1 isn't a Compute Engine type (BACKEND=compute)"
+	gcp_deploys "$1" || die "$1: DEPLOY=false is for Cloud Run types only; a Compute Engine type would be built and promoted with no orchestrator to serve it. Remove it from infra/gcp/$1.env"
 	gcp_load_env "$1"
 	: "${IMAGE_FAMILY:?}" "${MACHINE_TYPE:?}" "${DISK_GB:?}" "${DISK_TYPE:?}" "${ZONE:?}" "${NETWORK:?}" "${SUBNET:?}"
 }
@@ -162,16 +165,22 @@ valid_image_name() { [[ "$1" =~ ^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$ ]]; }
 cmd_vm_build() {
 	(($# == 3)) || die "usage: deploy.sh vm-build <type> <image name> <commit>"
 	local type="$1" image="$2" sha="$3" dir="$repo/images/$1/gce"
+	# Packer downloads the image's versions report here (build.pkr.hcl); the
+	# deploy workflow's summary and artifact steps read it from out/ at the repo root.
+	local report="$repo/out/versions/$1/versions.md"
 	load_compute_type "$type"
 	valid_image_name "$image" || die "$image is not a valid image name"
 	[[ -d "$dir" ]] || die "no images/$type/gce"
+	mkdir -p "$(dirname "$report")"
+	rm -f "$report"
 	"$PACKER" init "$dir"
 	# No -force: image names are unique per run, and replacing a same-named
 	# image would delete the live one.
 	"$PACKER" build -color=false \
 		-var "project_id=$PROJECT_ID" -var "zone=$ZONE" -var "network=$NETWORK" -var "subnetwork=$SUBNET" \
 		-var "image_name=$image" -var "image_family=$IMAGE_FAMILY-next" -var "commit=$sha" \
-		-var "machine_type=$MACHINE_TYPE" -var "disk_size_gb=$DISK_GB" "$dir"
+		-var "machine_type=$MACHINE_TYPE" -var "disk_size_gb=$DISK_GB" -var "versions_file=$report" "$dir"
+	[[ -s "$report" ]] || die "the build left no versions report at $report"
 	log "$image: built into family $IMAGE_FAMILY-next"
 }
 

@@ -15,8 +15,9 @@ found nothing high. Its medium and decisions are folded into the plan,
   there and runs at `-next`.
 - **The record.** Every image has `/etc/agent-images/versions.md`: Homebrew with
   dependencies, apt, rustup, tenv, pixi and the binary checks' versions. The deploy
-  and the pull request check put it in the run summary and keep it as a 90-day
-  artifact. m5's lock pins what the report only records.
+  (android's report included, downloaded from the Packer build VM) and the pull
+  request check put it in the run summary and keep it as a 90-day artifact. m5's
+  lock pins what the report only records.
 - **One runner for the checks,** `agent-toolset-checks`
   (`images/toolsets/toolset-checks.sh`), shared by the cloud entrypoint, the
   android smoke VM and the `/agent-toolset-checks` session skill.
@@ -27,10 +28,13 @@ m4's first deploy (run 42283134638) showed `-next` passing in Cloud Run for
 `linux` and `gis`, and every android binary check and smoke test on the smoke VM,
 android-go and android-rust included (gcp.md, "m4 results"). Left:
 
+- The android versions report's summary and artifact on the `vm-images` job
+  (lolay/agent-images#52: Packer downloads it from the build VM), at the next
+  android deploy.
 - gpu's live smoke test, once `linux-gpu`'s quota lands and `DEPLOY=false` goes
   (lolay/agent-images#47).
 
-If it fails, the `/agent-toolset-checks` skill in a session on that image
+If one fails, the `/agent-toolset-checks` skill in a session on that image
 reruns it and offers to file an issue.
 
 ## Gotchas

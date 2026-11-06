@@ -192,19 +192,22 @@ or deploys: only a push to `main` does, through `.github/workflows/cloud-deploy.
 
 | Target | What it does |
 | --- | --- |
-| `cloud-build` | `docker buildx bake -f images/cloud/docker-bake.hcl --load <TYPE>`: `agent-<TYPE>:local`. `TYPE=linux` (default), any type, `orchestrator`, or `all` (`cloud-targets`). `agent-base` comes along as `linux`'s build context and isn't loaded on its own |
+| `cloud-build` | Builds through `scripts/cloud/bake.sh`, one target at a time: a runner type from its lock (`images/cloud/<TYPE>/versions.lock`, the base digest, apt snapshot, Claude and toolchain versions as `lock.sh bake-args`), loaded as `agent-<TYPE>:local`, with the versions report the pull request check shows in `out/versions/<TYPE>/versions.md` (it names `COMMIT`, the checked-out commit by default); the orchestrator at `CLAUDE_VERSION`. A type with no lock fails. `TYPE=linux` (default), any type, `orchestrator`, or `all` (`cloud-targets`). `agent-base` comes along as the type's build context and isn't loaded on its own |
 | `cloud-smoke` | Checks the image's toolset record against the Dockerfiles and toolsets (`scripts/cloud/record-check.sh`: every toolset recorded in order, with its binary checks and smoke test, so an empty record can't pass), then runs `agent-<TYPE>:local smoke $(SMOKE)` (the entrypoint's checks: Claude, every toolset's binary checks and smoke tests, the mounts; what the deploy runs on `agent-<type>-next`) with anonymous volumes standing in for scratch and outputs and an empty read-only tmpfs for the datasets. What the pull request check runs on each loaded runner type |
 | `cloud-lint` | `shellcheck` and `shfmt -d` on the cloud scripts (the android VM's guest scripts included), the cloud settings JSON, and `packer fmt -check` and `packer validate` on the android Compute Engine image's template (`images/android/gce`) |
 | `cloud-test` | `python3 -m unittest discover -s tests/unit`: the entrypoint, the toolset checks runner, SessionStart hook, spawn hook (both backends), supervisor and its reaper, the android VM's order script, job spec, path map and deploy script, against fakes (`tests/unit/fake_gcp.py` for the GCP APIs and the metadata server), and that the bake file has every type's targets (needs `docker buildx`). Linux only |
-| `cloud-ci` | `cloud-lint`, `cloud-test`, then a build of every cloud image with no output. The pull request check (`cloud-build.yml`) runs the same, split across runners, and also loads each runner type and runs `cloud-smoke` on it |
+| `cloud-ci` | `cloud-lint`, `cloud-test`, then a build of every cloud image with no output, each through `scripts/cloud/bake.sh` as in `cloud-build`. The pull request check (`cloud-build.yml`) runs the same, split across runners, and also loads each runner type and runs `cloud-smoke` on it |
+| `cloud-lock` | `scripts/cloud/lock.sh resolve <TYPE>`: the type's lock resolved from upstream now (base digest, apt, Claude, Rust, Terraform, the GitHub releases, Homebrew with dependencies), shown as a diff against `images/cloud/<TYPE>/versions.lock`, or whole when there's none. `WRITE=1` writes it. Needs Linux, Docker and Homebrew (Homebrew resolves dependencies for the OS it runs on); the watch (m5) is what normally writes locks, through pull requests |
 | `cloud-targets` | Prints every Cloud Run type (the `BACKEND=run` files in `infra/gcp`, from `changed-targets.sh --all`) and `orchestrator`, one a line: what `cloud-build TYPE=all` and `cloud-ci` build, and the pull request check's build matrix |
 | `cloud-status` | `scripts/cloud/deploy.sh status`, with your gcloud login: each job's image, deployed commit and last execution, and the orchestrator VM's `orchestrator-image` |
 
 | Variable | Default | Used by |
 | --- | --- | --- |
-| `TYPE` | `linux` | `cloud-build`, `cloud-smoke` |
+| `TYPE` | `linux` | `cloud-build`, `cloud-smoke`, `cloud-lock` |
 | `SMOKE` | `pr` | `cloud-smoke`: `pr` skips the smoke tests marked `# smoke: live` (they need a GPU); empty runs them all, as the deploy does |
-| `CLAUDE_VERSION` | `latest` | `cloud-build`, `cloud-ci`: an exact version (the deploy resolves one per run, so the layer cache can't keep an old one) or a channel |
+| `COMMIT` | checked-out commit | `cloud-build`: the commit the versions report names (the pull request check passes the head commit it builds) |
+| `CLAUDE_VERSION` | `latest` | `cloud-build`, `cloud-ci`, the orchestrator only: an exact version or a channel. A runner type's Claude Code comes from its lock |
+| `WRITE` | (empty) | `cloud-lock`: set, writes the resolved lock |
 
 Where things live:
 

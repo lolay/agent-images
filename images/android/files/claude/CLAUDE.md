@@ -13,6 +13,9 @@ Installed at their latest release when the image was built, so check a repo's
 
 <!-- toolsets -->
 
+`/etc/agent-images/versions.md` lists everything the image holds, with versions;
+`/agent-toolset-checks` checks that its toolchains work.
+
 There's no gcloud and no cloud credentials, and none should be added. Work that
 needs them (deploys, Terraform plans and applies) runs in the repo's own CI.
 

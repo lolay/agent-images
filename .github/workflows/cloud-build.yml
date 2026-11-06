@@ -1,9 +1,10 @@
-# The pull request check for the GCP runners: lint and the unit tests, then
-# every cloud image built (one runner each, a runner type from its lock),
-# loaded, its toolset record checked and smoked (make cloud-smoke), with no push
-# and no GCP credentials (specs/gcp.md, "Only main deploys"; m4, m5). It has no
-# id-token permission and no environment, so it couldn't get a GCP token if it
-# tried. m5's lock pull requests merge on it.
+# The pull request check for the GCP runners: lint and the unit tests, then for
+# every cloud image (one runner each; a runner type from its lock) a build,
+# load, `make cloud-smoke` (the toolset record, binary checks and smoke tests,
+# `smoke pr`) and a versions report, with no push and no GCP credentials
+# (specs/gcp.md, "Only main deploys"; m4, m5). It has no id-token permission and
+# no environment, so it couldn't get a GCP token if it tried. m5's lock pull
+# requests merge on it.
 name: cloud-build
 
 on:

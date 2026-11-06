@@ -102,4 +102,13 @@ build {
     execute_command = "sudo -n env {{ .Vars }} bash '{{ .Path }}'"
     script          = "${path.root}/provision.sh"
   }
+
+  # The versions report (specs/gcp.md, m4), for the deploy's summary and
+  # artifact. After provision.sh has written it (install-packages.sh, last of
+  # the installs) and before the build ends; /etc survives its cleanup.
+  provisioner "file" {
+    direction   = "download"
+    source      = "/etc/agent-images/versions.md"
+    destination = var.versions_file
+  }
 }

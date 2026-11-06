@@ -2,7 +2,8 @@
 # write-versions.sh: what an image contains, as Markdown on stdout (specs/gcp.md,
 # m4 "Versions report"). The cloud runner Dockerfile writes it to
 # /etc/agent-images/versions.md in its last layer, and the android image's
-# provision.sh at the end of its build; the workflows put it in their summaries.
+# install-packages.sh at the end of its installs; the workflows put it in their
+# summaries.
 #
 # Usage: write-versions.sh <type> <commit>
 #
@@ -11,7 +12,10 @@
 # green.
 #
 #   AGENT_TOOLSET_CHECKS   the binary checks' runner (default agent-toolset-checks)
-#   AGENT_GIS_MANIFEST     gis's pixi manifest (default /opt/gis/pixi.toml)
+#   AGENT_GIS_MANIFEST     gis's pixi manifest (default $GIS_MANIFEST, which the gis
+#                          toolset's profile exports; both builds run this with
+#                          the profile loaded, through BASH_ENV or a login shell.
+#                          Without either, the pixi section is left out)
 set -euo pipefail
 
 (($# == 2)) || {
@@ -20,7 +24,7 @@ set -euo pipefail
 }
 readonly type="$1" commit="$2"
 readonly checks="${AGENT_TOOLSET_CHECKS:-agent-toolset-checks}"
-readonly gis_manifest="${AGENT_GIS_MANIFEST:-/opt/gis/pixi.toml}"
+readonly gis_manifest="${AGENT_GIS_MANIFEST:-${GIS_MANIFEST:-}}"
 
 readonly fence='```'
 
@@ -56,11 +60,13 @@ fi
 if has tenv; then
 	block "Terraform (tenv)" tenv tf list
 fi
-if has pixi && [[ -f "$gis_manifest" ]]; then
+if has pixi && [[ -n "$gis_manifest" && -f "$gis_manifest" ]]; then
 	block "pixi environment ($(dirname "$gis_manifest"))" pixi list --manifest-path "$gis_manifest"
 fi
 if has dpkg-query; then
-	packages="$(dpkg-query -W -f '${Package} ${Version}\n' 2>&1)"
+	apt_status=0
+	packages="$(dpkg-query -W -f '${Package} ${Version}\n' 2>&1)" || apt_status=$?
 	printf '\n## apt\n\n<details>\n<summary>%d packages</summary>\n\n%stext\n%s\n%s\n\n</details>\n' \
 		"$(wc -l <<<"$packages")" "$fence" "$packages" "$fence"
+	((apt_status == 0)) || printf '\ndpkg-query exited %d.\n' "$apt_status"
 fi

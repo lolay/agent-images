@@ -8,10 +8,13 @@
 # Ubuntu's Compute Engine image has no ubuntu user (cloud-init makes one only on
 # the cloud images LXD uses), so this creates it with passwordless sudo first.
 # Then: setup-user.sh and install-packages.sh (which boots the emulator once for
-# its quickboot snapshot; the build VM has nested virtualization), the Compute
-# Engine guest pieces from gce/files, and cleanup so every VM from the image
-# boots as a new machine. Fails the build if the provisioners wrote anything on
-# stderr (green builds).
+# its quickboot snapshot, and installs the binary checks' runner, the session
+# skills and the versions report; the build VM has nested virtualization), the
+# Compute Engine guest pieces from gce/files, and cleanup so every VM from the
+# image boots as a new machine. Fails the build if the provisioners wrote
+# anything on stderr (green builds). The versions report, written last by
+# install-packages.sh into /etc/agent-images, survives the cleanup; Packer
+# downloads it after this script (build.pkr.hcl).
 set -euo pipefail
 
 : "${STAGING_DIR:?}" "${GUEST_USER:?}"
@@ -48,6 +51,7 @@ install -m 666 /dev/null "$stderr_log"
 for provisioner in setup-user install-packages; do
 	log "running $provisioner as $GUEST_USER"
 	sudo -u "$GUEST_USER" -H env STAGING_DIR="$STAGING_DIR" GUEST_USER="$GUEST_USER" \
+		AGENT_COMMIT="${AGENT_COMMIT:-unknown}" \
 		bash "$STAGING_DIR/scripts/$provisioner.sh" 2> >(tee -a "$stderr_log" >&2)
 done
 
@@ -55,27 +59,12 @@ log "installing the Compute Engine guest pieces"
 install -d -m 755 "$libexec_dir" /etc/systemd/journald.conf.d
 install -m 755 "$STAGING_DIR/gce/agent-gce-order.sh" "$libexec_dir/agent-gce-order"
 install -m 755 "$STAGING_DIR/gce/agent-gce-smoke.sh" "$libexec_dir/agent-gce-smoke"
-# On PATH, so sessions can run a toolset's checks too, as on the Cloud Run images.
-install -m 755 "$STAGING_DIR/toolsets/toolset-checks.sh" /usr/local/bin/agent-toolset-checks
-# The session skills that drive it (/agent-toolset-checks), beside android init's
-# android-cli; the runner seeds ~/.claude/skills into every session.
-guest_home="$(getent passwd "$GUEST_USER" | cut -d: -f6)"
-install -d -m 755 -o "$GUEST_USER" -g "$GUEST_USER" "$guest_home/.claude/skills"
-cp -R "$STAGING_DIR/toolsets/skills/." "$guest_home/.claude/skills/"
-chown -R "$GUEST_USER:$GUEST_USER" "$guest_home/.claude/skills"
 install -m 644 "$STAGING_DIR/gce/agent-gce-order.service" /etc/systemd/system/agent-gce-order.service
 install -m 644 "$STAGING_DIR/gce/journald-serial.conf" /etc/systemd/journald.conf.d/agent-images-serial.conf
 install -m 644 "$STAGING_DIR/gce/profile-gce.sh" /etc/profile.d/agent-images-gce.sh
 install -d -m 755 -o "$GUEST_USER" -g "$GUEST_USER" /scratch
 systemctl daemon-reload
 systemctl enable --quiet agent-gce-order.service
-
-# What the image contains (specs/gcp.md, m4 "Versions report"), in the image and
-# in the Packer log. As the guest user, through a login shell: its PATH finds
-# Homebrew, rustup and the checks a session would.
-log "versions report (/etc/agent-images/versions.md)"
-runuser -l "$GUEST_USER" -c "bash $(printf '%q' "$STAGING_DIR/toolsets/write-versions.sh") android $(printf '%q' "${AGENT_COMMIT:-unknown}")" |
-	tee /etc/agent-images/versions.md
 
 log "cleaning up"
 # Staging copies shouldn't outlive the build. Cleared cloud-init state and

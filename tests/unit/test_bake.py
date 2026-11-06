@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from support import REPO, isolated_git_env
+from support import REPO, git_env
 
 BAKE_FILE = "images/cloud/docker-bake.hcl"
 CHANGED_TARGETS = REPO / "scripts/cloud/changed-targets.sh"
@@ -90,6 +90,45 @@ class BakeTests(unittest.TestCase):
                 report = bake_print(flag, "linux", "versions-linux")["versions-linux"]
                 self.assertEqual(report["output"], [{"type": "local", "dest": "out/versions/linux"}])
 
+    def test_cloud_build_builds_each_runner_types_report_with_the_commit(self):
+        """make cloud-build reproduces the pull request check's build (r2.f14): each
+        target through scripts/cloud/bake.sh, a runner type from its lock with its
+        versions report naming COMMIT, the orchestrator alone. The real make and
+        bake.sh run, with a fake docker that records each bake call."""
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        for name in run_types():
+            (tmp / "locks" / name).mkdir(parents=True)
+            (tmp / "locks" / name / "versions.lock").write_text(
+                "apt-snapshot - 20261101T000000Z\nbase - ubuntu@sha256:aaa\nclaude - 2.1.319\n"
+            )
+        (tmp / "bin").mkdir()
+        docker = tmp / "bin" / "docker"
+        docker.write_text(
+            "#!/bin/bash\n"
+            'if [[ "$1 $2" == "buildx bake" ]]; then printf \'%s %s\\n\' "$COMMIT" "${*: -2}" >>"$FAKE_CALLS"; exit 0; fi\n'
+            'exec "$REAL_DOCKER" "$@"\n'
+        )
+        docker.chmod(0o755)
+        env = {**os.environ, "PATH": f"{tmp / 'bin'}:{os.environ['PATH']}", "LOCK_DIR": str(tmp / "locks"),
+               "FAKE_CALLS": str(tmp / "calls"), "REAL_DOCKER": shutil.which("docker")}
+
+        def built(*args):
+            calls = tmp / "calls"
+            calls.unlink(missing_ok=True)
+            subprocess.run(["make", "-s", "cloud-build", *args], cwd=REPO, env=env, check=True,
+                           capture_output=True, text=True)
+            return calls.read_text().splitlines()
+
+        self.assertEqual(built("TYPE=linux", "COMMIT=abc123"), ["abc123 linux versions-linux"])
+        self.assertEqual([line.split(" ", 1)[1] for line in built("TYPE=orchestrator")],
+                         ["--load orchestrator"], "not a runner: no report")
+        every = [line.split(" ", 1)[1] for line in built("TYPE=all")]
+        for name in run_types():
+            self.assertIn(f"{name} versions-{name}", every)
+        self.assertIn("--load orchestrator", every)
+        self.assertEqual(len(every), len(run_types()) + 1)
+
     def test_the_orchestrator_has_its_target(self):
         self.assertEqual(bake_print("orchestrator")["orchestrator"]["tags"], ["agent-orchestrator:local"])
 
@@ -111,8 +150,7 @@ class BakeTests(unittest.TestCase):
 
         def git(*args):
             return subprocess.run(
-                ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True,
-                env=isolated_git_env(),
+                ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True, env=git_env()
             ).stdout.strip()
 
         git("init", "-q", "-b", "main")
@@ -132,6 +170,7 @@ class BakeTests(unittest.TestCase):
                 plan = subprocess.run(
                     ["bash", str(CHANGED_TARGETS), base, git("rev-parse", "HEAD")],
                     cwd=repo,
+                    env=git_env(),
                     check=True,
                     capture_output=True,
                     text=True,

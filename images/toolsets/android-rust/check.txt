@@ -1,4 +1,4 @@
-# Smoke checks: label: command, which must exit 0; its first line of output is
-# the reported version.
+# Binary checks (toolset-checks.sh): label: command, which must exit 0; its first
+# line of output is the reported version.
 cargo-ndk: cargo ndk --version
 android targets: rustup target list --installed | grep -c android

@@ -47,11 +47,11 @@ class WriteVersionsTests(unittest.TestCase):
             f'{accepts} || {{ echo "{name}: unknown arguments: $*" >&2; exit 2; }}\n{answer}\n',
         )
 
-    def report(self, *args):
+    def report(self, *args, env=None):
+        env = {"AGENT_GIS_MANIFEST": str(self.manifest)} if env is None else env
         result = subprocess.run(
             [shutil.which("bash"), str(SCRIPT), *(args or ("linux", "abc123"))],
-            env={"PATH": str(self.bin), "AGENT_GIS_MANIFEST": str(self.manifest),
-                 "FAKE_MANIFEST": str(self.manifest)},
+            env={"PATH": str(self.bin), "FAKE_MANIFEST": str(self.manifest), **env},
             capture_output=True,
             text=True,
             timeout=30,
@@ -93,6 +93,15 @@ class WriteVersionsTests(unittest.TestCase):
         self.manifest.unlink()
         self.assertNotIn("pixi environment", self.report().stdout)
 
+    def test_the_gis_manifest_comes_from_the_toolsets_profile_variable(self):
+        # What gis's profile.sh exports; AGENT_GIS_MANIFEST overrides it.
+        result = self.report(env={"GIS_MANIFEST": str(self.manifest)})
+        self.assertIn("## pixi environment", result.stdout)
+        self.assertIn("gdal 3.13.3", result.stdout)
+
+    def test_pixi_without_any_manifest_variable_is_left_out(self):
+        self.assertNotIn("pixi environment", self.report(env={}).stdout)
+
     def test_a_failing_section_is_kept_and_says_so(self):
         # A binary check that needs the runtime fails at build time; the report
         # records it rather than failing the build.
@@ -102,6 +111,15 @@ class WriteVersionsTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("gpu: missing (no GPU)", result.stdout)
         self.assertIn("agent-toolset-checks versions exited 1.", result.stdout)
+
+    def test_a_failing_apt_listing_is_kept_and_says_so(self):
+        self.fake("dpkg-query", "[[ \"$*\" == '-W -f ${Package} ${Version}\\n' ]]",
+                  "echo 'dpkg-query: error: database is locked' >&2; exit 2")
+        result = self.report()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("## apt", result.stdout)
+        self.assertIn("dpkg-query: error: database is locked", result.stdout)
+        self.assertIn("dpkg-query exited 2.", result.stdout)
 
     def test_refuses_without_type_and_commit(self):
         result = self.report("linux")

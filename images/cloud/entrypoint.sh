@@ -36,7 +36,6 @@ set -euo pipefail
 : "${AGENT_TYPE:=unknown}"
 : "${AGENT_DISPLAY_SCREEN:=1920x1080x24}"
 : "${AGENT_DISPLAY_WAIT_SEC:=10}"
-: "${AGENT_RETIRE_MARGIN_SEC:=900}"
 # images/toolsets/toolset-checks.sh, which the runner Dockerfile installs.
 : "${AGENT_TOOLSET_CHECKS:=agent-toolset-checks}"
 # What the image contains, written by its last layer (write-versions.sh).
@@ -201,6 +200,9 @@ start_display || true
 # The runner releases its session cleanly by this time, ahead of Cloud Run's
 # hard stop at the task timeout; the SessionStart hook reads it for the notice.
 if [[ -n "${AGENT_TASK_TIMEOUT_SEC:-}" ]]; then
+	# No default here: the margin's one source is hooks/gcp/lib.sh's
+	# gcp_retire_margin, which job-spec.sh renders into the job.
+	: "${AGENT_RETIRE_MARGIN_SEC:?AGENT_RETIRE_MARGIN_SEC is required with AGENT_TASK_TIMEOUT_SEC (job-spec.sh sets both)}"
 	now="$(date +%s)"
 	AGENT_RETIRE_AT=$((now + AGENT_TASK_TIMEOUT_SEC - AGENT_RETIRE_MARGIN_SEC))
 	((AGENT_RETIRE_AT > now)) || die "AGENT_TASK_TIMEOUT_SEC ($AGENT_TASK_TIMEOUT_SEC) is not more than the margin ($AGENT_RETIRE_MARGIN_SEC)"
