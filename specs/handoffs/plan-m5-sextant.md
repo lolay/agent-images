@@ -3,9 +3,8 @@
 Status: approved as written (owner, 2026-11-06), D1 to D9 as recommended, and the
 draft PR for s4. Group 1 (s1 to s3) done; Group 2 approved to run in the same
 session (owner, 2026-11-06). s4 and s5 in progress on draft PR A,
-lolay/agent-images#54: the spike runs on every push, and the resolver
-(`scripts/cloud/lock.sh`) is written and tested, waiting on the spike's apt
-result for the plain Ubuntu base.
+lolay/agent-images#54. Group 2 (s4, s5) done; the spike job is deleted. Next:
+the STOP gate before Group 3 (`[exec]`, s6 to s9).
 Branch `claude/admiring-bell-0c7a1d` (assigned by the harness), from `main` at
 `ba55d96`.
 
@@ -174,7 +173,7 @@ default the path themselves. Making `write-versions.sh` the one writer of
 
 ### Group 2 `[deep]`: prove the sources, then the resolver
 
-#### s4 - Spike the resolvers on a hosted runner `[deep]`
+#### s4 - Spike the resolvers on a hosted runner `[deep]` (done)
 
 These need Docker and Homebrew, which this session lacks, so they run as a
 throwaway job on the draft PR for A (opening it needs your yes; see the question
@@ -198,19 +197,29 @@ below). The job proves:
 
 The spike job is deleted when it's done. Findings go in the handoff and shape s5.
 
-Findings so far (runs 1 to 3 of `m5-spike`):
+Findings (`m5-spike`, runs 1 to 8; the job is deleted):
 
 - **Digests:** `docker buildx imagetools inspect <ref> --format '{{json .Manifest}}'`
   gives the index digest with no pull (`skopeo` agrees). A bare registry `HEAD`
   on mirror.gcr.io returns 405 without a token, so the resolver uses
-  `imagetools` and no crane download.
+  `imagetools` and no crane download. `crane` would add a download for nothing.
 - **apt on CUDA:** `APT::Snapshot` in `apt.conf.d` works. The snapshot run
   resolved older versions than today's, and two snapshot runs matched. NVIDIA's
   repo is fetched live with no error. None of `linux-gpu`'s packages come from
   it today: every origin is `Ubuntu:24.04/*`. The CUDA image's entrypoint prints
   a banner on stdout, so the resolver runs `--entrypoint /bin/bash`.
-- **apt on plain Ubuntu:** `apt-get` exits 100. The error wasn't visible in run
-  2; run 3 prints it.
+- **apt on plain Ubuntu: certificates first.** The stock `ubuntu:24.04` image has
+  no `ca-certificates`, and snapshot.ubuntu.com is HTTPS only (HTTP redirects).
+  So `apt-get update` under a snapshot only warns ("No system certificates
+  available"), and then no package resolves. The build has to bootstrap:
+  install `ca-certificates` from the live archive, then write the snapshot
+  config, then everything else. With that, all three bases pass: two snapshot
+  runs resolve the same set, and the snapshot differs from today by 9 to 12
+  packages (linux 276 vs 278, gis 239 vs 241, linux-gpu 233 vs 234). The
+  bootstrap floats `ca-certificates` and, on plain Ubuntu, `openssl` (3.0.13
+  `ubuntu3.16` today; the CUDA base keeps its own `ubuntu3.9`). That's one more
+  entry for D3's list of what the lock records but can't pin, and s6 builds
+  the base this way.
 - **Homebrew (linux):** 21 top formulae, a closure of 69 lines without
   build-only dependencies (100 with them). Once `brew info` resolves the alias
   `python` to `python@3.15`, that's the image's 68 exactly, in names and
@@ -222,7 +231,7 @@ Findings so far (runs 1 to 3 of `m5-spike`):
   `tenv tf list-remote --stable` ends at 1.17.1. The resolver reads
   HashiCorp's `index.json` directly, with no tenv on the runner.
 
-#### s5 - The lock and its resolver `[deep]`
+#### s5 - The lock and its resolver `[deep]` (done)
 
 `scripts/cloud/lock.sh`:
 
@@ -248,6 +257,16 @@ Findings so far (runs 1 to 3 of `m5-spike`):
   unknown flags and subcommands (AGENTS.md "Test fakes"; r2.f4 shows how they
   slip). Every guard (pinned skips, malformed lock, unchanged snapshot) is
   mutation-checked.
+
+s5 as built: the line format is D1's, with `-` as the name for the
+single-valued kinds (`base - <ref>@<digest>`, not `base ubuntu`), and
+`release <name> <tag>` keeps GitHub's tag as is (`v0.65.0`). The base's apt
+list is `images/cloud/base/packages.txt`, and the bake file now declares
+`BASE_IMAGE` for `base` (the Dockerfile has no default left). `resolve` runs
+on Linux only, since Homebrew resolves dependencies for the OS it runs on. The
+apt change check compares today's resolution with the lock's apt lines, so it
+runs one container per type instead of two. `tests/unit/test_lock.py` has 25
+tests, and the resolver's eleven guards each go red when deleted.
 
 **STOP: swap to `[exec]`** (Sonnet 5.5, high).
 
