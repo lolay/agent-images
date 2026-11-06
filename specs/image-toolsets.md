@@ -321,8 +321,8 @@ so it sorts next to `gis`). Not built until a repo needs it.
 - Retire it when the repo that needed it moves to QGIS 4, or when conda-forge's
   builds agree and the plugin it needed loads on `gis`.
 
-Expect it to drift: each build re-solves, and the `tiledb` pin was measured once. If a later solve breaks it, the smoke check's import test fails
-the build rather than shipping it.
+Expect it to drift: each build re-solves, and the `tiledb` pin was measured once. If a later solve breaks it, the gis smoke test's imports fail
+the pull request and the deploy rather than shipping it.
 
 ### Rust in `gis` or `3d-gpu`
 
@@ -355,15 +355,16 @@ tooling as PyO3 extensions, or Rust splatting like Brush). If that becomes true,
   layer per toolset, slowest-moving first, and the shared `images/cloud/runner`
   stage (target `<type>`) adds the runner files, the session files and Claude Code
   last, so a Claude release rebuilds one layer and never a type's toolsets. Toolsets
-  can also carry smoke checks (`check.txt`), a functional smoke test (`smoke.sh`),
+  can also carry binary checks (`check.txt`), a smoke test (`smoke.sh`),
   environment (`profile.sh`) and PATH entries (`path.txt`), which
-  `install-toolset.sh` records: the smoke runs the image's own checks, and the cloud
-  profile puts toolset paths after `~/bin` and ahead of Homebrew. `check.txt` proves
-  a tool is there (its version); `smoke.sh` (from
-  [gcp.md m4](gcp.md#m4---functional-smoke-and-versions-report)) proves it works: a
-  short bash script that builds or runs one small thing with the toolset's main
-  tools, offline, in a fresh temp directory, in under 30 s, and ends with a one-line
-  summary.
+  `install-toolset.sh` records: the smoke runs the image's own checks through
+  `agent-toolset-checks` (`images/toolsets/toolset-checks.sh`), and the cloud
+  profile puts toolset paths after `~/bin` and ahead of Homebrew. A binary check
+  proves a tool is there and runs (its version), nothing more; a smoke test (from
+  [gcp.md m4](gcp.md#m4---functional-smoke-and-versions-report)) proves the
+  toolchain works: the least real work with its main tools, offline, in a fresh
+  temp directory, in under 30 s, ending with a one-line summary. One that needs a
+  GPU is marked `# smoke: live (needs a GPU)`; a pull request skips it.
 - **LXD and Compute Engine `android`:** `build-image.sh` and the Packer
   `googlecompute` build run `install-toolset.sh` over the same list.
 - **macOS:** `install-packages.sh` runs `brew bundle` on `core/Brewfile`, then the

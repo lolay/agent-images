@@ -1,8 +1,8 @@
 # Plan: m4, binary checks, smoke tests and the versions report
 
-Status: plan revised twice 2026-11-06 (s3 adds the session skill) after Gary's review (minimal smoke tests,
-"binary check" and "smoke test" as the terms, smoke tests where cheap, always
-runnable live, large data fetched). Waiting on approval. Nothing built yet.
+Status: approved 2026-11-06 (s1). s1 built and committed: lint and unit tests pass
+in the session; waiting on the draft PR's `cloud-build` run for the loads, the disk
+and the smoke in the images, then Gary's review of s1 before s2.
 Branch `claude/bold-albattani-fg54u5` (assigned by the harness), from `main` at
 `68115e6`.
 
@@ -83,7 +83,8 @@ Creates:
 - `images/toolsets/toolset-checks.sh`, installed as `/usr/local/bin/agent-toolset-checks`
   in the cloud and android images: `versions` (the binary checks, today's
   `toolchains` loop moved out of the entrypoint), `smoke-list`, and `smoke <name>`
-  (fresh temp directory, `timeout 120`, the offline variables; `--pr` skips `live`).
+  (fresh temp directory, own process group, `timeout 120`, the offline variables),
+  and `live <name>`, which the entrypoint's `smoke pr` uses to skip `live` tests.
   One runner for both images, so the timeout, temp directory, offline settings and
   the `live` rule live once (AGENTS.md "One source per fact", r1.f27).
 - `images/toolsets/write-versions.sh`: the versions report.
@@ -262,7 +263,7 @@ leave the branch, promoted to gcp.md, as its last commit.
 
 ## Progress
 
-- [ ] s1
+- [x] s1 (built; PR run pending)
 - [ ] s2
 - [ ] s3 (session skill)
 - [ ] s4

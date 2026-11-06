@@ -267,13 +267,13 @@ matrix. A failed deploy makes the next one redeploy more, never less:
 
 | Path changed | Redeploys |
 | --- | --- |
-| `images/shared/**`, `images/toolsets/install-toolset.sh`, `images/toolsets/write-claude-md.sh`, `images/cloud/base/**`, `images/cloud/runner/**`, `images/cloud/entrypoint.sh`, `images/cloud/docker-bake.hcl`, `.dockerignore` | Every runner type |
+| `images/shared/**`, `images/toolsets/install-toolset.sh`, `images/toolsets/write-claude-md.sh`, `images/toolsets/toolset-checks.sh`, `images/cloud/base/**`, `images/cloud/runner/**`, `images/cloud/entrypoint.sh`, `images/cloud/docker-bake.hcl`, `.dockerignore` | Every runner type |
 | `images/toolsets/<toolset>/**` | The types whose Dockerfiles (or build parents') install that toolset |
 | `images/cloud/<type>/**`, including its `versions.lock` | That type |
 | `hooks/gcp/**`, `images/cloud/orchestrator/**` | The orchestrator host (new image, then the host restarts its container) |
 | `infra/gcp/<type>.env` (CPU, memory, GPU, timeout, `--min-idle`, `REBUILD`, `DEPLOY`) | That type's job and orchestrator settings, no image build. `DEPLOY=false` builds and pushes the image but writes no job, runs no smoke and starts no orchestrator: a type waiting for its quota |
 | `scripts/cloud/job-spec.sh` | Every type's job, no image build |
-| `images/android/**` (the LXD image's scripts and files, and `gce/`), the toolsets in `images/android/toolsets.txt`, `images/shared/**`, the two toolset scripts | The `android` Compute Engine image: Packer build, smoke VM, then family `agent-android` ([below](#compute-engine-vm-per-session-android-and-the-gpu-fallback)) |
+| `images/android/**` (the LXD image's scripts and files, and `gce/`), the toolsets in `images/android/toolsets.txt`, `images/shared/**`, the three toolset scripts | The `android` Compute Engine image: Packer build, smoke VM, then family `agent-android` ([below](#compute-engine-vm-per-session-android-and-the-gpu-fallback)) |
 | `infra/gcp/android.env` | The orchestrator only: the hook reads it at each spawn, from the orchestrator image |
 | Anything else (`specs/`, the macOS image, README) | Nothing |
 
@@ -1030,7 +1030,7 @@ What the deploys found:
 ### m4 - Functional smoke and versions report
 
 Two gaps the images have today, closed before the watch, since m5 depends on both. The
-smoke checks (`check.txt`, run by the entrypoint's `smoke`) only run `--version`: they
+checks the entrypoint's `smoke` runs from `check.txt` only run `--version`: they
 prove a binary is there, not that the toolchain builds anything, so a release that
 breaks Go or Cargo promotes. And nothing records what an image contains:
 `install-toolset.sh` logs each Brewfile's top-level formulae, not their dependencies,
@@ -1038,32 +1038,59 @@ and only in a layer that actually ran, so a cached layer leaves nothing; apt isn
 recorded at all; the deploy's summary holds only the digest. Independent of the
 types and of m5.
 
-**Smoke contract.** A toolset can ship `smoke.sh` next to its `check.txt`
-([image-toolsets.md](image-toolsets.md)). `install-toolset.sh` records it as
-`<name>.smoke.sh` with the toolset's other files. The entrypoint's `smoke`, after the
-`toolchains` check, runs each recorded one in install order as its own check
-(`smoke: pass smoke-go (go: built and ran hello, vet clean)`): in a fresh temp
-directory under `$TMPDIR`, removed afterward, under `timeout 120`, with the network
-off for the toolchains (`GOPROXY=off`, `GOFLAGS=-mod=mod`, `CARGO_NET_OFFLINE=true`,
-`UV_OFFLINE=1`, `npm_config_offline=true`, `CHECKPOINT_DISABLE=1`). The android
-smoke VM's `agent-gce-smoke.sh` runs the same recorded scripts. Unit tests in
-`tests/unit/test_entrypoint.py` cover a script that passes, one that fails, one that
-hangs past a shortened timeout, and a toolset without one.
+**Binary checks and smoke tests (owner, 2026-11-06).**
 
-**The pull request gate.** `cloud-build.yml` builds each runner target with `--load`
-and runs `make cloud-smoke TYPE=<target>` on it, which already stands in local
-volumes for the mounts. Not `orchestrator`, which isn't a runner type. If `gis`
-(9 GB) or `linux-gpu` can't be loaded within a hosted runner's disk, they keep the
-no-output build and their functional smoke runs at `-next` only, said in the
-workflow's comment. This is the check m5's lock pull requests merge on.
+- A **binary check** is a toolset's `check.txt` line, `label: command`: the tool is
+  installed, on `PATH` and runs, and its first line of output is the version.
+  Nothing more: no device, no display, no build. Every binary check runs wherever an
+  image is checked.
+- A **smoke test** is a toolset's `smoke.sh`: the least real work that shows the
+  toolchain works (Go builds and runs hello; CUDA runs a kernel on the GPU). One per
+  toolset at most, only where the binary check isn't enough.
+- A smoke test runs in the pull request when that's cheap and easy on a GitHub
+  hosted runner. One that needs what the runner lacks says so in its header,
+  `# smoke: live (needs a GPU)`, and the pull request reports it as `skip`, never
+  `pass`.
+- Every smoke test can run live in the image: the deploy's smoke runs them all, on
+  the type's own hardware, and a session runs any of them with
+  `agent-toolset-checks smoke <name>`.
+- The toolchains stay offline (no module, crate, package or provider fetches): the
+  image has to work from what it holds. Fixture data too large for a heredoc is
+  fetched at run time from a URL the test names, never baked into the image.
+
+**The runner.** `images/toolsets/toolset-checks.sh`, installed in every runner image
+(Cloud Run and android) as `/usr/local/bin/agent-toolset-checks`, is the one reader
+of the record `install-toolset.sh` writes (`<name>.check`, and `smoke.sh` as
+`<name>.smoke.sh`): `versions` runs the binary checks, `smoke-list` names the
+toolsets with a smoke test, `live <name>` says whether one runs only live, and
+`smoke <name>` runs one in a fresh temp directory under `$TMPDIR`, removed afterward,
+in its own process group under `timeout 120`, with the toolchains' network off
+(`GOPROXY=off`, `GOFLAGS=-mod=mod`, `GOTOOLCHAIN=local`, `CARGO_NET_OFFLINE=true`,
+`UV_OFFLINE=1`, `UV_PYTHON_DOWNLOADS=never`, `npm_config_offline=true`,
+`CHECKPOINT_DISABLE=1`). The entrypoint's `smoke` runs `claude`, the binary checks
+(`binaries`), then each smoke test as its own check, in install order (`smoke: pass
+smoke-go (go: built and ran hello)`, the detail being the test's last line), then
+the mounts; `smoke pr` skips the live ones. The android smoke VM's `agent-gce-smoke`
+runs the same binary checks and smoke tests; its own checks are only what the VM
+adds (sudo, KVM, scratch, the emulator).
+
+| Where | Binary checks | Smoke tests |
+| --- | --- | --- |
+| Pull request (`cloud-build.yml`, a GitHub hosted runner, no GCP access): each runner type loaded and run with `make cloud-smoke`, local volumes for the mounts | All | All but `live` ones |
+| Deploy from `main`: `agent-<type>-next` in Cloud Run, the android smoke VM in Compute Engine | All | All |
+| A session | `agent-toolset-checks versions` | `agent-toolset-checks smoke <name>` |
+
+android isn't built on pull requests (Packer runs only in GCP), so its checks first
+run on the deploy's smoke VM. The pull request check is what m5's lock pull
+requests merge on.
 
 **Versions report.** One script, `images/toolsets/write-versions.sh`, writes
-`/etc/agent-images/versions.md`: the image type and build date, Claude Code's
-version, each recorded `check.txt` label with its version line, all of
-`brew list --versions` (dependencies and `lolay/tap` included), `rustup toolchain
-list`, `tenv tf list`, `pixi list` for `/opt/gis` on `gis`, and
-`dpkg-query -W -f '${Package} ${Version}\n'` inside a collapsed `<details>`. A
-section whose tool isn't installed is left out.
+`/etc/agent-images/versions.md`: the image type, build date and commit, Claude
+Code's version, each binary check's label and version line (from
+`agent-toolset-checks versions`), all of `brew list --versions` (dependencies and
+`lolay/tap` included), `rustup toolchain list`, `tenv tf list`, `pixi list` for
+`/opt/gis` on `gis`, and `dpkg-query -W -f '${Package} ${Version}\n'` inside a
+collapsed `<details>`. A section whose tool isn't installed is left out.
 
 - The cloud images write it in the last `RUN` of `images/cloud/runner/Dockerfile`,
   after Claude. It's the top layer, so it reruns whenever anything under it changed,
@@ -1084,46 +1111,63 @@ Until m5 the record is the image itself (the registry keeps two per type) and 90
 of Actions; from m5 the lock in git is the permanent one, and the report says what
 each build actually got.
 
-**Per-toolset checks.** Each one does a small piece of real work with its toolset's
-main tools, offline, in under 30 s on a warm image. `check.txt` already covers
-versions.
+**The session skill.** `/agent-toolset-checks`, a Claude Code skill baked into every
+runner image's `~/.claude/skills`, so it exists only in sessions on them. It asks
+what to run (everything, binary checks, or chosen smoke tests), runs it through
+`agent-toolset-checks`, reruns a failure once, and asks before filing an issue on
+lolay/agent-images. Its `SKILL.md` is the one source for what such an issue holds:
+the type, build date and commit from the versions report, what failed and the
+command to rerun it, the last 50 lines of output, that toolset's lines from the
+report, and nothing from the user's own work. Where the session's GitHub access
+doesn't reach the repo, it prints a prefilled new-issue link instead.
 
-| Toolset | Check |
-| --- | --- |
-| core | `git init` and a commit; a `jq` transform; `age-keygen` and a `sops` encrypt and decrypt round trip |
-| native | C and C++ hello, compiled and run; a `cmake` and `ninja` build of the same |
-| jvm | `javac` and `java` on a Hello class |
-| node | `node` runs an ES module; `pnpm run` a script in a package with no dependencies |
-| python | `uv venv` on the installed Python, a script run in it; `ruff check` on the script |
-| go | `go mod init`, `go vet`, `go build`, run |
-| rust | `cargo new`, `cargo build --offline`, `cargo clippy -- -D warnings`, `cargo fmt --check` |
-| proto | `protoc` a one-message file to a descriptor set; `buf lint` with a local `buf.yaml` |
-| terraform | `terraform init` and `validate` on a module with no providers; `tflint` on it |
-| gis | `ogr2ogr` or `ogrinfo` on a generated GeoJSON; the pixi environment imports its core modules |
-| gpu | `nvcc` compiles `cuda-probe.cu` without running it: a hosted runner has no GPU, and the existing device probe covers runtime at `-next` |
-| android-go, android-rust | Cross-compile hello for an Android ABI with the NDK |
-| android | `sdkmanager --list_installed` and `aapt2 version`; a Gradle build needs dependencies from the network |
+**Smoke tests.** The least work that shows each toolchain runs, fixtures in heredocs.
 
-None for `browser` (libraries only; sessions install the browser) or `display`
-(`check.txt` already takes a screenshot).
+| Toolset | Smoke test | Where |
+| --- | --- | --- |
+| native | C hello built with `cmake` and `ninja`, then run | Pull request |
+| jvm | `javac` and `java` a Hello class | Pull request |
+| node | `node` runs a script | Pull request |
+| python | `uv venv` on the installed Python, a script run in it | Pull request |
+| go | `go build` hello, run it | Pull request |
+| rust | `cargo build` hello, run it | Pull request |
+| proto | `protoc` a one-message file to a descriptor set | Pull request |
+| terraform | `terraform init` and `validate` on a module with no providers | Pull request |
+| display | The display answers, OpenGL renders on it, a screenshot of it is a PNG | Pull request |
+| gis | `ogrinfo` reads a generated GeoJSON; the pixi Python imports its core modules, silently, on one GDAL | Pull request |
+| gpu | `nvidia-smi`, `agent-cuda-probe` runs its kernel on the device, `agent-gpu-libs`; EGL and Vulkan reported, not failed | Live |
+| android-go, android-rust | Cross-compile hello for arm64 with the NDK | Deploy smoke VM |
 
-#### s1 - Smoke framework `[deep]`
+None for `core` or `browser` (binary checks are enough), or `android` (the smoke
+VM's emulator boot is its smoke test). The display, gpu and gis checks that did work
+(the screenshot, the device probe, the imports) moved out of `check.txt` into their
+smoke tests, so every binary check passes on a hosted runner.
 
-`install-toolset.sh` records `smoke.sh`; the entrypoint and `agent-gce-smoke.sh` run
-the recorded scripts; the unit tests; `cloud-build.yml` loads and smokes each target.
-The Makefile's `CLOUD_SCRIPTS` already globs `images/toolsets/*/*.sh`, so shellcheck
-and shfmt cover the new scripts unchanged.
+#### s1 - Binary checks and smoke tests `[deep]`
+
+`toolset-checks.sh` and its tests; `install-toolset.sh` records `smoke.sh`; the
+entrypoint and `agent-gce-smoke` run both through it; the display, gpu and gis
+smoke tests, with their `check.txt` trimmed; `cloud-build.yml` loads and smokes
+each runner target. Closes r1.f8 (`--task-timeout` on the smoke execution) and
+most of r1.f27 (one runner for both images). The Makefile's `CLOUD_SCRIPTS`
+already globs `images/toolsets/*.sh` and `images/toolsets/*/*.sh`, so shellcheck and
+shfmt cover the new scripts unchanged.
 
 #### s2 - Versions report `[deep]`
 
 `write-versions.sh`, the runner Dockerfile's last layer, `provision.sh`, the
 `versions-<type>` bake targets, and the summary and artifact steps in both workflows.
 
-#### s3 - Per-toolset smoke scripts `[exec]`
+#### s3 - Session skill `[deep]`
 
-One subagent per toolset in the table, on Sonnet, at most six at once, in two waves:
-`linux`'s nine toolsets (core through terraform), then `gis`, `gpu` and the three
-android toolsets. Each gets this contract in its prompt, verbatim:
+`/agent-toolset-checks`, installed in both images, and a test that every runner
+subcommand it names exists.
+
+#### s4 - The other smoke tests `[exec]`
+
+One subagent per toolset, on Sonnet, at most six at once: native, jvm, node,
+python, go, rust; then proto, terraform, android-go, android-rust. Each gets this
+contract in its prompt, verbatim:
 
 - Write exactly one file, `images/toolsets/<name>/smoke.sh`, and touch nothing else.
   Fixtures go in heredocs inside it.
@@ -1132,26 +1176,26 @@ android toolsets. Each gets this contract in its prompt, verbatim:
 - Offline: no registry, proxy, module, crate, provider or package fetches. Only the
   tools this toolset installs (read its `packages.txt`, `Brewfile`, `install.sh` and
   `check.txt`) and core's.
-- Real work, not `--version`: build or run one small thing per main tool. At most 40
-  lines, under 30 s on a warm image.
-- The last line of output is a one-line summary (`go: built and ran hello, vet
-  clean`).
+- The least real work that shows the toolchain runs: build or run one small thing.
+  About 20 lines, under 30 s on a warm image.
+- The last line of output is a one-line summary (`go: built and ran hello`).
 - Passes `shellcheck -x` and `shfmt -d` with the repo's settings. If the toolset's
   tools are on the session's PATH, run it in a temp directory; otherwise say it
   wasn't run.
 - Don't commit, push, or change branches. Report the file and what was verified.
 
 The parent reviews each script against the contract, runs `make cloud-lint
-cloud-test`, and commits each wave.
+cloud-test`, and commits each batch.
 
-#### s4 - Verify on images `[deep]`
+#### s5 - Verify on images `[deep]`
 
-A pull request's `cloud-build` shows a `smoke-<name>` pass line per toolset for each
-type it loads, and a versions report per type in its summary. A scratch commit that
-breaks one script (`exit 1`) turns that check red and names the toolset. The first
-deploy from `main` shows the same lines at `-next` in Cloud Run, and the next
-`android` deploy (or a manual dispatch of it) shows the android three on its smoke VM.
-Results go under this milestone.
+A pull request's `cloud-build` shows the binary checks, a `smoke-<name>` pass line
+per pull request smoke test and a `skip` line for gpu for each type it loads, and a
+versions report per type in its summary. A scratch commit that breaks one test
+(`exit 1`) turns that check red and names the toolset. The first deploy from `main`
+shows the same lines at `-next` in Cloud Run, and the next `android` deploy (or a
+manual dispatch of it) shows the android binary checks and smoke tests on its smoke
+VM. Results go under this milestone.
 
 ### m5 - Dependency watch
 
