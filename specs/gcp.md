@@ -197,10 +197,12 @@ Choices, carried over from [design.md](design.md):
   the same on both; a tag can trail Docker Hub's for a while after it moves.
 - **No secrets in images or sessions** ([secrets.md](secrets.md)). The runner's
   service account gets logging and the two buckets (below) only.
-- **Claude upgrades itself at start until m4.** The plan is no self-update: the watch
-  rebuilds within the hour of a release. Until the watch exists, an image is only as
-  fresh as the last push, so the runner keeps `CLAUDE_UPGRADE=true` (the shared
-  default) and m4 turns it off. The image still installs Claude in its own last layer.
+- **Claude upgrades itself at start, on the weekly types for good.** A `nightly`
+  type ([Rebuild cadence](#rebuild-cadence)) is at most a day behind today, and
+  within the hour once m4's watch rebuilds it on a release; m4 then turns its
+  self-update off. A `weekly` type can be a week behind, so it keeps
+  `CLAUDE_UPGRADE=true` (the shared default): about 6 s per start, against a rebuild
+  that costs up to 45 minutes. The image still installs Claude in its own last layer.
 
 Layer order, slowest-moving first, so a rebuild only redoes what changed:
 
@@ -229,8 +231,8 @@ a lock update from the watch, a change to `images/cloud` or `images/shared`, or 
 revert. A push to `main` runs the deploy workflow; nothing else pushes images or
 updates jobs. Enforced in three places, so one mistake doesn't open it up:
 
-- The deploy workflow triggers on `push` to `main` and `workflow_dispatch`, and its
-  jobs run in a GitHub environment, `production`, whose deployment branch policy
+- The deploy workflow triggers on `push` to `main`, `schedule` (which GitHub runs on
+  the default branch, `main`) and `workflow_dispatch`, and its jobs run in a GitHub environment, `production`, whose deployment branch policy
   allows only `main`.
 - The workload identity provider's attribute condition accepts only this repo's
   numeric id with `ref` `refs/heads/main` and that environment, so a token from any
@@ -254,7 +256,7 @@ matrix. A failed deploy makes the next one redeploy more, never less:
 | `images/cloud/base-gpu/**` | Every `-gpu` type (each is built `FROM` it) |
 | `images/cloud/<type>/**`, including its `versions.lock` | That type |
 | `hooks/gcp/**`, `images/cloud/orchestrator/**` | The orchestrator host (new image, then the host restarts its container) |
-| `infra/gcp/<type>.env` (CPU, memory, GPU, timeout, `--min-idle`) | That type's job and orchestrator settings, no image build |
+| `infra/gcp/<type>.env` (CPU, memory, GPU, timeout, `--min-idle`, `REBUILD`) | That type's job and orchestrator settings, no image build |
 | `scripts/cloud/job-spec.sh` | Every type's job, no image build |
 | `images/android/**` (the LXD image's scripts and files, and `gce/`), the toolsets in `images/android/toolsets.txt`, `images/shared/**`, the two toolset scripts | The `android` Compute Engine image: Packer build, smoke VM, then family `agent-android` ([below](#compute-engine-vm-per-session-android-and-the-gpu-fallback)) |
 | `infra/gcp/android.env` | The orchestrator only: the hook reads it at each spawn, from the orchestrator image |
@@ -340,7 +342,7 @@ times a week, Homebrew less.
 
 ### Deploy: build, smoke, promote
 
-Runs only for a push to `main` (or a manual dispatch on `main`), one type at a time
+Runs only on `main`: a push, a scheduled rebuild or a manual dispatch, one type at a time
 in a `concurrency` group that queues rather than cancels.
 
 Layer caching through the Actions cache (`cache-to type=gha`), not the registry, so a
@@ -370,12 +372,48 @@ disk-backed type, while the API's `emptyDir` takes `medium: DISK`. Every job run
 with `maxRetries: 0` and one task: a retried task would come back with a spent work
 order.
 
-### Nightly: 04:00 Pacific, Tuesday through Saturday
+### Rebuild cadence
 
-A scheduled run of the deploy workflow on `main` (scheduled workflows always run on
-the default branch): a no-cache build with `--pull` of the lock on `main`, promoted
-the same way. It catches what the lock can't see (a curl installer), retries a failed
-deploy, and keeps the "track latest" promise even if a check is wrong.
+Not every image is worth rebuilding every night. Each type's `REBUILD` in
+`infra/gcp/<type>.env` puts it on one of two schedules of the deploy workflow, a
+no-cache build promoted the same way as a push's. A type without `REBUILD` is
+`nightly`, so a new one is never left off. `scripts/cloud/changed-targets.sh
+--schedule <class>` lists a class's targets.
+
+| Image | Rebuild cost | `REBUILD` | Claude between builds |
+| --- | --- | --- | --- |
+| `linux` | Minutes; Claude is the last layer | `nightly`: 04:07 Pacific, Tuesday to Saturday, after the weekday's Claude releases | Self-updates until m4's watch |
+| Orchestrator | A minute or two | Rides `nightly` (not a type, so no env file) | Baked in; rebuilt nightly |
+| `gis` | 9 GB, most of the Actions cache's 10 GB; conda-forge moves slowly | `weekly`: 05:37 Pacific, Sunday | Self-updates |
+| `android` | About 45 min of Packer with no layer cache, the disk capture and a smoke VM; about $0.50 in GCP | `weekly` | Self-updates |
+| `linux-gpu`, `3d-gpu` (m3) | CUDA; expect cache misses | `weekly` when they land | Self-updates |
+
+The trade is build cost against how fast an image's contents move and what being
+behind costs a session. Claude, the thing that moves most, updates itself at runner
+start on every type, so a week-old `android` or `gis` image still runs today's
+Claude; what a week costs it is apt and Homebrew updates, which a session with
+`sudo` (`android`) or Homebrew (all) can pull when it needs one. Every type still
+rebuilds on any push that touches its inputs ([above](#what-a-push-to-main-deploys)).
+`android` included: a runner fix in `images/shared` reaches every type, not only
+the cheap ones.
+
+A scheduled run catches what the lock can't see (a curl installer), retries a failed
+deploy, and keeps the "track latest" promise even if a check is wrong. Before m4 it's
+the only way apt and Homebrew updates reach an image that nothing has pushed to.
+With m4, the nightly builds `--pull` from the lock on `main`, and the hourly watch
+covers `nightly` types only; a `weekly` type's lock updates on its schedule.
+
+A scheduled run can displace a push run waiting in the deploy's `concurrency` queue
+(GitHub keeps one pending run); the next push covers it, since `plan` diffs against
+the last successful push deploy.
+
+The macOS image (Tart) and the Linux host's LXD image stay manual, `make build` on
+an Xcode or OS release or about monthly; both upgrade Claude at VM start.
+
+Deferred: splitting `android` into a base image (toolsets, SDK, the emulator's
+snapshot) and a thin top (`images/shared`, Claude), so a runner fix doesn't redo
+the SDK. Worth it only if pushes to `images/shared` keep triggering `android`
+builds; the 100 GB disk capture still costs every build.
 
 ### Standbys
 
@@ -756,6 +794,16 @@ the session or a full GPU desktop. Built in m2
 ([handoffs/plan-gcp-android-kestrel.md](handoffs/plan-gcp-android-kestrel.md)); not yet
 deployed.
 
+- **Why it builds in GCP:** the other images are containers, built on the GitHub
+  runner and pushed. This one is a Compute Engine disk image, and the build boots
+  the emulator once for its quickboot snapshot, which needs KVM in the VM doing the
+  build. Packer's `googlecompute` builder makes both easy: it boots a VM in the
+  project, provisions it, and saves its disk as the image, in place. Building on the
+  GitHub runner would mean producing a raw 100 GB disk there, then uploading and
+  importing it: slower, more steps to fail, and a hosted runner with about 14 GB
+  free to fit it on.
+  The GitHub job only drives Packer and waits, so the build's cost is the build VM
+  (an `n2-standard-8` for about 45 minutes, about $0.40) plus the smoke VM.
 - **Image:** Packer's `googlecompute` builder (`images/android/gce`), run by the
   deploy on `main`: a build VM with nested virtualization, no external IP (Packer
   reaches it through IAP, tag `packer`) and no service account. `provision.sh`
@@ -890,9 +938,11 @@ with nothing installed during the session. What it found:
 
 ### m4 - Dependency watch
 
-The lock files, the hourly watch, the lock bot, the nightly rebuild, the cleanup
-policy out of dry run, and manifests; with the watch in place, turn off Claude's
-self-update at start (`CLAUDE_UPGRADE=false`). Independent of the types; it can start
+The lock files, the hourly watch (for `nightly` types), the lock bot, the scheduled
+rebuilds building from the lock, the cleanup policy out of dry run, and manifests;
+with the watch in place, turn off Claude's self-update at start
+(`CLAUDE_UPGRADE=false`) on the `nightly` types only
+([Rebuild cadence](#rebuild-cadence)). The schedules themselves already run. Independent of the types; it can start
 any time after m1.
 
 ## Open items

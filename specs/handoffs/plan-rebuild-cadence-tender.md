@@ -1,6 +1,6 @@
 # Per-type rebuild cadence for the GCP images
 
-Status: s1 to s3 done; s4 next.
+Status: s1 to s4 done. Pending: open the PR when asked; remove this file as the last commit before merge.
 
 ## Context
 
@@ -73,7 +73,7 @@ last commit before merge.
 - The push-diff base query already filters `--event push`, so scheduled runs don't
   shift it. Concurrency group already queues.
 
-### s4 - Spec [exec]
+### s4 - Spec [exec] (done)
 
 - `specs/gcp.md`: new "Rebuild cadence" subsection under "Image pipeline" with the
   table above and the reason (build cost vs. how fast contents move, Claude
