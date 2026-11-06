@@ -26,6 +26,9 @@ readonly toolsets_dir="$AGENT_IMAGES_DIR/images/toolsets"
 readonly provisioners=(setup-user install-packages)
 # Every provisioner's stderr, so a build that isn't green says so.
 readonly build_err="$AGENT_IMAGES_LOG_DIR/linux-build.err"
+# The commit being built, for the versions report install-packages.sh writes.
+agent_commit="$(git -C "$AGENT_IMAGES_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
+readonly agent_commit
 base_image="$(setting LINUX_BASE_IMAGE ubuntu:24.04)"
 cpu="$(setting BUILD_CPU 8)"
 memory_gb="$(setting BUILD_MEMORY_GB 16)"
@@ -79,7 +82,7 @@ mkdir -p "$AGENT_IMAGES_LOG_DIR"
 : >"$build_err"
 for provisioner in "${provisioners[@]}"; do
 	log "running $provisioner as $GUEST_USER"
-	guest_exec "$build_vm" env STAGING_DIR="$guest_staging" GUEST_USER="$GUEST_USER" \
+	guest_exec "$build_vm" env STAGING_DIR="$guest_staging" GUEST_USER="$GUEST_USER" AGENT_COMMIT="$agent_commit" \
 		bash "$guest_staging/scripts/$provisioner.sh" 2> >(tee -a "$build_err" >&2)
 done
 

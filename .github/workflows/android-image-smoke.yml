@@ -23,6 +23,8 @@ jobs:
       # the Ubuntu cloud image's ubuntu (and the macOS image's admin).
       GUEST_USER: runner
       STDERR_LOG: /tmp/agent-images-stderr.log
+      # For the versions report install-packages.sh writes.
+      AGENT_COMMIT: ${{ github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Hosted runners have /dev/kvm; this makes it usable by any user.
