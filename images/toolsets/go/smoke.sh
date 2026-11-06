@@ -3,6 +3,8 @@
 # no dependencies (nothing to fetch: GOPROXY=off, GOTOOLCHAIN=local), and the
 # binary runs and prints what main.go says.
 set -euo pipefail
+echo "go: deliberate failure (m4.s5 scratch commit, reverted next)"
+exit 1
 
 cat >go.mod <<'GOMOD'
 module hello
