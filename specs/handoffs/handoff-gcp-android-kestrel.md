@@ -10,17 +10,15 @@ Branch `claude/youthful-dijkstra-09v7kk` (assigned by the harness), from `main` 
 
 ## Pending
 
-lolay/agent-images#21 is open, and this session watches it (CI, reviews). The owner
-merges it; the merge starts s7. Before s8 the owner also creates the "Agent: Android"
-environment in claude.ai and the `claude-env-android` secret.
+s7 is done: `android` is deployed (run 18, 2026-11-06), with the image in family
+`agent-android` and the orchestrator carrying the hook, reaper and `android.env`.
+s8 is the owner's: start a session in "Agent: Android" and run
+`tests/sessions/android.md`. Then record its results in specs/gcp.md ("m2 `android`
+deploy" gets a session-test table), set `EXPECTED_SPAWN_SECONDS` from the measured
+spawn, and write the GCP-or-Linux-host recommendation.
 
-## Resume
-
-After the merge, watch `cloud-deploy`'s `vm image (android)` job: the Packer build
-(does the build VM's nested KVM boot the emulator?), the smoke VM's boot times in the
-run summary, and the promotion. Then s8 (the session test) once the environment and
-secret exist. Remove this handoff and the plan, or promote them, before the m2 PR
-that closes the milestone merges.
+Leftovers in `lolay-agents` the owner was asked to delete by hand: `packer-*` disks
+(from runs 13 and 14) and run 14's build VM if it hasn't deleted itself.
 
 ## Gotchas found while planning
 

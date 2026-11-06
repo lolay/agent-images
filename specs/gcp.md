@@ -5,7 +5,8 @@ Status: **m1 (`linux`) done, 2026-11-05**: sessions run on Cloud Run, tested twi
 (`lolay/infrastructure`, `stacks/gcp/agents`). m2 is under way
 ([handoffs/handoff-m2-gis-android.md](handoffs/handoff-m2-gis-android.md)): **`gis`
 done, 2026-11-06** ([m2 `gis` results](#m2-gis-results)), and `android` (a Compute
-Engine VM per session) is built and waiting for its first deploy. Recheck
+Engine VM per session) is deployed and waiting for its session test
+([m2 `android` deploy](#m2-android-deploy)). Recheck
 anything marked preview before building on it.
 
 The same model as the Mac and Linux runners, with Google running the hardware: Claude's
@@ -753,8 +754,8 @@ Cloud Run gives a container no KVM, so `android` runs as a Compute Engine VM per
 session, the cloud version of the Linux host's LXD VMs. The same path is the GPU
 fallback if Cloud Run can't render, and the answer for any type that needs Docker in
 the session or a full GPU desktop. Built in m2
-([handoffs/plan-gcp-android-kestrel.md](handoffs/plan-gcp-android-kestrel.md)); not yet
-deployed.
+([handoffs/plan-gcp-android-kestrel.md](handoffs/plan-gcp-android-kestrel.md));
+deployed 2026-11-06 ([m2 `android` deploy](#m2-android-deploy)).
 
 - **Image:** Packer's `googlecompute` builder (`images/android/gce`), run by the
   deploy on `main`: a build VM with nested virtualization, no external IP (Packer
@@ -855,8 +856,8 @@ deploys found:
   branch, the reaper (Cloud NAT is already there). Done when
   [tests/sessions/android.md](../tests/sessions/android.md) passes, with the emulator
   boot time compared against the Linux host's. Plan:
-  [handoffs/plan-gcp-android-kestrel.md](handoffs/plan-gcp-android-kestrel.md); built,
-  waiting for its first deploy.
+  [handoffs/plan-gcp-android-kestrel.md](handoffs/plan-gcp-android-kestrel.md);
+  deployed, waiting for its session test.
 
 #### m2 `gis` results
 
@@ -874,6 +875,24 @@ with nothing installed during the session. What it found:
 | Resources | 10 GiB scratch was enough; 32 GiB memory went unused by this test, so real workloads decide whether #19's size holds. `nproc` reports 9 for 8 vCPU |
 | Not run | The cost line (no price lookup yet) and QGIS desktop (`gis` has no display) |
 | Test fixes | The NDVI red-band offset and floor, noise before the DSM, inclusive `writers.gdal` bounds, a map inset, Overpass's encoding: folded into the test |
+
+#### m2 `android` deploy
+
+Deployed 2026-11-06 by [run 18](https://github.com/lolay/agent-images/actions/runs/42162644618):
+[lolay/agent-images#21](https://github.com/lolay/agent-images/pull/21) (the type), then
+#23, #26, #28 and #30 for what the first builds found. The session test
+([tests/sessions/android.md](../tests/sessions/android.md)) is next. What the deploys
+found:
+
+| Finding | Result |
+| --- | --- |
+| Emulator boot from the snapshot, smoke VM (`n2-standard-8`) | 27.2 s on a fresh VM (its disk still restoring from the image), 6.1 to 6.4 s warm. The Linux host's hosted smoke: about 9 s |
+| Snapshot boot in the Packer build VM | Works under nested KVM on Compute Engine: 43 to 45 s, saving the snapshot |
+| Build time | About 43 min: provisioning 9 to 25 min (Google's regional Ubuntu mirror once served the JDK at 140 kB/s), then up to 30 min creating the 100 GB image (Packer's 5 min default timed out, #28) |
+| Packer in CI | IAP SSH with no external IP works; provisioning has to run from `/` (#23), and the Homebrew installer's progress kept off stderr (#26) |
+| Smoke on Cloud Run | Needed `TMPDIR` before the checks, since scratch is mounted empty (#30); that blocked `linux` and `gis` too, and with them the orchestrator |
+| Smoke VM | `runuser -l` has no `/usr/sbin` on PATH; `kvm-ok` by its full path (#30) |
+| Leftovers | A failed or cancelled Packer build can leave its build disk (and, when cancelled, its VM): delete `packer-*` disks and instances by hand. Don't cancel a build mid-run |
 
 ### m3 - GPU types
 
@@ -902,7 +921,7 @@ any time after m1.
 | Graphics libraries on Cloud Run GPUs | Decides whether a virtual head runs on Cloud Run |
 | Cold start of a multi-GB GPU image | Sets `--expected-spawn-seconds` and whether a standby is worth paying for |
 | Cloud Run GPU quota grant | New projects get a default grant; may need a request for RTX PRO 6000 |
-| Emulator speed under nested virtualization on Compute Engine | Decides whether `android` stays on GCP or on the Linux host; every image build's smoke VM measures it, then m2's session test |
+| Emulator speed under nested virtualization on Compute Engine | Boot measured: 27.2 s cold, about 6 s warm, against the Linux host's 9 s ([m2 `android` deploy](#m2-android-deploy)). The session test's builds and UI test decide whether `android` stays on GCP |
 | Outputs and datasets on the `android` VMs | gcsfuse mounts like the Cloud Run types'; left out of m2, since its test doesn't use them |
 | Serial port logging for the `android` VMs | Their journal reaches Cloud Logging only if `compute.disableSerialPortLogging` isn't enforced; m2's first deploy shows which |
 | Data | Keep data-heavy work next to wherever its data is: cross-cloud egress is about $0.08 to $0.12 per GB |

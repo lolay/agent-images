@@ -1,6 +1,6 @@
 # Plan: m2, `android` on Compute Engine
 
-Status: s1 to s6 done 2026-11-06, in lolay/agent-images#21; s7 starts when the owner merges it.
+Status: s1 to s7 done 2026-11-06 (deployed by run 18, after #21, #23, #26, #28, #30); s8 waits for the owner to run the session test.
 Branch `claude/youthful-dijkstra-09v7kk` (assigned by the harness), cut
 from `main` at `ecc54c2`, after lolay/agent-images#18, #19 and #20.
 
@@ -161,7 +161,16 @@ s7:
   `roles/compute.osAdminLogin`), and whether `compute.disableSerialPortLogging` is
   enforced.
 
-#### s7 - First deploy [exec]
+#### s7 - First deploy [exec] (done)
+
+Done 2026-11-06, [run 18](https://github.com/lolay/agent-images/actions/runs/42162644618).
+The build VM's nested KVM boots the emulator (43 to 45 s, saving the snapshot); the
+smoke VM boots it in 27.2 s cold and 6.1 s warm. Four fixes on the way: #23
+(provision from `/`), #26 (Homebrew installer stderr), #28 (Packer's 30 min image
+timeout), #30 (`TMPDIR` before cloud smoke, `kvm-ok`'s path). Results table in
+specs/gcp.md, "m2 `android` deploy". `EXPECTED_SPAWN_SECONDS` stays 240 until s8
+measures a real spawn.
+
 
 Watch the `main` deploy: the Packer build (does the build VM's nested KVM boot the
 emulator and save its snapshot?), the smoke VM's boot times, the promotion. Set
