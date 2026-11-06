@@ -12,7 +12,7 @@ file is the state around it, not a second copy of the design.
   can run alongside it. The `gpu` toolset's smoke script compiles only, so it
   doesn't wait on a GPU either.
 - The spec revision landed on branch `claude/gracious-carson-ebtt7x` (commit
-  `1bd3f93`, not yet merged): new m4; the old m4 (dependency watch) became m5 and was
+  `1bd3f93`, lolay/agent-images#46): new m4; the old m4 (dependency watch) became m5 and was
   revised to open auto-merging pull requests gated by m4's smoke.
 - No m4 code exists yet.
 
@@ -50,6 +50,13 @@ file is the state around it, not a second copy of the design.
   `install-toolset.sh` lists only the Brewfile's own formulae; leave it.
 - **The report's layer must be last** (after Claude in `images/cloud/runner/Dockerfile`)
   so a cached copy is still accurate.
+- **`tests/unit/test_bake.py` checks the bake file against the types** (from
+  lolay/agent-images#44): every `infra/gcp/<type>.env` needs `<type>-tools` and
+  `<type>`, and the `FROM` chain must match `changed-targets.sh`. The new
+  `versions-<type>` targets have to pass that test, or the test has to learn them.
+- **The pull request check builds every type** from `make cloud-targets`
+  (lolay/agent-images#44), so s1's `--load` and smoke step goes into that matrix,
+  skipping `orchestrator`.
 - **`changed-targets.sh` maps paths to types.** A new `smoke.sh` under
   `images/toolsets/<name>/` already rebuilds the types that install that toolset. A
   new `images/toolsets/write-versions.sh` needs adding to the "every runner type" row
