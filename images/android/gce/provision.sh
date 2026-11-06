@@ -25,6 +25,11 @@ log() { printf '==> provision: %s\n' "$*"; }
 	exit 1
 }
 
+# Packer runs this from its own user's home (0750 on Ubuntu 24.04), and sudo -u
+# keeps the working directory, so the guest user's tools would start in a
+# directory they can't read; Homebrew refuses to run there.
+cd /
+
 # First-boot cloud-init holds the apt lock until it's done.
 cloud-init status --wait >/dev/null 2>&1 || true
 
