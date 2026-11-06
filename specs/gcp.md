@@ -5,8 +5,8 @@ Status: **m1 (`linux`) done, 2026-11-05**: sessions run on Cloud Run, tested twi
 (`lolay/infrastructure`, `stacks/gcp/agents`). m2 is under way
 ([handoffs/handoff-m2-gis-android.md](handoffs/handoff-m2-gis-android.md)): **`gis`
 done, 2026-11-06** ([m2 `gis` results](#m2-gis-results)), and `android` (a Compute
-Engine VM per session) is deployed and waiting for its session test
-([m2 `android` deploy](#m2-android-deploy)). Recheck
+Engine VM per session) **done, 2026-11-06** ([m2 `android` results](#m2-android-results)):
+m2 is done. Recheck
 anything marked preview before building on it.
 
 The same model as the Mac and Linux runners, with Google running the hardware: Claude's
@@ -753,9 +753,9 @@ Tart issue reports VMs failing to start on a headless `mac2.metal`.
 Cloud Run gives a container no KVM, so `android` runs as a Compute Engine VM per
 session, the cloud version of the Linux host's LXD VMs. The same path is the GPU
 fallback if Cloud Run can't render, and the answer for any type that needs Docker in
-the session or a full GPU desktop. Built in m2
-([handoffs/plan-gcp-android-kestrel.md](handoffs/plan-gcp-android-kestrel.md));
-deployed 2026-11-06 ([m2 `android` deploy](#m2-android-deploy)).
+the session or a full GPU desktop. Built in m2 (plan:
+`specs/handoffs/plan-gcp-android-kestrel.md`, removed once it was done; in git history
+at `0e34c0f`), deployed and tested 2026-11-06 ([m2 `android` results](#m2-android-results)).
 
 - **Image:** Packer's `googlecompute` builder (`images/android/gce`), run by the
   deploy on `main`: a build VM with nested virtualization, no external IP (Packer
@@ -856,8 +856,7 @@ deploys found:
   branch, the reaper (Cloud NAT is already there). Done when
   [tests/sessions/android.md](../tests/sessions/android.md) passes, with the emulator
   boot time compared against the Linux host's. Plan:
-  [handoffs/plan-gcp-android-kestrel.md](handoffs/plan-gcp-android-kestrel.md);
-  deployed, waiting for its session test.
+  done 2026-11-06 ([m2 `android` results](#m2-android-results)).
 
 #### m2 `gis` results
 
@@ -876,13 +875,36 @@ with nothing installed during the session. What it found:
 | Not run | The cost line (no price lookup yet) and QGIS desktop (`gis` has no display) |
 | Test fixes | The NDVI red-band offset and floor, noise before the DSM, inclusive `writers.gdal` bounds, a map inset, Overpass's encoding: folded into the test |
 
-#### m2 `android` deploy
+#### m2 `android` results
 
-Deployed 2026-11-06 by [run 18](https://github.com/lolay/agent-images/actions/runs/42162644618):
-[lolay/agent-images#21](https://github.com/lolay/agent-images/pull/21) (the type), then
-#23, #26, #28 and #30 for what the first builds found. The session test
-([tests/sessions/android.md](../tests/sessions/android.md)) is next. What the deploys
-found:
+Done 2026-11-06: [lolay/agent-images#21](https://github.com/lolay/agent-images/pull/21)
+(the type), then #23, #26, #28 and #30 for what the first builds found, deployed by
+[run 18](https://github.com/lolay/agent-images/actions/runs/42162644618).
+[tests/sessions/android.md](../tests/sessions/android.md) passed every check on an
+"Agent: Android" session (2026-11-06T05:29Z), with nothing installed in the image during
+the session.
+
+**Recommendation: keep `android` on GCP**, with the Linux host's LXD image (same
+scripts) as the fallback. Everything works end to end; the warm emulator boot beats
+the Linux host's; builds and the Compose UI test ran without trouble; and a VM per
+session needs no host to keep up. What GCP costs that the host doesn't: about $0.40 an
+hour per session (`n2-standard-8`), a cold VM per session (spawn time not measured
+yet), and a 27 s first emulator boot while the disk restores.
+
+The session test:
+
+| Check | Result |
+| --- | --- |
+| VM | Ubuntu 24.04.5, 8 vCPU, 31 GiB, 96 GB disk; passwordless sudo; `$DISPLAY` `:99`; `kvm-ok` passes |
+| Toolchain | OpenJDK 21.0.12.1, platform `android-37.0`, build-tools 37.0.0, NDK 30.0.16248370, emulator 37.2.13.0 |
+| Emulator | Booted before the session started (`agent-emulator wait` 0.25 s); API 37, x86_64 |
+| App | Kotlin and Compose (AGP 9.5.1, Kotlin 2.4.21, Compose BOM 2026.09.00, Gradle 9.8.2): unit test, `assembleDebug` (11.1 MiB APK), Compose UI test on the emulator, install, two taps, screenshot: all pass, no `FATAL EXCEPTION` |
+| Build times | Cold `assembleDebug` 54 s (dependencies already cached by the unit test), warm 19 s after a one-line edit; the Gradle wrapper's first fetch 57 s |
+| Credentials | No unexpected credential names in the environment |
+| Found in the test stack | Compose's `ui-test-junit4` pulls in `espresso-core` 3.5.0, which fails on API 37 (`InputManager.getInstance` is gone); pinning 3.7.0 fixes it. Now a line in the session's `CLAUDE.md` |
+| Not on the VMs | `$AGENT_OUTPUTS` and `$AGENT_DATASETS` (open item below), and the session notice (cost, retire time), which only the Cloud Run hook sends |
+
+What the deploys found:
 
 | Finding | Result |
 | --- | --- |
@@ -921,7 +943,8 @@ any time after m1.
 | Graphics libraries on Cloud Run GPUs | Decides whether a virtual head runs on Cloud Run |
 | Cold start of a multi-GB GPU image | Sets `--expected-spawn-seconds` and whether a standby is worth paying for |
 | Cloud Run GPU quota grant | New projects get a default grant; may need a request for RTX PRO 6000 |
-| Emulator speed under nested virtualization on Compute Engine | Boot measured: 27.2 s cold, about 6 s warm, against the Linux host's 9 s ([m2 `android` deploy](#m2-android-deploy)). The session test's builds and UI test decide whether `android` stays on GCP |
+| `android` spawn time | Not measured: the session test starts once the VM is up. Time a queued session to its first prompt, then set `EXPECTED_SPAWN_SECONDS` (240 now) |
+| Session notice on the `android` VMs | The cost and retire-time notice comes from the Cloud Run session hook; the VMs don't run it yet |
 | Outputs and datasets on the `android` VMs | gcsfuse mounts like the Cloud Run types'; left out of m2, since its test doesn't use them |
 | Serial port logging for the `android` VMs | Their journal reaches Cloud Logging only if `compute.disableSerialPortLogging` isn't enforced; m2's first deploy shows which |
 | Data | Keep data-heavy work next to wherever its data is: cross-cloud egress is about $0.08 to $0.12 per GB |
