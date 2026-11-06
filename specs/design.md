@@ -38,7 +38,8 @@ the last lookup; it doesn't pin anything.
 On the GCP runners, "latest" is recorded and gated rather than taken on faith
 ([gcp.md](gcp.md), m4 and m5). From m4, every image carries a versions report
 (`/etc/agent-images/versions.md`: Claude, each toolset, all of Homebrew, apt) that
-also lands in its deploy's summary, and each toolset's functional smoke test
+also lands in its deploy's summary and a 90-day artifact (android's too, downloaded
+from its Packer build VM), and each toolset's functional smoke test
 (`smoke.sh`) must pass before an image is promoted. From m5, a lock in git records
 what each type is built from, and a bot's pull request moves it when upstream does,
 merging only on a green build and smoke. Homebrew stays unpinned there too: the lock

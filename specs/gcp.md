@@ -251,10 +251,12 @@ updates jobs. Enforced in three places, so one mistake doesn't open it up:
 - The workload identity provider's attribute condition accepts only this repo's
   numeric id with `ref` `refs/heads/main` and that environment, so a token from any
   other branch, pull request or fork can't get GCP credentials at all.
-- Pull requests that touch the images run a build-only check: build, no push, no GCP
+- Pull requests that touch the images run a check with no push and no GCP
   credentials. It builds every type `changed-targets.sh --all` lists (`make
   cloud-targets`) and the orchestrator, so a new env file's image is built before
-  it reaches `main`.
+  it reaches `main`. Each runner type is also loaded and run through `make
+  cloud-smoke` (the binary checks and smoke tests, `smoke pr`, as in m4), and its
+  versions report goes to the run's summary and an artifact.
 
 ### What a push to `main` deploys
 
@@ -402,8 +404,9 @@ Every deploy follows the `-next` pattern from `build-image.sh`:
 2. Point `agent-<type>-next` at that digest and run one smoke execution in Cloud Run
    (the entrypoint's `smoke` mode): `claude --version`, scratch is a real writable
    disk, outputs round-trips a file, datasets refuses a write, Homebrew's prefix is
-   writable by the session user; for
-   `-gpu` types also `nvidia-smi`, a CUDA device probe, `eglinfo` against Xvfb. It
+   writable by the session user, and every toolset's binary checks and smoke tests
+   (m4, "Binary checks and smoke tests"), which for `-gpu` types include
+   `nvidia-smi`, a CUDA device probe and `eglinfo -B -p surfaceless`. It
    runs in GCP, next to the registry, so the pull is free.
 3. Only if it passes, point `agent-<type>` at the same digest. Cloud Run resolves the
    image when the job is updated, so running sessions never see a half-built image.
@@ -481,7 +484,8 @@ type already), so a standby is never more than an hour older than the newest ima
   of what every image was built from, and `git log -p images/cloud/3d-gpu/versions.lock`
   shows what changed and when. Each deploy's versions report
   ([m4](#m4---functional-smoke-and-versions-report)) is what it actually got, Homebrew
-  included, in the run's summary and as an artifact for 90 days (a public repo's
+  included (android's too, downloaded from its Packer build VM), in the run's summary
+  and as an artifact for 90 days (a public repo's
   maximum), and in the image itself for as long as the registry keeps it. All public,
   which is fine: builds hold no secrets.
 
@@ -865,7 +869,8 @@ at `0e34c0f`), deployed and tested 2026-11-06 ([m2 `android` results](#m2-androi
   from it and only then moves it to `agent-android` (`images.patch` takes `family`),
   deleting the type's older images, keeping one.
 - **Smoke VM:** metadata `agent-smoke=true` and no service account. The guest runs
-  `agent-gce-smoke` (Claude, sudo, `kvm-ok`, Java, adb, scratch, and the emulator
+  `agent-gce-smoke` (every binary check and smoke test through
+  `agent-toolset-checks`, plus sudo, KVM, scratch, and the emulator
   booted twice from its snapshot: once from a disk Compute Engine is still restoring
   from the image, which reads lazily, and once warm), reports through guest
   attributes, and powers off. The deploy prints the log and puts the boot times in
@@ -1095,14 +1100,18 @@ collapsed `<details>`. A section whose tool isn't installed is left out.
 - The cloud images write it in the last `RUN` of `images/cloud/runner/Dockerfile`,
   after Claude. It's the top layer, so it reruns whenever anything under it changed,
   and a cached copy is still accurate. `android` writes it at the end of
-  `images/android/gce/provision.sh` and prints it into the Packer log.
+  `images/android/scripts/install-packages.sh`, the last of the installs in every
+  android build (Packer, the LXD build, `android-image-smoke.yml`), with the
+  checks' runner and the session skills, and prints it into the build log. Packer
+  then downloads it from the build VM to `out/versions/android/versions.md`.
 - It leaves the build without a pull from Artifact Registry: a `versions-<type>` bake
   target, `FROM scratch` with only that file copied from the type's image, built in
   the same `bake` call as the push with a `type=local` output, so it reuses the
   layers just built.
 - `cloud-deploy.yml` appends it to `$GITHUB_STEP_SUMMARY` under the commit and the
   pushed digest, and uploads it as an artifact, `versions-<type>-<tag>.md`, with
-  `retention-days: 90`. `cloud-build.yml` does the same on pull requests, so a pull
+  `retention-days: 90`; the `vm-images` job does the same for android's, under the
+  image's name (`versions-<image name>.md`). `cloud-build.yml` does the same on pull requests, so a pull
   request shows what its image would contain.
 - The entrypoint's `smoke` names the file, so the `-next` log and a session can
   find it.
@@ -1156,8 +1165,10 @@ shfmt cover the new scripts unchanged.
 
 #### s2 - Versions report `[deep]`
 
-`write-versions.sh`, the runner Dockerfile's last layer, `provision.sh`, the
-`versions-<type>` bake targets, and the summary and artifact steps in both workflows.
+`write-versions.sh`, the runner Dockerfile's last layer, android's
+`install-packages.sh` and Packer's download of the report, the `versions-<type>` bake
+targets, and the summary and artifact steps in the deploy's `types` and `vm-images`
+jobs and in the pull request check.
 
 #### s3 - Session skill `[deep]`
 

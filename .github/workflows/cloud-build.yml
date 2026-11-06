@@ -1,6 +1,7 @@
-# Build-only check for pull requests that touch the GCP runners: lint, the unit
-# tests, and a build of every cloud image (one runner each), with no push and
-# no GCP credentials (specs/gcp.md, "Only main deploys"). It has no id-token
+# Check for pull requests that touch the GCP runners: lint, the unit tests, and
+# for every cloud image (one runner each) a build, load, `make cloud-smoke` (the
+# binary checks and smoke tests, `smoke pr`) and a versions report, with no push
+# and no GCP credentials (specs/gcp.md, "Only main deploys"). It has no id-token
 # permission and no environment, so it couldn't get a GCP token if it tried.
 name: cloud-build
 

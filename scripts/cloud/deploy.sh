@@ -13,7 +13,8 @@
 #       from images/<type>/gce into family <IMAGE_FAMILY>-next, and keep its
 #       versions report at out/versions/<type>/versions.md.
 #   deploy.sh vm-promote <type> <image name> <commit>
-#       boot a smoke VM from that image (agent-gce-smoke: claude, KVM, the
+#       boot a smoke VM from that image (agent-gce-smoke: every binary check and
+#       smoke test through agent-toolset-checks, plus sudo, KVM, scratch and the
 #       emulator's boot time), and only if it passes move the image to family
 #       <IMAGE_FAMILY>, which the hook creates VMs from, and delete the type's
 #       older images (keep one).

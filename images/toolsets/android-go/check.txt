@@ -1,4 +1,4 @@
-# Smoke checks: label: command, which must exit 0; its first line of output is
-# the reported version.
+# Binary checks (toolset-checks.sh): label: command, which must exit 0; its first
+# line of output is the reported version.
 gomobile: go version -m "$(command -v gomobile)" | awk '$1 == "mod" { print $3 }'
 gobind: command -v gobind

@@ -1,5 +1,5 @@
-# Smoke checks (images/cloud/entrypoint.sh): label: command, which must exit 0;
-# its first line of output is the reported version.
+# Binary checks (toolset-checks.sh): label: command, which must exit 0; its first
+# line of output is the reported version.
 # terraform is tenv's proxy: it fails if no Terraform is installed.
 terraform: terraform version
 tflint: tflint --version
