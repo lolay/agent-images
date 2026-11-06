@@ -9,17 +9,25 @@
 #
 # Nothing is pinned: the newest command-line tools, and the newest stable API
 # level that has both a platform and an x86_64 Google APIs system image, with
-# the newest stable build tools. Packages go through Google's Android CLI
-# (`android sdk`, which replaces the deprecated sdkmanager). The SDK is owned by
-# the guest user, so sessions can install whatever else a project needs.
+# the newest stable build tools and NDK, and the newest Gradle. Packages go
+# through Google's Android CLI (`android sdk`, which replaces the deprecated
+# sdkmanager). The SDK is owned by the guest user, so sessions can install
+# whatever else a project needs.
 #
 # `android init` installs Google's android-cli agent skill into ~/.claude/skills,
 # which the runner seeds into every session.
+#
+# The NDK is for native code (C++ through CMake, Rust through the android-rust
+# toolset's cargo-ndk); its path is recorded as ANDROID_NDK_HOME. A project that
+# pins another ndkVersion gets it from the Android Gradle plugin on first build.
+# Gradle is for starting a project; a project's builds use its own ./gradlew.
 #
 # The AVD "agent" is booted once here (the build VM has nested KVM too) and
 # saves a quickboot snapshot, so each session's emulator boots in seconds.
 # AGENT_EMULATOR_SNAPSHOT=0 skips that step (for testing without KVM).
 set -euo pipefail
+
+: "${TOOLSET_RECORD_DIR:?}"
 
 # The environment login shells get: ANDROID_HOME, JAVA_HOME, and PATH.
 # shellcheck source=/dev/null
@@ -39,8 +47,11 @@ android_cli() { android --no-metrics "$@"; }
 
 sudo install -d -o "$(id -un)" -g "$(id -gn)" -m 755 "$sdk"
 
+# The SDK's package list, for the command-line tools zip and the NDK.
+repository_xml="$(curl -fsSL "$repository/repository2-3.xml")"
+
 if [[ ! -x "$sdk/cmdline-tools/latest/bin/android" ]]; then
-	zip_name="$(curl -fsSL "$repository/repository2-3.xml" |
+	zip_name="$(printf '%s\n' "$repository_xml" |
 		grep -oE 'commandlinetools-linux-[0-9]+_latest\.zip' | sort -t- -k3,3n -u | tail -n 1)"
 	[[ -n "$zip_name" ]] || die "no commandlinetools-linux zip in $repository/repository2-3.xml"
 	log "bootstrapping $zip_name"
@@ -66,12 +77,37 @@ api="$(sed -nE 's#^system-images/android-([0-9]+(\.[0-9]+)?)/google_apis/x86_64$
 [[ -n "$api" ]] || die "no API level with both a platform and a google_apis x86_64 system image"
 build_tools="$(grep -E '^build-tools/[0-9]+\.[0-9]+\.[0-9]+$' <<<"$available" | sort -V | tail -n 1)"
 [[ -n "$build_tools" ]] || die "no stable build-tools package"
+# NDK betas share the ndk;<version> path and channel with releases; only their
+# zip names (android-ndk-r30-beta3-linux.zip) tell them apart.
+ndk_version="$(printf '%s\n' "$repository_xml" | awk '
+	BEGIN { RS = "</remotePackage>" }
+	match($0, /path="ndk;[0-9.]+"/) && /android-ndk-r[0-9]+[a-z]?-linux\.zip/ { print substr($0, RSTART + 10, RLENGTH - 11) }' |
+	sort -V | tail -n 1)"
+[[ -n "$ndk_version" ]] || die "no stable NDK in $repository/repository2-3.xml"
+grep -qx "ndk/$ndk_version" <<<"$available" || die "android sdk list has no ndk/$ndk_version"
 readonly system_image="system-images/android-$api/google_apis/x86_64"
 
-log "installing platform-tools, emulator, platforms/android-$api, $build_tools, $system_image"
+log "installing platform-tools, emulator, platforms/android-$api, $build_tools, ndk/$ndk_version, $system_image"
 # cmdline-tools/latest again: the bootstrap zip carries no package metadata, so
 # the SDK lists it as "unknown" until it's installed as a package.
-android_cli sdk install cmdline-tools/latest platform-tools emulator "platforms/android-$api" "$build_tools" "$system_image"
+android_cli sdk install cmdline-tools/latest platform-tools emulator "platforms/android-$api" "$build_tools" \
+	"ndk/$ndk_version" "$system_image"
+[[ -x "$sdk/ndk/$ndk_version/ndk-build" ]] || die "no ndk-build in $sdk/ndk/$ndk_version"
+printf 'export ANDROID_NDK_HOME=%s\n' "$sdk/ndk/$ndk_version" |
+	sudo tee "$TOOLSET_RECORD_DIR/android.profile.sh" >/dev/null
+
+gradle_url="$(curl -fsSL https://services.gradle.org/versions/current | sed -nE 's/.*"downloadUrl" *: *"([^"]+)".*/\1/p')"
+[[ "$gradle_url" == https://*-bin.zip ]] || die "no Gradle download in services.gradle.org/versions/current"
+gradle_dir="/opt/gradle/$(basename "$gradle_url" -bin.zip)"
+if [[ ! -x "$gradle_dir/bin/gradle" ]]; then
+	log "installing $(basename "$gradle_dir")"
+	work="$(mktemp -d)"
+	curl -fsSL -o "$work/gradle.zip" "$gradle_url"
+	sudo install -d -m 755 /opt/gradle
+	sudo unzip -q "$work/gradle.zip" -d /opt/gradle
+	rm -rf "$work"
+fi
+sudo ln -sfn "$gradle_dir/bin/gradle" /usr/local/bin/gradle
 
 log "installing the android-cli agent skill"
 android_cli init
@@ -97,6 +133,7 @@ log "verifying"
 log "$(java -version 2>&1 | head -n 1)"
 log "$(adb version | head -n 1)"
 log "$(emulator -version 2>/dev/null | head -n 1)"
+log "NDK $ndk_version, $(gradle --version 2>/dev/null | grep -m1 '^Gradle')"
 avdmanager list avd -c 2>/dev/null | grep -qx "$avd" || die "AVD $avd isn't listed"
 
 if [[ "${AGENT_EMULATOR_SNAPSHOT:-1}" == "0" ]]; then
@@ -111,4 +148,4 @@ agent-emulator stop
 adb kill-server >/dev/null 2>&1 || true
 [[ -d "$HOME/.android/avd/$avd.avd/snapshots/default_boot" ]] ||
 	die "no quickboot snapshot after the first boot"
-log "done: API $api, $build_tools"
+log "done: API $api, $build_tools, NDK $ndk_version"

@@ -67,15 +67,17 @@ writing the exec channel, image publishing, and ephemeral VMs ourselves.
 
 - **Packages:** the toolsets in `toolsets.txt`, from `images/toolsets`
   ([image-toolsets.md](image-toolsets.md)), unpinned: OpenJDK 21, build tools and
-  headers, and the emulator's and Chromium's libraries from Ubuntu's archive; the
-  session tools (shared with the Mac) and the language toolchains (Node, Python,
-  Go, Rust, protobuf, Terraform through tenv) from Homebrew.
+  headers, the emulator's libraries and a virtual display (Xvfb, which
+  `agent-xvfb.service` starts at boot) from Ubuntu's archive; the session tools
+  (shared with the Mac), Node and Rust from Homebrew, with Rust's Android targets
+  and cargo-ndk.
 - **Claude Code:** the native installer; the runner runs `claude update` at start.
 - **Android SDK** in `/opt/android-sdk`, owned by the guest user (the `android`
   toolset's `install.sh`):
   - installed through Google's Android CLI (`android sdk`, which replaced sdkmanager in
-    2026): the newest stable API level with an x86_64 Google APIs image (37.0 today)
-    and the newest build tools;
+    2026): the newest stable API level with an x86_64 Google APIs image (37.0 today),
+    the newest build tools and the newest stable NDK (`$ANDROID_NDK_HOME`), with the
+    newest Gradle in `/opt/gradle`;
   - `android init` installs Google's `android-cli` agent skill into `~/.claude/skills`,
     which the runner seeds into sessions;
   - AVD `agent` (Pixel 8 profile, 4 GB, the minimum from API 37), booted once at build

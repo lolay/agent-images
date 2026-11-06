@@ -1,14 +1,15 @@
 # The toolsets the Android image installs, in order (specs/image-toolsets.md):
 # install-packages.sh passes them to images/toolsets/install-toolset.sh. The
 # cloud images list theirs in their Dockerfiles. # starts a comment.
+#
+# What Android development uses, not everything linux has: no python (Ubuntu's
+# python3 stays), go, proto, terraform or browser. A session has sudo, so it
+# adds any of them in a minute.
 core
 native
 jvm
-browser
+display
 android
 node
-python
-go
 rust
-proto
-terraform
+android-rust

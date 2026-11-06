@@ -69,10 +69,11 @@ images/toolsets/
 | `terraform` | tenv with the latest Terraform, tflint | |
 | `jvm` | OpenJDK 21 | Android, Kotlin and Gradle builds, the Firebase emulators |
 | `browser` | Chromium's runtime libraries and fonts (Playwright's list) | apt-only, so a Playwright session on Cloud Run can't add them |
-| `android` | Emulator runtime libraries, cpu-checker, the SDK, the AVD and its snapshot (`ensure-android-sdk.sh`), `agent-emulator` | Needs KVM, so VM types only |
+| `android` | Emulator runtime libraries, cpu-checker, the SDK with the newest NDK, Gradle, the AVD and its snapshot, `agent-emulator` | Needs KVM, so VM types only |
+| `android-rust` | Rust's Android targets (aarch64, armv7, x86_64) and cargo-ndk | Rust libraries for an Android app, against the `android` toolset's NDK. Needs `rust` and `android` |
 | `gis` | uv, and a pixi environment from conda-forge: GDAL, PDAL with python-pdal, QGIS with PyQGIS, rasterio, geopandas, shapely, pyproj, pystac-client, rioxarray, DuckDB with its spatial extension | Below |
 | `cuda` | Nothing installed: a marker that the base is NVIDIA's CUDA devel image | Below |
-| `display` | Xvfb (the entrypoint starts it at `:99`, 1920x1080), Mesa's software OpenGL (llvmpipe), x11-utils, mesa-utils, ImageMagick for screenshots | A virtual display: headed browsers and desktop apps (QGIS) run and can be screenshotted without a GPU. apt-only, so baked in. GPU types add GPU rendering (VirtualGL, Vulkan) on top in m3 |
+| `display` | Xvfb (the entrypoint, or `agent-xvfb.service` on the VM types, starts it at `:99`, 1920x1080), Mesa's software OpenGL (llvmpipe), x11-utils, mesa-utils, ImageMagick for screenshots | A virtual display: headed browsers and desktop apps (QGIS) run and can be screenshotted without a GPU. apt-only, so baked in. GPU types add GPU rendering (VirtualGL, Vulkan) on top in m3 |
 | `3d` | Blender (blender.org's build), COLMAP built for compute capability 12.0, ffmpeg, uv, and a uv project with PyTorch's CUDA build, gsplat, Open3D | Below |
 
 ## Types
@@ -80,7 +81,7 @@ images/toolsets/
 | Type | Base | Toolsets |
 | --- | --- | --- |
 | `linux` | `ubuntu:24.04` | core, native, node, python, go, rust, proto, terraform, jvm, browser, display |
-| `android` (LXD and Compute Engine) | Ubuntu 24.04 VM image | everything `linux` has, then android |
+| `android` (LXD and Compute Engine) | Ubuntu 24.04 VM image | core, native, jvm, display, android, node, rust, android-rust |
 | `gis` | `ubuntu:24.04` | core, native, display, node, gis |
 | `linux-gpu` | `nvidia/cuda:13.0.x-devel-ubuntu24.04` | everything `linux` has, then cuda, display |
 | `3d-gpu` | the same CUDA image | core, native, display, 3d |
@@ -91,10 +92,32 @@ Two patterns fall out of this:
 - **`-gpu` is the CPU sibling plus the GPU.** `linux-gpu` is `linux` on a CUDA base
   with a display. A future `gis-gpu` is `gis` the same way. That's what the naming
   in [gcp.md](gcp.md) already promises; toolsets make it literal.
-- **`android` is `linux` plus Android**, on the LXD host and on Compute Engine alike,
-  provisioned by the same scripts. A session on `android` can do anything one on
-  `linux` can (and has sudo besides). This is what the LXD image is today; it just
-  stops being the thing every other image is built from.
+- **`android` is what Android development uses**, on the LXD host and on Compute
+  Engine alike, provisioned by the same scripts: the JDK, the SDK with the NDK and
+  Gradle, an emulator, Rust with cargo-ndk for native libraries, Node for React
+  Native, Expo and the Firebase CLI, and the display. Not everything `linux` has
+  (below).
+
+### `android` is not `linux` plus Android
+
+It was until s8, the LXD image being where every other list came from. By the rule
+it carries what Android sessions use most days, and a session there has sudo, so
+anything else is an `apt-get` or `brew install` away:
+
+| Toolset | In `android` | Why |
+| --- | --- | --- |
+| core, native, jvm | yes | The session tools; the headers a native build or `cargo build` needs; the JDK Gradle runs on |
+| android | yes | The SDK, emulator and AVD, now with the newest stable NDK (about 2 GB, too big to fetch per session) and Gradle for starting a project. The Android Gradle plugin still fetches the NDK a project pins, if it's another one |
+| display | yes | Desktop apps and screenshots of them; the emulator itself stays windowless, and the `android` CLI screenshots the device |
+| node | yes | React Native and Expo, and the Firebase CLI |
+| rust, android-rust | yes | Rust libraries for Android (UniFFI, or JNI through cargo-ndk) |
+| python | no | Ubuntu's `python3` stays, which is enough for SDK and build scripts |
+| go, proto, terraform | no | Not Android work; the protobuf Gradle plugin brings its own protoc |
+| browser | no | Playwright's libraries; Android has no headless-browser tests to run |
+
+Not added, for the same reason: standalone Kotlin, ktlint and bundletool, which a
+project gets through Gradle (Homebrew's builds each bring their own JDK), and
+Flutter, until a repo uses it.
 
 ### `jvm` in `linux`
 
@@ -330,6 +353,15 @@ Steps for [gcp.md](gcp.md) m2, ahead of `gis` and `android`:
   (llvmpipe) and screenshot checks; QGIS 4.2 desktop runs full-screen with a layer
   drawn; headed Chromium runs full-screen with WebGL 1.0. About 60 MB (agent-linux
   went from 5.67 to 5.73 GB).
+
+- s8: `android` gets its own list (above) and the display. The VM types have no
+  entrypoint, so `agent-xvfb.service` starts Xvfb at boot and the runner waits for
+  it, and the image's profile now sources the toolsets' profile fragments, as the
+  cloud one does (`DISPLAY`, and `ANDROID_NDK_HOME` from the `android` toolset).
+  `android` gains the NDK, Gradle and `android-rust`, and drops `python`, `go`,
+  `proto`, `terraform` and `browser`. Checked by `android-image-smoke`, which now
+  starts the display, takes a screenshot and builds a Rust library for arm64 and
+  x86_64 with cargo-ndk.
 
 `linux-gpu` and `3d-gpu` follow in m3 on the same structure, and both install
 `display` (it's in their lists above): the virtual display comes from s7, and m3
