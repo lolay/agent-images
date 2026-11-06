@@ -19,7 +19,8 @@
 - Evidence: the upgrade is `CLAUDE_UPGRADE != true` → skip; `elif command -v brew` → `brew upgrade --cask claude-code@latest || warn "claude upgrade failed; continuing"`; else `claude update`. Since toolsets s3 the `core` toolset installs Homebrew on every Linux image, and it's on the runner's PATH: Cloud Run through `images/cloud/runner/Dockerfile:51` and `profile.sh:44`, GCE and LXD through `agent-runner.service:34` (`bash -lc`) and `images/android/files/profile.sh:12`. Claude is installed with the native installer (`runner/Dockerfile:56`, `android/scripts/install-packages.sh:22`), whose `~/.local/bin` comes first on PATH. So the cask upgrade fails, warns, and `claude update` is never reached. Breaks gcp.md 201-206 and 389-397: the weekly types (`gis`, `android`, `linux-gpu`) run a Claude up to 7 days old.
 - Verified: reproduced with a fake `brew` (exit 1) and a fake `claude` on PATH: the log shows `brew upgrade --cask claude-code@latest`, then `claude --version` and `claude self-hosted-runner`; `claude update` is never called.
 - Recommendation: choose by platform, not by whether brew exists (`[[ "$(uname -s)" == Darwin ]]`, as the watchdog already does), and add a unit test that runs claude.sh on Linux with brew on PATH and asserts `claude update` runs.
-- Status: open
+- Status: fixed
+- Resolution: lolay/agent-images#45: claude.sh chooses the cask upgrade by `uname -s` (Darwin), else `claude update`; covered by test_shared_runner.py
 
 ### r1.f2 - The set of runner types is declared in four unlinked places; the PR check can't see a new type
 
@@ -30,7 +31,8 @@
 - Evidence: types are `infra/gcp/*.env` (`supervisor.sh:62`, `changed-targets.sh:45`); their build graph is `docker-bake.hcl` targets and default group, and again `changed-targets.sh` parsing `FROM agent-<x>`; the PR build is a hard-coded `target: [linux, linux-gpu, gis, orchestrator]`. A PR adding `infra/gcp/3d-gpu.env` and `images/cloud/3d-gpu/` passes CI without the image being built; the deploy's bake then fails on `main` (and through r1.f3 holds back the orchestrator). gcp.md:93-94 leaves the bake targets out of "adding a type".
 - Verified: `grep bake tests/unit` is empty; nothing cross-checks the bake file against the env files.
 - Recommendation: generate the PR build matrix from `changed-targets.sh --all` as the deploy does, and add a unit test that `docker buildx bake --print <type>` resolves for every `BACKEND=run` env file. Update gcp.md's checklist.
-- Status: open
+- Status: fixed
+- Resolution: lolay/agent-images#44: cloud-build's matrix comes from `make cloud-targets` (the BACKEND=run env files); test_bake.py checks every type has its bake targets
 
 ### r1.f3 - One failing type holds back orchestrator deploys for every type
 
@@ -65,7 +67,8 @@
 - Evidence: `check` runs each probe as `if detail="$("$@" 2>&1)"; then`; inside an `if` condition bash turns off `errexit` for the functions it calls, so only a probe's last command decides. `outputs_round_trip` ends with an `echo`, `scratch_disk`'s `dd` and `datasets_read_only`'s `ls` are mid-function. `deploy.sh:141-148` promotes on a passing smoke.
 - Verified: reproduced with the entrypoint test harness: `AGENT_OUTPUTS_ROOT=/dev/null/broken` prints `smoke: pass outputs (mkdir: cannot create directory '/dev/null': Not a directory; …; wrote, read and deleted …)`; a missing `AGENT_DATASETS` passes `datasets` too.
 - Recommendation: chain every step (`mkdir -p "$dir" && printf … >"$file" && [[ "$(cat "$file")" == smoke ]] || return 1`), and the same for `dd` and `ls`; add tests with an unwritable outputs root and a missing datasets mount.
-- Status: open
+- Status: fixed
+- Resolution: lolay/agent-images#41: every I/O step in scratch_disk, outputs_round_trip and datasets_read_only returns 1 on failure; tests cover an unwritable outputs root and a missing datasets mount
 
 ### r1.f6 - Rebuilding the same commit on the same UTC day deletes the live android image
 
@@ -76,7 +79,8 @@
 - Evidence: the image is named `agent-$TYPE-$(date -u +%Y%m%d)-${GITHUB_SHA::12}` and built with `packer build -force`; `vm-promote` keeps one image per type, so the live image carries that name. A same-day dispatch, the Sunday schedule after a same-day push deploy, or a rerun makes `-force` delete it at image creation, leaving family `agent-android` empty through capture and smoke (up to about 55 min), and for good if the smoke fails. `spawn-runner:176` then gets 404, which exits 2: sessions fail without retry.
 - Verified: the googlecompute plugin's `-force` deletes by name and project only (`step_check_existing_image.go`, `step_create_image.go`); the family is never checked.
 - Recommendation: make the name unique per run (add `${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}` or a UTC time), or refuse to build when the named image is the family's live image.
-- Status: open
+- Status: fixed
+- Resolution: lolay/agent-images#42: the image name adds `$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT`, and vm-build no longer uses `-force`
 
 ### r1.f7 - Powered-off VMs of a removed or renamed compute type are never deleted
 
@@ -111,7 +115,8 @@
 - Evidence: no file in `tests/unit` runs them (`test_entrypoint.py` swaps in fakes). They hold the EPHEMERAL power-off, the runner.env → CLI flag mapping (`--retire-at`, `--exit-if-unused-min`, `--kill-session-after-min`) and the upgrade path where r1.f1 lives. Each link of the settings chain (job spec, entrypoint, hook runner-env, GCE order) is tested against hand-written values, so a rename on one side keeps every suite green.
 - Verified: `grep` of tests/unit finds no reference. A GCE shutdown regression is bounded by `maxRunDuration` (about 9.5 h); Tart and LXD `runner-once` wait for power-off with no cap. Lowered from high: a coverage gap, though r1.f1 is a live bug in exactly this code.
 - Recommendation: add `test_shared_runner.py`: claude.sh with a fake `claude` recording argv over a runner.env matrix (including brew on PATH); agent-runner.sh with `EPHEMERAL=true` and a fake `sudo`; the watchdog's second-failure rule; and two chain tests (job spec → entrypoint → claude.sh argv; hook metadata → agent-gce-order → claude.sh argv).
-- Status: open
+- Status: fixed
+- Resolution: lolay/agent-images#45: tests/unit/test_shared_runner.py (26 tests) runs claude.sh, agent-runner.sh and the watchdog, with chain tests from the job spec and the hook
 
 ### r1.f10 - The orchestrator is promoted with no smoke, and its test's fake CLI accepts any flag
 
@@ -179,7 +184,8 @@
 - Evidence: `types`, `vm-images`, `orchestrator` and `prune` run with `environment: production` and `id-token: write`, on push and nightly and weekly schedules with no human, and use `google-github-actions/auth@v3.0.0`, `setup-gcloud@v3.0.1`, `hashicorp/setup-packer@v3.4.0`, `actions/checkout@v7.0.1`, `docker/*` by tag. A tag can be moved; the federated identity reaches `compute.instanceAdmin.v1`, `iam.serviceAccountUser` on agent-orchestrator (which reads every `claude-env-*`), Artifact Registry write and `run.developer`. No `.github/dependabot.yml` exists, though gcp.md:458 expects one; design.md:38-39 calls release tags "a supply-chain guard".
 - Verified: every `uses:` is a tag; no Dependabot config. Not verified: which of these releases are marked immutable on GitHub.
 - Recommendation: options: (a) pin every action in `cloud-deploy.yml` to a full commit SHA with the tag as a comment, and add Dependabot for `github-actions` (recommended); (b) pin only the non-immutable ones; (c) keep tags and correct design.md's claim.
-- Status: open
+- Status: fixed
+- Resolution: lolay/agent-images#43: Gary chose SHA pins with Renovate (GitHub Actions only, weekly, 7-day minimum release age). One tag remains: `actions/checkout@v7.0.1` in cloud-build's new `plan` job (#44 landed after #43; no credentials there), which Renovate's digest pinning should pick up
 
 ### r1.f16 - Packer is installed at two versions across the workflows
 
@@ -225,7 +231,8 @@
 - Evidence: the compute hook writes `${RELEASE_IDLE_SESSION_MIN:-}` and `${KILL_SESSION_AFTER_MIN:-}`, so an unset key is empty, which claude.sh reads as "never"; the Cloud Run job uses `-60` and `-480`. The compute retire time has no future-time guard; the entrypoint's does.
 - Verified: latent: `android.env` sets every key. The "no `AGENT_RETIRE_AT`" part was dropped: its only reader isn't on the android image. Lowered from medium.
 - Recommendation: one `gcp_runner_settings <type>` helper in `hooks/gcp/lib.sh` with one set of defaults and the retire guard, used by `job-spec.sh` and the hook.
-- Status: open
+- Status: fixed
+- Resolution: lolay/agent-images#45: `gcp_runner_settings` in hooks/gcp/lib.sh, used by job-spec.sh and the hook, with one set of defaults
 
 ### r1.f20 - android.env's build keys don't trigger an image rebuild
 
@@ -372,7 +379,8 @@
 - Evidence: the fixture has an `images/cloud/base-gpu/` directory and `linux-gpu` `FROM agent-base-gpu`; the real tree has neither (base-gpu is a bake target, `linux-gpu` is `FROM agent-linux`). `test_a_types_directory_rebuilds_only_it` asserts a linux change rebuilds linux alone, the opposite of what the repo needs. `parent_of` stops at a missing directory, so the planned `3d-gpu` `FROM agent-base-gpu` would never reach `base`.
 - Verified: on the real tree, base and linux changes rebuild `linux-gpu` correctly; the `3d-gpu` gap reproduces. Lowered from medium.
 - Recommendation: rewrite the fixture to the real layout; before `3d-gpu`, teach `parent_of` that `base-gpu`'s parent is `base` (or read bake contexts); fix gcp.md:152-153,165.
-- Status: open
+- Status: fixed
+- Resolution: lolay/agent-images#44: the fixture models the real layout, and `parent_of` maps base-gpu to base
 
 ### r1.f33 - Env files are parsed by sourcing in some places and by sed in others
 
