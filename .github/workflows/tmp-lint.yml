@@ -19,3 +19,48 @@ jobs:
       - env:
           PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: go version && make cloud-lint
+
+  # lock-watch.yml's resolve job, from this branch, class all; nothing pushed.
+  watch-dry-run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Resolve
+        env:
+          CLASS: all
+        run: |
+          set -euo pipefail
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          mkdir -p out/candidate
+          cp --parents images/cloud/*/versions.lock out/candidate/
+          types="$(scripts/cloud/lock-watch.sh types "$CLASS")"
+          for type in $types; do
+            mkdir -p "out/candidate/images/cloud/$type"
+            scripts/cloud/lock.sh resolve "$type" >"out/resolved.lock"
+            mv out/resolved.lock "out/candidate/images/cloud/$type/versions.lock"
+          done
+      - name: Decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          open="$(gh api "repos/$GITHUB_REPOSITORY/pulls?head=${GITHUB_REPOSITORY%%/*}:lock/watch&base=main&state=open" --jq 'length')"
+          echo "open=$open"
+          changed="$(scripts/cloud/lock-watch.sh changed . out/candidate)"
+          printf 'changed:\n%s\n' "$changed"
+          if [[ -n "$changed" ]]; then
+            printf '%s\n' "$changed" | scripts/cloud/lock-watch.sh guard
+            scripts/cloud/lock-watch.sh title . out/candidate
+            scripts/cloud/lock-watch.sh body . out/candidate | tee -a "$GITHUB_STEP_SUMMARY"
+            printf '%s\n' "$changed" | tar -C out/candidate -czf - -T - | base64 -w0 | wc -c
+          fi
+      - name: Pins
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/cloud/lock-watch.sh pins out/candidate | tee -a "$GITHUB_STEP_SUMMARY"
