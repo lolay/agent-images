@@ -90,8 +90,19 @@ registers with one environment's secret, so it serves exactly one type; there's 
 single orchestrator for all of GCP. But each is a small stateless polling process, so
 one always-on instance runs them all: a supervisor starts an orchestrator per
 `infra/gcp/*.env` file, each with its own secret, hooks directory and `RUNNER_TYPE`.
-Adding a type is a new env file, a new image directory and a new environment in
-claude.ai; the push to `main` deploys it.
+Adding a type is:
+
+1. `infra/gcp/<type>.env`. The env files are the one list of types: the supervisor,
+   the deploy and the pull request check all read it.
+2. `images/cloud/<type>/Dockerfile`, `FROM agent-base` (or `agent-base-gpu`, or
+   another type's tools, as `linux-gpu` is `FROM agent-linux`).
+3. Two targets in `images/cloud/docker-bake.hcl`: `<type>-tools` (that Dockerfile,
+   with its parent as a named context) and `<type>` (inheriting `_runner`, with
+   `agent-tools = "target:<type>-tools"` and `tags("<type>")`). `tests/unit/test_bake.py`
+   fails until both exist, and checks that `changed-targets.sh` sees the same parents.
+4. The environment in claude.ai, and its key as secret `claude-env-<type>`.
+
+The pull request builds it with the other types; the push to `main` deploys it.
 
 **Standbys can be zero; orchestrators can't.** `--min-idle 0` (the default) keeps no
 runner waiting: a runner starts only when a session queues, and the session waits for
@@ -162,8 +173,10 @@ images/cloud/
                        core toolset; a build parent only. Bake target base-gpu is
                        the same on CUDA 13.0 devel (BASE_IMAGE), for the -gpu types,
                        which add the gpu toolset (VirtualGL, Vulkan, EGL) last
-  <type>/Dockerfile    FROM agent-base or agent-base-gpu, adds the type's toolsets,
-                       one layer each (bake target <type>-tools)
+  <type>/Dockerfile    FROM agent-base, agent-base-gpu or another type's tools
+                       (linux-gpu is FROM agent-linux, which bake builds on
+                       base-gpu), adds the type's toolsets, one layer each (bake
+                       target <type>-tools)
   runner/Dockerfile    FROM the type's tools: images/shared (runner, watchdog, Stop
                        hook, ~/.claude seed), the session's CLAUDE.md from its
                        toolsets, profile.sh, then Claude Code last (target <type>)
@@ -239,7 +252,9 @@ updates jobs. Enforced in three places, so one mistake doesn't open it up:
   numeric id with `ref` `refs/heads/main` and that environment, so a token from any
   other branch, pull request or fork can't get GCP credentials at all.
 - Pull requests that touch the images run a build-only check: build, no push, no GCP
-  credentials.
+  credentials. It builds every type `changed-targets.sh --all` lists (`make
+  cloud-targets`) and the orchestrator, so a new env file's image is built before
+  it reaches `main`.
 
 ### What a push to `main` deploys
 
@@ -263,7 +278,9 @@ matrix. A failed deploy makes the next one redeploy more, never less:
 | Anything else (`specs/`, the macOS image, README) | Nothing |
 
 The `FROM` chain comes from the Dockerfiles themselves, so adding a type doesn't mean
-editing the map. `infra/gcp/project.env` changes everything. When the diff can't be
+editing the map. `agent-base-gpu` has no directory (it's bake target `base-gpu`,
+`base`'s Dockerfile on CUDA), so the chain reads it as `base`; `test_bake.py` checks
+the chain against the bake file's. `infra/gcp/project.env` changes everything. When the diff can't be
 computed (no earlier successful deploy, or its commit is gone after a force push), it
 deploys everything. A manual dispatch takes a list of targets, or `all`.
 
@@ -455,7 +472,9 @@ Off the shelf instead: Renovate (as a GitHub Action) handles the base digest, Gi
 releases and a custom source for Claude, with a pull request per change. It doesn't
 resolve an apt dependency closure or Homebrew on Linux, and a pull request per bump
 is a lot of churn for "track latest". One small resolver script and one lock commit
-fit better. Dependabot still suits the pinned GitHub Actions versions.
+fit better. Renovate does handle the GitHub Actions, which are pinned by SHA
+([design.md](design.md), the CI gate), and only those (`enabledManagers` in
+`.github/renovate.json`).
 
 ## Pinning a dependency
 

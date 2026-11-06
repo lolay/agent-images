@@ -30,6 +30,34 @@ gcp_load_env() {
 	done
 }
 
+# gcp_runner_settings: the runner.env settings (images/shared/runners/claude.sh)
+# that the loaded type's env file sets, one KEY=value line each, for both
+# backends: the Cloud Run job's env (scripts/cloud/job-spec.sh) and a compute
+# VM's runner-env metadata (hooks/gcp/spawn-runner). A key the env file doesn't
+# set is left out, so claude.sh's default applies; set but empty means "never".
+gcp_runner_settings() {
+	local key
+	for key in EXIT_IF_UNUSED_MIN RELEASE_IDLE_SESSION_MIN KILL_SESSION_AFTER_MIN; do
+		if [[ -v "$key" ]]; then
+			printf 'CLAUDE_%s=%s\n' "$key" "${!key}"
+		fi
+	done
+}
+
+# gcp_retire_margin <hard stop sec>: print how long before the hard stop (the
+# job's task timeout, a VM's max run duration) the runner retires:
+# RETIRE_MARGIN_SEC from the loaded env file, 900 by default. Fails, with the
+# reason on stderr, unless the margin is a number less than the hard stop, so
+# the runner would retire before it started.
+gcp_retire_margin() {
+	local stop="$1" margin="${RETIRE_MARGIN_SEC:-900}"
+	if [[ ! "$stop" =~ ^[0-9]+$ || ! "$margin" =~ ^[0-9]+$ ]] || ((margin >= stop)); then
+		printf 'the retire margin (%s s) must be less than the hard stop (%s s)\n' "$margin" "$stop" >&2
+		return 1
+	fi
+	printf '%s\n' "$margin"
+}
+
 # gcp_types: every runner type, one per line in byte order (an env file other
 # than project.env).
 gcp_types() {

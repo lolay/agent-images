@@ -57,6 +57,10 @@ case "${GPU_TYPE:-}" in
 	exit 2
 	;;
 esac
+retire_margin="$(gcp_retire_margin "${TASK_TIMEOUT_SEC:?}")" || {
+	printf 'job-spec: %s.env: RETIRE_MARGIN_SEC is not less than TASK_TIMEOUT_SEC\n' "$type" >&2
+	exit 2
+}
 
 jq -n \
 	--arg name "projects/$PROJECT_ID/locations/$REGION/jobs/$name" \
@@ -73,13 +77,13 @@ jq -n \
 	--arg outputs_bucket "$OUTPUTS_BUCKET" \
 	--arg datasets_bucket "$DATASETS_BUCKET" \
 	--arg task_timeout "$TASK_TIMEOUT_SEC" \
-	--arg retire_margin "${RETIRE_MARGIN_SEC:-900}" \
+	--arg retire_margin "$retire_margin" \
 	--arg notice_tz "${AGENT_NOTICE_TZ:-UTC}" \
-	--arg exit_if_unused "${EXIT_IF_UNUSED_MIN-}" \
-	--arg release_idle "${RELEASE_IDLE_SESSION_MIN-60}" \
-	--arg kill_after "${KILL_SESSION_AFTER_MIN-480}" \
+	--arg runner_settings "$(gcp_runner_settings)" \
 	'
 	def env_list: to_entries | map({name: .key, value: .value});
+	# KEY=value lines, as gcp_runner_settings prints them.
+	def settings: split("\n") | map(select(. != "") | capture("^(?<key>[^=]+)=(?<value>.*)$")) | from_entries;
 	{
 		name: $name,
 		labels: ({"managed-by": "agent-images", "agent-images-type": $type}
@@ -103,11 +107,8 @@ jq -n \
 						AGENT_TASK_TIMEOUT_SEC: $task_timeout,
 						AGENT_RETIRE_MARGIN_SEC: $retire_margin,
 						AGENT_NOTICE_TZ: $notice_tz,
-						AGENT_OUTPUTS_BUCKET: $outputs_bucket,
-						CLAUDE_EXIT_IF_UNUSED_MIN: $exit_if_unused,
-						CLAUDE_RELEASE_IDLE_SESSION_MIN: $release_idle,
-						CLAUDE_KILL_SESSION_AFTER_MIN: $kill_after
-					} | env_list),
+						AGENT_OUTPUTS_BUCKET: $outputs_bucket
+					} + ($runner_settings | settings) | env_list),
 					volumeMounts: [
 						{name: "scratch", mountPath: "/scratch"},
 						{name: "outputs", mountPath: "/mnt/outputs"},

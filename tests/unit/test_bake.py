@@ -1,0 +1,122 @@
+"""images/cloud/docker-bake.hcl builds every type infra/gcp declares.
+
+The types are the BACKEND=run env files (scripts/cloud/changed-targets.sh --all);
+the build graph is the bake file. Nothing else ties the two together, so a new
+env file without its targets would pass CI and fail the deploy on main (r1.f2).
+"""
+
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+from support import REPO
+
+BAKE_FILE = "images/cloud/docker-bake.hcl"
+CHANGED_TARGETS = REPO / "scripts/cloud/changed-targets.sh"
+
+HAVE_BAKE = shutil.which("docker") is not None and subprocess.run(
+    ["docker", "buildx", "version"], capture_output=True
+).returncode == 0
+
+
+def run_types():
+    """The Cloud Run types, as the deploy and the pull request check plan them."""
+    plan = subprocess.run(
+        ["bash", str(CHANGED_TARGETS), "--all"], cwd=REPO, check=True, capture_output=True, text=True
+    ).stdout
+    return [entry["type"] for entry in json.loads(plan)["types"]]
+
+
+def bake_print(*targets):
+    result = subprocess.run(
+        ["docker", "buildx", "bake", "-f", BAKE_FILE, "--print", *targets],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        raise AssertionError(f"bake --print {' '.join(targets)} failed: {result.stderr.strip()}")
+    return json.loads(result.stdout)["target"]
+
+
+class BakeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if not HAVE_BAKE:
+            # The pull request check runs these: there, a missing buildx fails.
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                raise AssertionError("needs docker buildx, and this CI runner has none")
+            raise unittest.SkipTest("needs docker buildx")
+
+    def test_there_are_types(self):
+        # An empty list would make the checks below pass vacuously.
+        self.assertIn("linux", run_types())
+
+    def test_every_type_has_its_targets(self):
+        for type_ in run_types():
+            with self.subTest(type=type_):
+                targets = bake_print(type_)
+                # The deploy pushes <type> and caches <type>-tools by those names
+                # (cloud-deploy.yml); <type> is the runner stage on <type>-tools.
+                self.assertIn(f"{type_}-tools", targets)
+                image = targets[type_]
+                self.assertEqual(image["dockerfile"], "images/cloud/runner/Dockerfile")
+                self.assertEqual(image["contexts"]["agent-tools"], f"target:{type_}-tools")
+                self.assertEqual(image["tags"], [f"agent-{type_}:local"])
+
+    def test_the_orchestrator_has_its_target(self):
+        self.assertEqual(bake_print("orchestrator")["orchestrator"]["tags"], ["agent-orchestrator:local"])
+
+    def test_changed_targets_follows_the_bake_graph(self):
+        """A change to any Dockerfile directory in a type's bake graph rebuilds that type.
+
+        changed-targets reads the graph from the Dockerfiles' FROM lines, not the
+        bake file, so this checks the two agree (r1.f32: a type FROM agent-base-gpu
+        never reached base).
+        """
+        needed = {}  # directory under images/cloud -> the types whose graph uses it
+        for type_ in run_types():
+            for target in bake_print(type_).values():
+                directory = Path(target["dockerfile"]).parent.name
+                needed.setdefault(directory, set()).add(type_)
+
+        repo = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, repo)
+
+        def git(*args):
+            return subprocess.run(
+                ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True
+            ).stdout.strip()
+
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "test@example.com")
+        git("config", "user.name", "test")
+        for name in ("images/cloud", "images/toolsets", "infra/gcp"):
+            shutil.copytree(REPO / name, repo / name)
+        git("add", "-A")
+        git("commit", "-q", "-m", "tree")
+
+        for directory, types in sorted(needed.items()):
+            with self.subTest(directory=directory):
+                base = git("rev-parse", "HEAD")
+                dockerfile = repo / "images/cloud" / directory / "Dockerfile"
+                dockerfile.write_text(dockerfile.read_text() + "# changed\n")
+                git("commit", "-q", "-am", f"change {directory}")
+                plan = subprocess.run(
+                    ["bash", str(CHANGED_TARGETS), base, git("rev-parse", "HEAD")],
+                    cwd=repo,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout
+                built = {entry["type"] for entry in json.loads(plan)["types"] if entry["build"]}
+                self.assertLessEqual(types, built)
+
+
+if __name__ == "__main__":
+    unittest.main()

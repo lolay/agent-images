@@ -258,6 +258,36 @@ class SpawnComputeTests(SpawnRunnerTests):
         self.assertIn("still being created", result.stdout)
         self.assertIn(self.marker_key(), self.gcp.state.objects)
 
+    def android_env_dir(self, *extra):
+        env_dir = self.tmp / "infra"
+        env_dir.mkdir()
+        shutil.copy(REPO / "infra/gcp/project.env", env_dir)
+        lines = [
+            line for line in (REPO / "infra/gcp/android.env").read_text().splitlines()
+            if not line.startswith(("EXIT_IF_UNUSED_MIN=", "RELEASE_IDLE_SESSION_MIN=",
+                                    "KILL_SESSION_AFTER_MIN="))
+        ]
+        (env_dir / "android.env").write_text("\n".join(lines + list(extra)) + "\n")
+        return env_dir
+
+    def test_runner_settings_match_the_cloud_run_job(self):
+        # Unset keys are left out, so claude.sh's defaults apply as on Cloud Run;
+        # set-but-empty passes through as "never" (r1.f19).
+        result = self.run_hook(AGENT_GCP_ENV_DIR=str(self.android_env_dir("KILL_SESSION_AFTER_MIN=")))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        metadata = {item["key"]: item["value"] for item in self.insert()["metadata"]["items"]}
+        runner_env = dict(line.split("=", 1) for line in metadata["runner-env"].splitlines())
+        self.assertNotIn("CLAUDE_EXIT_IF_UNUSED_MIN", runner_env)
+        self.assertNotIn("CLAUDE_RELEASE_IDLE_SESSION_MIN", runner_env)
+        self.assertEqual(runner_env["CLAUDE_KILL_SESSION_AFTER_MIN"], "")
+
+    def test_a_margin_past_the_max_run_does_not_retry(self):
+        env_dir = self.android_env_dir("RETIRE_MARGIN_SEC=40000")
+        result = self.run_hook(AGENT_GCP_ENV_DIR=str(env_dir))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("retire margin (40000 s) must be less than the hard stop (34200 s)", result.stderr)
+        self.assertEqual(self.gcp.state.requests, [], "nothing created")
+
     def test_an_unknown_backend_does_not_retry(self):
         env_dir = self.tmp / "infra"
         env_dir.mkdir()

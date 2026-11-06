@@ -165,8 +165,9 @@ cmd_vm_build() {
 	valid_image_name "$image" || die "$image is not a valid image name"
 	[[ -d "$dir" ]] || die "no images/$type/gce"
 	"$PACKER" init "$dir"
-	# -force replaces an image of the same name, left by a rerun of this commit.
-	"$PACKER" build -force -color=false \
+	# No -force: image names are unique per run, and replacing a same-named
+	# image would delete the live one.
+	"$PACKER" build -color=false \
 		-var "project_id=$PROJECT_ID" -var "zone=$ZONE" -var "network=$NETWORK" -var "subnetwork=$SUBNET" \
 		-var "image_name=$image" -var "image_family=$IMAGE_FAMILY-next" -var "commit=$sha" \
 		-var "machine_type=$MACHINE_TYPE" -var "disk_size_gb=$DISK_GB" "$dir"

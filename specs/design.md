@@ -35,9 +35,12 @@ base image digest, with a comment saying why and linking the upstream issue. Rem
 the pin once upstream is fixed. The README's version table records what was current at
 the last lookup; it doesn't pin anything.
 
-The CI gate is the exception. GitHub Actions stay on release tags (a supply-chain
-guard), and CI installs the Packer version that `required_version` asks for, so a
-failing `make ci` points at a change in this repo rather than a tool update.
+The CI gate is the exception. GitHub Actions are pinned to full commit SHAs, with the
+release tag in a comment: a tag can be moved, and the deploy jobs run these actions
+holding the production identity. Renovate (`.github/renovate.json`) bumps them in one
+weekly pull request that merges once CI passes; majors wait for review. CI installs the
+Packer version that `required_version` asks for, so a failing `make ci` points at a
+change in this repo rather than a tool update.
 
 ## 2. Constraints
 

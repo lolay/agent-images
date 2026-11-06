@@ -192,11 +192,12 @@ or deploys: only a push to `main` does, through `.github/workflows/cloud-deploy.
 
 | Target | What it does |
 | --- | --- |
-| `cloud-build` | `docker buildx bake -f images/cloud/docker-bake.hcl --load <TYPE>`: `agent-<TYPE>:local`. `TYPE=linux` (default), `orchestrator`, or `all`. `agent-base` comes along as `linux`'s build context and isn't loaded on its own |
+| `cloud-build` | `docker buildx bake -f images/cloud/docker-bake.hcl --load <TYPE>`: `agent-<TYPE>:local`. `TYPE=linux` (default), any type, `orchestrator`, or `all` (`cloud-targets`). `agent-base` comes along as `linux`'s build context and isn't loaded on its own |
 | `cloud-smoke` | Runs `agent-<TYPE>:local smoke` (the entrypoint's checks, what the deploy runs on `agent-<type>-next`) with anonymous volumes standing in for scratch, outputs and the read-only datasets |
 | `cloud-lint` | `shellcheck` and `shfmt -d` on the cloud scripts (the android VM's guest scripts included), the cloud settings JSON, and `packer fmt -check` and `packer validate` on the android Compute Engine image's template (`images/android/gce`) |
-| `cloud-test` | `python3 -m unittest discover -s tests/unit`: the entrypoint, SessionStart hook, spawn hook (both backends), supervisor and its reaper, the android VM's order script, job spec, path map and deploy script, against fakes (`tests/unit/fake_gcp.py` for the GCP APIs and the metadata server). Linux only |
+| `cloud-test` | `python3 -m unittest discover -s tests/unit`: the entrypoint, SessionStart hook, spawn hook (both backends), supervisor and its reaper, the android VM's order script, job spec, path map and deploy script, against fakes (`tests/unit/fake_gcp.py` for the GCP APIs and the metadata server), and that the bake file has every type's targets (needs `docker buildx`). Linux only |
 | `cloud-ci` | `cloud-lint`, `cloud-test`, then a build of every cloud image with no output: what the pull request check (`cloud-build.yml`) runs, there split across runners |
+| `cloud-targets` | Prints every Cloud Run type (the `BACKEND=run` files in `infra/gcp`, from `changed-targets.sh --all`) and `orchestrator`, one a line: what `cloud-build TYPE=all` and `cloud-ci` build, and the pull request check's build matrix |
 | `cloud-status` | `scripts/cloud/deploy.sh status`, with your gcloud login: each job's image, deployed commit and last execution, and the orchestrator VM's `orchestrator-image` |
 
 | Variable | Default | Used by |
@@ -221,7 +222,7 @@ Where things live:
 | --- | --- |
 | `.github/workflows/ci.yml` | `make init`, `make ci` on `macos-latest` |
 | `.github/workflows/android-image-smoke.yml` | Manual only: runs `images/android/scripts` on `ubuntu-24.04` (which has KVM) and boots the emulator |
-| `.github/workflows/cloud-build.yml` | `make cloud-lint cloud-test`, then each cloud image built on its own `ubuntu-24.04` runner (they don't fit on one), for pull requests touching the cloud paths; no GCP credentials |
+| `.github/workflows/cloud-build.yml` | `make cloud-lint cloud-test`, then each cloud image (`make cloud-targets`) built on its own `ubuntu-24.04` runner (they don't fit on one), for pull requests touching the cloud paths; no GCP credentials |
 | `.github/workflows/cloud-deploy.yml` | Push to `main` or dispatch: builds, pushes, smoke-tests and promotes what changed, in environment `production` |
 
 Image builds don't run in hosted CI: GitHub's macOS runners can't nest Tart VMs, and

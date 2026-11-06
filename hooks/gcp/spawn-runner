@@ -85,6 +85,14 @@ esac
 # the order marked with no VM. The hook timeout is 60 s.
 : "${INSTANCE_INSERT_WAIT_SEC:=40}"
 [[ -s "$CLAUDE_RUNNER_WORK_ORDER_FILE" ]] || fail 1 "the work order file is empty"
+# A compute VM retires this long before Compute Engine deletes it. Checked
+# before anything is created: a runner past its retire time would never serve.
+retire_margin=""
+if [[ "$BACKEND" == "compute" ]]; then
+	retire_margin="$(gcp_retire_margin "${MAX_RUN_DURATION_SEC:-}" 2>&1)" ||
+		fail 2 "infra/gcp/$RUNNER_TYPE.env: $retire_margin"
+fi
+readonly retire_margin
 
 token="$(gcp_token)" || fail 1 "no access token from the metadata server"
 
@@ -129,7 +137,8 @@ run_job() {
 # name that exists already means this order's VM.
 name_safe() { tr '[:upper:]' '[:lower:]' <<<"$1" | tr -c 'a-z0-9\n' '-' | tr -d '\n'; }
 
-# runner.env for the guest (agent-gce-order keeps only KEY=value lines).
+# runner.env for the guest (agent-gce-order keeps only KEY=value lines). The
+# runner settings are the Cloud Run job's (gcp_runner_settings).
 runner_env() {
 	local now
 	now="$(date +%s)"
@@ -137,10 +146,8 @@ runner_env() {
 		"AGENT_TYPE=$RUNNER_TYPE" \
 		"RUNNER_LABEL=$label" \
 		"CLAUDE_BASE_DIR=/scratch/workspace" \
-		"CLAUDE_RETIRE_AT=$((now + MAX_RUN_DURATION_SEC - ${RETIRE_MARGIN_SEC:-900}))" \
-		"CLAUDE_EXIT_IF_UNUSED_MIN=${EXIT_IF_UNUSED_MIN:-}" \
-		"CLAUDE_RELEASE_IDLE_SESSION_MIN=${RELEASE_IDLE_SESSION_MIN:-}" \
-		"CLAUDE_KILL_SESSION_AFTER_MIN=${KILL_SESSION_AFTER_MIN:-}"
+		"CLAUDE_RETIRE_AT=$((now + MAX_RUN_DURATION_SEC - retire_margin))"
+	gcp_runner_settings
 }
 
 # The API's reason for a failed request or operation, as a retry decision:

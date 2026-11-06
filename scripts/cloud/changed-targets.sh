@@ -62,9 +62,13 @@ touched() {
 	return 1
 }
 
-# The build parent a Dockerfile names (FROM agent-<parent>), if any.
+# The build parent's directory a Dockerfile names (FROM agent-<parent>), if any.
+# agent-base-gpu has no directory of its own: it's bake target base-gpu, base's
+# Dockerfile on CUDA (docker-bake.hcl), so its directory is base.
+# test_bake.py checks this chain against the bake file's.
 parent_of() {
-	sed -n -E 's/^FROM[[:space:]]+agent-([a-z0-9-]+).*/\1/p' "images/cloud/$1/Dockerfile" 2>/dev/null | head -n 1
+	sed -n -E 's/^FROM[[:space:]]+agent-([a-z0-9-]+).*/\1/p' "images/cloud/$1/Dockerfile" 2>/dev/null |
+		head -n 1 | sed 's/^base-gpu$/base/'
 }
 
 # The toolsets a Dockerfile installs (its `install-toolset.sh <name>` lines).

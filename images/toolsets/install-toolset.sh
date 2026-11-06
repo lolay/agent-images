@@ -68,13 +68,21 @@ record() {
 # Homebrew installs to /home/linuxbrew/.linuxbrew and must not run as root; the
 # image's user has sudo.
 ensure_brew() {
+	local installer url=https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh
 	if [[ ! -x "$brew" ]]; then
 		log "installing Homebrew"
+		# Download to a file first: with bash -c "$(curl ...)" a failed download
+		# runs an empty script, which succeeds, and the build dies later on a
+		# missing brew, far from the curl error.
+		installer="$(mktemp)"
+		curl -fsSL -o "$installer" "$url" || die "couldn't download the Homebrew installer from $url"
 		# The installer reports routine progress on stderr (fetching
 		# Homebrew/brew, portable Ruby, a PATH hint), which would make every
 		# image build that runs it not green. Its exit status still fails the
 		# build if the install does.
-		NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" 2>&1
+		NONINTERACTIVE=1 /bin/bash "$installer" 2>&1 || die "the Homebrew installer from $url failed"
+		rm -f "$installer"
+		[[ -x "$brew" ]] || die "the Homebrew installer finished, but $brew isn't there"
 	fi
 	brew_env
 }

@@ -27,13 +27,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install tools
         run: sudo apt-get install -y --no-install-recommends shellcheck shfmt
       # The android image's Packer template is validated here; the image itself
       # builds only on main, in GCP (cloud-deploy.yml). Keep in step with
       # required_version in images/android/gce/plugins.pkr.hcl.
-      - uses: hashicorp/setup-packer@v3.4.0
+      - uses: hashicorp/setup-packer@ce93c3c08a6c2ff2275bf4b54ff0d9a75f6c9789 # v3.4.0
         with:
           version: "1.16.2"
       - name: Lint and unit tests
@@ -43,17 +43,36 @@ jobs:
           PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: make cloud-lint cloud-test
 
+  # The images to build: every Cloud Run type (the BACKEND=run files in
+  # infra/gcp, as the deploy plans them) and the orchestrator, so a pull request
+  # adding a type builds it (make cloud-targets, the list make cloud-ci builds).
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      targets: ${{ steps.targets.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Targets
+        id: targets
+        run: |
+          set -euo pipefail
+          targets="$(make -s cloud-targets | jq -Rcn '[inputs]')"
+          echo "$targets"
+          echo "targets=$targets" >>"$GITHUB_OUTPUT"
+
   # One image per runner: together they don't fit on one. A build with no
   # output is the check; nothing is loaded or pushed.
   build:
+    needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        target: [linux, linux-gpu, gis, orchestrator]
+        target: ${{ fromJSON(needs.plan.outputs.targets) }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Hosted runners leave about 14 GB free, and agent-gis alone is 9 GB. The
       # preinstalled toolchains these jobs never use (.NET, Android, GHC,
       # CodeQL) are about 30 GB more.
@@ -61,7 +80,7 @@ jobs:
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
-      - uses: docker/setup-buildx-action@v4.4.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build ${{ matrix.target }}
         env:
           TARGET: ${{ matrix.target }}
