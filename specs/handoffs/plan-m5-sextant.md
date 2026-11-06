@@ -1,13 +1,12 @@
 # Plan: m5, the dependency watch
 
 Status: approved as written (owner, 2026-11-06), D1 to D9 as recommended, and the
-draft PR for s4. Groups 1 and 2 (s1 to s5) done; Group 3 approved to run in the
-same session (owner, 2026-11-06). On draft PR A, lolay/agent-images#54: s6 and
-s8 are written, s7 is seeding the locks with a throwaway job (`m5-seed`), and s9
-was done on `main` by lolay/agent-images#52. `main` is merged in at `4381ac1`
-(r2's fixes, #52 and #53, overlapped s3 and s6; see the merge commit). Next:
-commit the seeded locks, see `cloud-build` go green building from them, then PR
-A's walkthrough and the STOP for your review.
+draft PR for s4. Groups 1 to 3 (s1 to s9) done, each approved to run in this
+session (owner, 2026-11-06). PR A, lolay/agent-images#54 (still a draft), builds
+every type from its lock, with `cloud-build` green (run 42304209917). s9 was done
+on `main` by lolay/agent-images#52, and `main` is merged in at `4381ac1` (r2's
+fixes in #52 and #53 overlapped s3 and s6; see the merge commit). STOP: PR A
+waits for your review and merge. Then Group 4 (s10 to s13, PR B).
 Branch `claude/admiring-bell-0c7a1d` (assigned by the harness), from `main` at
 `ba55d96`.
 
@@ -293,7 +292,7 @@ tests, and the resolver's eleven guards each go red when deleted.
   type.
 - `test_bake.py` covers the per-type variables.
 
-#### s7 - Seed the locks `[exec]`
+#### s7 - Seed the locks `[exec]` (done)
 
 Resolve and commit `images/cloud/{linux,gis,linux-gpu}/versions.lock` from the
 draft PR's runner (or `make cloud-lock` on a host with Docker). The PR's
