@@ -208,7 +208,7 @@ class VmDeployTests(DeployTests):
         init, build = (self.out / "packer.log").read_text().splitlines()
         self.assertEqual(init, f"init {REPO}/images/android/gce")
         for expected in (
-            "build -force -color=false",
+            "build -color=false",
             "-var project_id=lolay-agents",
             "-var zone=us-central1-a",
             "-var subnetwork=projects/lolay-agents/regions/us-central1/subnetworks/agents-us-central1",
@@ -220,6 +220,15 @@ class VmDeployTests(DeployTests):
         ):
             self.assertIn(expected, build)
         self.assertTrue(build.endswith(f"{REPO}/images/android/gce"))
+        self.assertNotIn("-force", build, "a same-named image is the live one")
+
+    def test_workflow_image_name_is_unique_per_run_and_valid(self):
+        workflow = (REPO / ".github/workflows/cloud-deploy.yml").read_text()
+        line = next(l for l in workflow.splitlines() if 'echo "image=' in l)
+        self.assertIn("$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT", line)
+        name = f"agent-android-20261106-abc123def456-{2**53}-99"
+        self.assertLessEqual(len(name), 63)
+        self.assertEqual(self.deploy("vm-build", "android", name, "abc123def456").returncode, 0)
 
     def test_vm_build_fails_with_packer(self):
         result = self.deploy("vm-build", "android", ANDROID_IMAGE, "abc", FAKE_PACKER_STATUS="1")

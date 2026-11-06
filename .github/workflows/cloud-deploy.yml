@@ -246,7 +246,9 @@ jobs:
         id: name
         env:
           TYPE: ${{ matrix.type }}
-        run: echo "image=agent-$TYPE-$(date -u +%Y%m%d)-${GITHUB_SHA::12}" >>"$GITHUB_OUTPUT"
+        # Unique per run: a same-day rebuild of a commit must not share a name
+        # with the live image. Name limit is 63; this is ~50 with a 14-digit run id.
+        run: echo "image=agent-$TYPE-$(date -u +%Y%m%d)-${GITHUB_SHA::12}-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >>"$GITHUB_OUTPUT"
       - name: Build
         env:
           TYPE: ${{ matrix.type }}
