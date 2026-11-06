@@ -180,6 +180,7 @@ jobs:
           REGISTRY: ${{ env.ARTIFACT_REGISTRY }}
           TAG: ${{ steps.tag.outputs.tag }}
           CLAUDE_VERSION: ${{ needs.plan.outputs.claude-version }}
+          COMMIT: ${{ github.sha }}
           # The next step reads bake's metadata from an environment variable.
           # Provenance in it repeats the GitHub event (with the head commit's
           # message) once per target, and a type is three targets (base,
@@ -189,7 +190,11 @@ jobs:
         with:
           source: .
           files: images/cloud/docker-bake.hcl
-          targets: ${{ matrix.type }}
+          # versions-<type>, the image's versions report, keeps its local output
+          # (out/versions/<type>) under push; built here, it reuses the layers.
+          targets: |
+            ${{ matrix.type }}
+            versions-${{ matrix.type }}
           push: true
           # One image manifest, not an index with attestations: the digest is
           # what Cloud Run runs and what the job records.
@@ -213,6 +218,30 @@ jobs:
           fi
           scripts/cloud/deploy.sh type "$TYPE" "$image" "$GITHUB_SHA"
           echo "agent-$TYPE: $image" >>"$GITHUB_STEP_SUMMARY"
+      # Whether or not the smoke passed: a failed one is when the report helps most.
+      - name: Versions report
+        id: versions
+        if: ${{ !cancelled() && steps.bake.outcome == 'success' }}
+        env:
+          TYPE: ${{ matrix.type }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          METADATA: ${{ steps.bake.outputs.metadata }}
+        run: |
+          set -euo pipefail
+          digest="$(jq -er --arg target "$TYPE" '.[$target]["containerimage.digest"]' <<<"$METADATA")"
+          report="out/versions/$TYPE/versions.md"
+          name="versions-$TYPE-$TAG.md"
+          cp "$report" "out/$name"
+          echo "name=$name" >>"$GITHUB_OUTPUT"
+          { printf '\nagent-%s `%s` at `%s`, `%s`:\n\n' "$TYPE" "$TAG" "$GITHUB_SHA" "$digest"
+            cat "$report"; } >>"$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() && steps.versions.outputs.name != '' }}
+        with:
+          name: ${{ steps.versions.outputs.name }}
+          path: out/${{ steps.versions.outputs.name }}
+          retention-days: 90
+          if-no-files-found: error
 
   # The Compute Engine types (BACKEND=compute): Packer builds the image in GCP
   # (its build VM has nested virtualization, to boot the emulator once for its

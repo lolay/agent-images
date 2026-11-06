@@ -64,8 +64,10 @@ jobs:
   # One image per runner: together they don't fit on one. Each runner type is
   # loaded and smoked as the deploy smokes agent-<type>-next (specs/gcp.md, m4):
   # its binary checks and smoke tests, against local volumes for the mounts, with
-  # `smoke pr` skipping the smoke tests a hosted runner can't run (a GPU's). The
-  # orchestrator isn't a runner type: a build with no output is its check.
+  # `smoke pr` skipping the smoke tests a hosted runner can't run (a GPU's), and
+  # its versions report goes to the summary and an artifact, so the pull request
+  # shows what the image would contain. The orchestrator isn't a runner type: a
+  # build with no output is its check.
   build:
     needs: plan
     runs-on: ubuntu-24.04
@@ -87,12 +89,14 @@ jobs:
       - name: Build ${{ matrix.target }}
         env:
           TARGET: ${{ matrix.target }}
+          COMMIT: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          load=(--load)
-          [[ "$TARGET" != orchestrator ]] || load=()
+          args=("$TARGET")
+          # --load sends the image to Docker; versions-<type> keeps its local output.
+          [[ "$TARGET" == orchestrator ]] || args=(--load "$TARGET" "versions-$TARGET")
           CLAUDE_VERSION="$(curl -fsSL https://downloads.claude.ai/claude-code-releases/latest)" \
-            docker buildx bake -f images/cloud/docker-bake.hcl "${load[@]}" "$TARGET"
+            docker buildx bake -f images/cloud/docker-bake.hcl "${args[@]}"
           df -h /
           docker system df
       - name: Smoke ${{ matrix.target }}
@@ -100,3 +104,26 @@ jobs:
         env:
           TARGET: ${{ matrix.target }}
         run: make cloud-smoke TYPE="$TARGET"
+      - name: Versions report
+        id: versions
+        if: ${{ !cancelled() && matrix.target != 'orchestrator' }}
+        env:
+          TARGET: ${{ matrix.target }}
+          COMMIT: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          report="out/versions/$TARGET/versions.md"
+          [[ -f "$report" ]] || { echo "::warning::no versions report for $TARGET (did the build fail?)"; exit 0; }
+          name="versions-$TARGET-pr$PR-${COMMIT::12}.md"
+          cp "$report" "out/$name"
+          echo "name=$name" >>"$GITHUB_OUTPUT"
+          { printf 'Pull request #%s at `%s`: what agent-%s would contain.\n\n' "$PR" "$COMMIT" "$TARGET"
+            cat "$report"; } >>"$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() && steps.versions.outputs.name != '' }}
+        with:
+          name: ${{ steps.versions.outputs.name }}
+          path: out/${{ steps.versions.outputs.name }}
+          retention-days: 90
+          if-no-files-found: error
