@@ -1,2 +1,0 @@
-# Ruby for fastlane (and a project's Gemfile, through the bundler Ruby ships).
-ruby-full

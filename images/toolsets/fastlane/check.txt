@@ -1,4 +1,0 @@
-# Smoke checks: label: command, which must exit 0; its first line of output is
-# the reported version.
-ruby: ruby --version
-fastlane: gem list --exact fastlane | tail -n 1

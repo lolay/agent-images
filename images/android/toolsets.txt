@@ -4,8 +4,7 @@
 #
 # What Android development uses, not everything linux has: no python (Ubuntu's
 # python3 stays), proto, terraform or browser. A session has sudo, so it adds
-# any of them in a minute. go is here for gomobile (android-go), and fastlane
-# because the common Android CI images all carry it.
+# any of them in a minute. go is here for gomobile (android-go).
 core
 native
 jvm
@@ -16,4 +15,3 @@ go
 rust
 android-go
 android-rust
-fastlane

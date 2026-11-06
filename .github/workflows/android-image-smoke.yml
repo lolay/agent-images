@@ -68,7 +68,6 @@ jobs:
             node --version && pnpm --version
             go version && command -v gomobile gobind
             cargo --version && cargo ndk --version
-            ruby --version && fastlane --version | tail -n 1
             rustup target list --installed | grep android
             echo "NDK: $ANDROID_NDK_HOME" && test -x "$ANDROID_NDK_HOME/ndk-build"
             du -sh "$ANDROID_HOME" "$ANDROID_NDK_HOME" /opt/gradle
