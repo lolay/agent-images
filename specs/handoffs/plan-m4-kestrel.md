@@ -1,10 +1,8 @@
 # Plan: m4, binary checks, smoke tests and the versions report
 
-Status: approved 2026-11-06 (s1). s1 built, committed and pushed; draft PR
-lolay/agent-images#48 is open for `cloud-build`. Next: read that run (the loads, `df`
-after each, the binary checks and smoke lines per type), fix what it finds, record
-the disk numbers here, then ask Gary to review s1 before starting s2. To resume:
-check out this branch, read this plan and the PR's latest `cloud-build` run.
+Status: s1 done 2026-11-06; draft PR lolay/agent-images#48 green at `e29d598`.
+Waiting on Gary's review of s1 before s2 (STOP: approval is per step). To resume:
+check out this branch, read this plan and the PR.
 Branch `claude/bold-albattani-fg54u5` (assigned by the harness), from `main` at
 `68115e6`.
 
@@ -265,7 +263,14 @@ leave the branch, promoted to gcp.md, as its last commit.
 
 ## Progress
 
-- [x] s1 (built; PR run pending)
+- [x] s1, green on lolay/agent-images#48 at `e29d598`. Measured on the hosted
+  runner (145 GB disk, `--load`): free after the load 95 GB (linux), 89 GB (gis),
+  78 GB (linux-gpu: 13.8 GB of images, 16.5 GB of build cache), so every type keeps
+  `--load`. Job time: linux 9 min, gis 10.5 min, linux-gpu 14 min, orchestrator
+  2 min. The smoke itself takes 3 s (linux) to 8 s (gis). Two fixes the run found:
+  `make cloud-smoke` had never run in CI and Docker refuses a read-only anonymous
+  volume (now a read-only tmpfs); `Xvfb -version` prints no version line (now
+  `command -v`).
 - [ ] s2
 - [ ] s3 (session skill)
 - [ ] s4
