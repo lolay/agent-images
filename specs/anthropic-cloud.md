@@ -85,6 +85,15 @@ script records a fingerprint of `scripts/anthropic/setup.sh` and
 checkout's path, and the SessionStart hook compares it with the session's fresh
 checkout. On a mismatch it shows a notice and tells the session to pass it on.
 
+Checked 2026-11-06 in a session that ran the script (208.7 s): the session-start
+doctor found `triage`; under Claude Code's own PATH the nine linked tools ran
+and Node, Go, Python and Rust were Anthropic's; the recorded fingerprint matched
+the checkout and the hook was silent; with the record's hash zeroed, the hook
+printed the notice as JSON. Terraform failed under that PATH (`tenv` not found),
+which the wrapper's PATH entry fixes. The doctor still exits 2 there: this
+repo's `make doctor` checks the Linux host (KVM, LXD, `.env`, the runner), none
+of which a cloud session has.
+
 246.5 s leaves under a minute of the five-minute budget. A slow day for
 Homebrew's bottles could push a rebuild past it, and then every session pays the
 script until it fits again. If that happens, run the Homebrew toolsets in
@@ -282,7 +291,8 @@ in that session it reported `triage` missing, while the Bash tool found it. So
 the script also puts the tools Anthropic's image lacks altogether into
 `/usr/local/bin`, which is on that PATH: symlinks for triage, nowline, sops,
 shellcheck, actionlint, pre-commit, protoc, buf and grpcurl, and a wrapper for
-Terraform that supplies `TENV_ROOT`. Nothing already there is replaced, and in a
+Terraform that supplies `TENV_ROOT` and puts Homebrew's bin on PATH (Homebrew's
+`terraform` is tenv's shim, which runs `tenv` from PATH). Nothing already there is replaced, and in a
 hook Node, Go, Python and Rust stay Anthropic's.
 
 Measured 2026-11-06 in a `cloud_default` session, running the same toolsets the

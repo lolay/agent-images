@@ -159,11 +159,12 @@ readonly brew_bin=/home/linuxbrew/.linuxbrew/bin
 for tool in triage nowline sops shellcheck actionlint pre-commit protoc buf grpcurl; do
 	[[ -e "/usr/local/bin/$tool" || ! -x "$brew_bin/$tool" ]] || ln -s "$brew_bin/$tool" "/usr/local/bin/$tool"
 done
-# tenv finds the selected Terraform through TENV_ROOT, which hooks don't get.
+# Homebrew's terraform is tenv's shim: it runs `tenv` from PATH, and tenv finds
+# the selected Terraform through TENV_ROOT. Hooks have neither.
 if [[ ! -e /usr/local/bin/terraform && -x "$brew_bin/terraform" ]]; then
 	cat >/usr/local/bin/terraform <<EOF
 #!/bin/sh
-TENV_ROOT="\${TENV_ROOT:-/home/$user/.tenv}" exec $brew_bin/terraform "\$@"
+PATH="$brew_bin:\$PATH" TENV_ROOT="\${TENV_ROOT:-/home/$user/.tenv}" exec $brew_bin/terraform "\$@"
 EOF
 	chmod 755 /usr/local/bin/terraform
 fi
