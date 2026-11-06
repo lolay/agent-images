@@ -16,7 +16,7 @@
 # as ubuntu.
 set -euo pipefail
 
-readonly toolsets=(core native jvm browser node python go rust proto terraform)
+readonly toolsets=(core native jvm browser display node python go rust proto terraform)
 readonly log=/var/log/agent-images-setup.tsv
 readonly user=ubuntu
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -72,6 +72,20 @@ cat >/etc/profile.d/zz-agent-images.sh <<'EOF'
 # the image's own runtimes, as in agent-linux.
 export HOMEBREW_PREFIX=/home/linuxbrew/.linuxbrew HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_ENV_HINTS=1
 export PATH="/opt/agent-images/bin:$HOMEBREW_PREFIX/opt/rustup/bin:$HOMEBREW_PREFIX/bin:$HOMEBREW_PREFIX/sbin:$PATH"
+
+# The display toolset: agent-linux's entrypoint starts Xvfb at :99 before the
+# session; here there's no entrypoint, so the first shell starts it (detached,
+# so it outlives that shell) and every shell points DISPLAY at it.
+if [ -z "${DISPLAY:-}" ] && command -v Xvfb >/dev/null 2>&1; then
+	export DISPLAY=:99
+	if [ ! -S /tmp/.X11-unix/X99 ]; then
+		(setsid Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &)
+		for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+			[ -S /tmp/.X11-unix/X99 ] && break
+			sleep 0.1
+		done
+	fi
+fi
 EOF
 # Non-login shells read ~/.bashrc only.
 grep -qF zz-agent-images.sh /root/.bashrc ||
