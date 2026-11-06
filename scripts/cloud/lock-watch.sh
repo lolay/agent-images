@@ -173,6 +173,7 @@ cmd_body() {
 	if [[ -n "${GITHUB_RUN_ID:-}" ]]; then
 		printf ' ([run](%s/%s/actions/runs/%s))' "${GITHUB_SERVER_URL:-https://github.com}" "$(repo)" "$GITHUB_RUN_ID"
 	fi
+	# shellcheck disable=SC2016 # markdown backticks, not expansions
 	printf '. It merges itself when `cloud-build`'"'"'s `gate` passes; a red check holds it, and the next run refreshes it (specs/gcp.md, "Watch").\n'
 	while read -r path; do
 		old="$base/$path"
@@ -214,6 +215,7 @@ cmd_pins() {
 				printf '| Type | Pin | Locked | Upstream now | Issue |\n| --- | --- | --- | --- | --- |\n'
 			fi
 			rows=$((rows + 1))
+			# shellcheck disable=SC2016 # markdown backticks
 			printf '| %s | %s | `%s` | `%s` | %s %s |\n' "$type" "$what" "$value" "$newest" \
 				"$([[ "$issue" == - ]] || printf '%s' "$issue")" "$(issue_state "$issue")"
 		done <<<"$pins"
@@ -334,6 +336,7 @@ cmd_propose() {
 	fi
 	[[ "$number" =~ ^[0-9]+$ && -n "$node" ]] || die "no pull request from $branch"
 	# The ruleset's required check (cloud-build's gate) is what it waits on.
+	# shellcheck disable=SC2016 # a GraphQL variable
 	gh api graphql -f query='mutation($id: ID!) { enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: SQUASH}) { clientMutationId } }' \
 		-f id="$node" >/dev/null
 	printf 'pull request #%s at %s, auto-merge on\n' "$number" "$commit"
