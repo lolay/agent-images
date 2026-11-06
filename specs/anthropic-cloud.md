@@ -22,7 +22,7 @@ The differences, side by side. Each section below has the detail and the source.
 | Root, apt, Docker | Yes | Yes | No |
 | Display | Per command (`xvfb-run`) | Xvfb at `:99`, started by the first shell | Xvfb at `:99`, started before the session |
 | Cold start | About 12 s | About 12 s from the cache; 2:45 to 3:55 while it builds | About 55 s |
-| Cache rebuild | n/a | After a script change, or about weekly | Nightly image build in CI |
+| Cache rebuild | n/a | After the environment's setup script or allowed hosts change, or about weekly; not when the repo's `setup.sh` changes | Nightly image build in CI |
 | Compute cost | None beyond the plan | None beyond the plan | About $0.37 an hour per session |
 | Toolchains | Set by Anthropic: Node 22, Go 1.24, Python 3.13 | Latest at the cache build | Latest at the nightly build |
 | Other runtimes | Ruby, PHP, Bun, Maven, Gradle, Nix, Chrome, Postgres, Redis | The same as `cloud_default` | No |
@@ -71,6 +71,15 @@ third, 54 minutes later, started in about 12 s, and its
 first successful run, and a session whose setup log predates its
 `CCR_SPAWN_TIMESTAMP_MS` came from the cache. How long the snapshot takes to
 become usable isn't measured; somewhere between 17 s and 54 minutes.
+
+The cache doesn't follow the repo. The environment's setup script is one line
+that runs `agent-images/scripts/anthropic/setup.sh`, and Anthropic rebuilds only
+when that line, the allowed hosts or the week change, so a merged change to
+`setup.sh` reaches an environment's sessions only after one of those. On
+2026-11-06 a session started at 04:47 UTC from a snapshot built at 04:34 to
+04:37 had none of #31's `/usr/local/bin` links, which merged at 04:46. To pick
+up a change at once, edit the environment's setup script (a comment line is
+enough); the next session rebuilds.
 
 246.5 s leaves under a minute of the five-minute budget. A slow day for
 Homebrew's bottles could push a rebuild past it, and then every session pays the
