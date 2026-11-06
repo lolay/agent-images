@@ -328,7 +328,8 @@ Steps for [gcp.md](gcp.md) m2, ahead of `gis` and `android`:
   tests' display steps (QGIS desktop in `gis`, headed Chromium in `linux`) run
   instead of skipping. Checked in both images: smoke passes the display, OpenGL
   (llvmpipe) and screenshot checks; QGIS 4.2 desktop runs full-screen with a layer
-  drawn; headed Chromium runs full-screen with WebGL 1.0. About 100 MB per image.
+  drawn; headed Chromium runs full-screen with WebGL 1.0. About 60 MB (agent-linux
+  went from 5.67 to 5.73 GB).
 
 `linux-gpu` and `3d-gpu` follow in m3 on the same structure, and both install
 `display` (it's in their lists above): the virtual display comes from s7, and m3
