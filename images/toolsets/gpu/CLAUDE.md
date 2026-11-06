@@ -6,4 +6,5 @@
 - Rendering on the GPU, where the driver allows: EGL offscreen (`EGL_PLATFORM`
   device or surfaceless), Vulkan (`vulkaninfo --summary`), and `vglrun` for GLX
   apps on the virtual display. Check the renderer string: Mesa's llvmpipe or
-  lavapipe means it fell back to the CPU.
+  lavapipe means it fell back to the CPU. `agent-gpu-libs` says which of the
+  driver's libraries the host mounted (EGL, GLX, Vulkan, NVENC, NVDEC, OptiX).

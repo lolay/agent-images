@@ -7,7 +7,8 @@
 #   where Cloud Run mounts them. Docker's NVIDIA runtime writes these itself;
 #   Cloud Run documents only the library mount, so the image carries them. If the
 #   mount has no graphics libraries, both fall back to Mesa (llvmpipe, lavapipe).
-# - agent-cuda-probe, the smoke check's CUDA kernel, for the L4 and Blackwell.
+# - agent-cuda-probe, the smoke check's CUDA kernel, for the L4 and Blackwell,
+#   and agent-gpu-libs, which reports which driver libraries the host mounted.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,3 +58,4 @@ log "building agent-cuda-probe"
 	-gencode arch=compute_120,code=compute_120 \
 	-o "$work/agent-cuda-probe" "$here/cuda-probe.cu"
 sudo install -m 755 "$work/agent-cuda-probe" /usr/local/bin/agent-cuda-probe
+sudo install -m 755 "$here/agent-gpu-libs.sh" /usr/local/bin/agent-gpu-libs

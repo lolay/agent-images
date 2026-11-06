@@ -6,6 +6,7 @@ cuda: agent-cuda-probe
 nvcc: nvcc --version | grep -m1 release
 # Report-only: these pass either way and say whether rendering reached the GPU
 # (NVIDIA) or fell back to Mesa. The session test decides (specs/gcp.md, "The head").
+driver-libs: agent-gpu-libs
 egl: eglinfo -B -p surfaceless 2>/dev/null | sed -n 's/^OpenGL core profile renderer: //p' | grep -m1 . || echo 'no EGL renderer'
 vulkan: vulkaninfo --summary 2>/dev/null | sed -n 's/^[[:space:]]*deviceName *= //p' | grep -m1 . || echo 'no Vulkan device'
 virtualgl: vglrun -h 2>&1 | grep -m1 -i virtualgl || ls /opt/VirtualGL/bin/vglrun

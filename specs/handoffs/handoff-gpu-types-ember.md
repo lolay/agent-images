@@ -15,8 +15,8 @@ from `main` at `154787f`. Plan: [plan-gpu-types-ember.md](plan-gpu-types-ember.m
 Layout decided (owner): one base Dockerfile with `BASE_IMAGE`, `linux-gpu` reusing
 `linux`'s Dockerfile, and a `gpu` toolset on top of each GPU type.
 
-s2 and s3 done (see the plan's notes). Next: s4, the rest of the GPU smoke (log
-which driver libraries Cloud Run mounts), after the owner reviews s3.
+s2 to s4 done (see the plan's notes). Next: s5, the `linux-gpu` type, its env
+file and the deploy's disk, after the owner reviews s4.
 
 The owner chose to skip the review gate: the full review of `main` covering m1 and
 m2 runs later, and its high findings become steps in this plan.

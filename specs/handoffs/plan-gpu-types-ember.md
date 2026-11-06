@@ -1,7 +1,7 @@
 # Plan: m3, the GPU types on GCP
 
 Status: s1 done 2026-11-06 ([infra-ask-m3-gpu.md](infra-ask-m3-gpu.md)). Layout
-decided (owner, 2026-11-06). s2 and s3 done 2026-11-06; s4 next.
+decided (owner, 2026-11-06). s2 to s4 done 2026-11-06; s5 next.
 Branch `claude/vigilant-tesla-m2ipbw` (assigned by the harness), from `main` at
 `154787f`.
 
@@ -124,7 +124,7 @@ An unknown `GPU_TYPE` exits 2 (the docs warn that `nvidia-l4` is easy to mistype
 `linux` and `gis` render byte for byte as before; three new tests; the full unit
 suite passes.
 
-#### s4 - GPU smoke checks [exec]
+#### s4 - GPU smoke checks [exec] (done)
 
 The entrypoint's `smoke` mode, when `nvidia-smi` exists: GPU name, driver and
 compute capability; the libraries under `/usr/local/nvidia/lib64`; a small CUDA
@@ -133,6 +133,12 @@ device probe (built into the `gpu` toolset at image time); `eglinfo -B` and
 the `gpu` toolset's `check.txt` has all of these, and the entrypoint already runs
 them. What's left is checking the driver mount's contents (which graphics
 libraries Cloud Run actually mounts), the most useful fact for s7.
+
+Done: `agent-gpu-libs` (in the `gpu` toolset, a report-only smoke check) prints
+the driver version and which library groups the host mounted: compute, EGL, GLX,
+Vulkan, NVENC, NVDEC, OptiX, naming what's missing. So the first deploy's smoke
+log answers whether Cloud Run gives graphics libraries at all, before any session
+runs. Unit tests in `tests/unit/test_gpu_libs.py`; checked in the rebuilt image.
 
 #### s5 - `linux-gpu` type and its build [deep]
 
