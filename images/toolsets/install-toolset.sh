@@ -70,7 +70,11 @@ record() {
 ensure_brew() {
 	if [[ ! -x "$brew" ]]; then
 		log "installing Homebrew"
-		NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+		# The installer reports routine progress on stderr (fetching
+		# Homebrew/brew, portable Ruby, a PATH hint), which would make every
+		# image build that runs it not green. Its exit status still fails the
+		# build if the install does.
+		NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" 2>&1
 	fi
 	brew_env
 }

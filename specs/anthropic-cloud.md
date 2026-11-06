@@ -11,25 +11,26 @@ on its own schedule, so re-measure before relying on a version.
 
 ## Summary
 
-Same hardware, opposite philosophies. Anthropic's is a fat, root, general-purpose VM
-with many runtimes at fixed, older versions, Docker, browsers, and a proxy in front
-of every request that keeps credentials out of the VM. `agent-linux` is a lean,
-non-root image with the latest of each toolchain and the Lolay session tools, picked
-by the rule in [image-toolsets.md](image-toolsets.md).
-
-Anthropic's environment can carry `agent-linux`'s tools too: its setup script
-installs them in about 4¼ minutes, and Anthropic caches the result, so only the
-first session in a week (or after a script change) pays it. That leaves the real
-differences as cost, root and Docker on Anthropic's side, and the outputs and
-datasets buckets, no egress proxy, and full control of the image on ours.
+The differences, side by side. Each section below has the detail and the source.
 
 | | Anthropic `cloud_default` | Anthropic + `agent-linux` tools | `agent-linux` |
 | --- | --- | --- | --- |
-| Cold start | About 12 s, measured by hand | About 12 s plus 255 s the first time; from the cache after (to measure) | About 55 s (m1), plus the orchestrator's queue |
-| Compute cost | None beyond the plan | None beyond the plan | About $0.37 an hour per session |
-| Tool versions | Fixed by Anthropic, months behind | Latest, as of the cache build | Latest, as of the nightly build |
+| Runs on | Anthropic's VM | Anthropic's VM, plus `scripts/anthropic/setup.sh` | Cloud Run, our image |
+| CPU, memory | 4 vCPU, 16 GB | 4 vCPU, 16 GB | 4 vCPU, 16 GiB |
+| Disk | 30 GB | 30 GB | 10 GiB scratch; the rest is memory |
+| Larger machines | No | No | `gis` (8 vCPU, 32 GiB), GPU types (m3) |
 | Root, apt, Docker | Yes | Yes | No |
 | Display | Per command (`xvfb-run`) | Xvfb at `:99`, started by the first shell | Xvfb at `:99`, started before the session |
+| Cold start | About 12 s | About 12 s from the cache; 2:45 to 3:55 while it builds | About 55 s |
+| Cache rebuild | n/a | After a script change, or about weekly | Nightly image build in CI |
+| Compute cost | None beyond the plan | None beyond the plan | About $0.37 an hour per session |
+| Toolchains | Set by Anthropic: Node 22, Go 1.24, Python 3.13 | Latest at the cache build | Latest at the nightly build |
+| Other runtimes | Ruby, PHP, Bun, Maven, Gradle, Nix, Chrome, Postgres, Redis | The same as `cloud_default` | No |
+| Lolay session tools | About half of `core` | All of `core`, `proto`, `terraform` | All of `core`, `proto`, `terraform` |
+| Egress | Anthropic's proxy: allowlist, re-terminated TLS | The same | Direct, through Cloud NAT |
+| Credentials | Outside the VM; the proxy attaches them, network secrets available | The same | None; no network secrets |
+| Persistence | Git | Git | Git, `$AGENT_OUTPUTS`, `$AGENT_DATASETS` |
+| Image | Anthropic's | Anthropic's, extended | Ours |
 
 ## Hardware
 
@@ -55,14 +56,26 @@ What a session waits for between the click and Claude's first command.
 
 | | Anthropic, no setup script | Anthropic + `agent-linux` tools | `agent-linux` |
 | --- | --- | --- | --- |
-| Measured | About 12 s, by hand, 2026-11-06 | The install: 254.9 s (below). End to end: not yet | About 55 s for the 5.5 GB image (Cloud Run streams layers), m1 |
+| Measured | About 12 s, by hand, 2026-11-06 | First session 3 min 55 s; second, a few minutes later, 2 min 45 s (the script again, 166 s); third, about 20 minutes later, about 12 s from the cache. All by hand, 2026-11-06 | About 55 s for the 5.5 GB image (Cloud Run streams layers), m1 |
 | What's in it | VM from Anthropic's pool, repo clone | First session: the setup script, then Anthropic snapshots the filesystem. Later sessions start from the snapshot and skip the script | The orchestrator's spawn hook, the Cloud Run execution, the runner registering with the work order |
 | Repeats when | Every session | The script runs again when the script or the allowed hosts change, or the cache expires (about 7 days) | Every session: no standby (`MIN_IDLE=0`); one would cost about $270 a month |
 
 The cache is the thing to watch. Anthropic caches a setup script only when it
-finishes in roughly five minutes; past that, every session runs it. At 255 s
-the toolsets are under the limit with about 45 s to spare, and network variance
-could eat that. If the report shows sessions paying the install every time, run
+finishes in roughly five minutes; past that, every session runs it. On 2026-11-06 it was, from the first session's run. That run
+took 246.5 s (01:25:00 to 01:29:06 UTC; core 82.1, native 5.8, jvm 3.5, browser
+3.4, node 52.3, python 14.3, go 14.2, rust 42.7, proto 14.4, terraform 13.8) and
+exited 0. The second session started 17 s after it ended, too soon for the
+snapshot, and ran the script again (01:29:23 to 01:32:09, 166 s, exit 0). The
+third, 54 minutes later, started in about 12 s, and its
+`/var/log/agent-images-setup.tsv` was the first run's: the snapshot is of the
+first successful run, and a session whose setup log predates its
+`CCR_SPAWN_TIMESTAMP_MS` came from the cache. How long the snapshot takes to
+become usable isn't measured; somewhere between 17 s and 54 minutes.
+
+246.5 s leaves under a minute of the five-minute budget. A slow day for
+Homebrew's bottles could push a rebuild past it, and then every session pays the
+script until it fits again. If that happens, run the Homebrew toolsets in
+parallel or drop `node` and `rust` (about 95 s together) for Anthropic's own. If the report shows sessions paying the install every time, run
 the toolsets in parallel or drop the ones Anthropic already covers.
 
 `EXPECTED_SPAWN_SECONDS` is 180 for `linux`, three times the measured cold start,
@@ -79,11 +92,8 @@ waits on it.
 | Model usage | The plan's usage limits | The same plan's usage limits: self-hosted moves only the compute |
 | Limits | Rate limits shared with all the account's Claude use; parallel sessions draw them down faster | The same, plus our own Cloud Run quotas |
 
-So the cost question is only about compute. An 8-hour `linux` session is about
-$3 at list price; the same session on Anthropic's VM is nothing extra. What
-`agent-linux` buys for that is the buckets, no proxy, a 10 GiB disk we can grow, the
-`gis` and GPU types (which Anthropic's 4 vCPU and 16 GB can't serve), and control
-over the image.
+An 8-hour session is about $3 of compute on `linux` at list price, and nothing
+beyond the plan on Anthropic's VM.
 
 ## Tool versions
 
@@ -138,9 +148,9 @@ Everything from Ubuntu's archive is the same on both, since both are Ubuntu 24.0
 | gcloud, gsutil, bq | 570 | No |
 | Homebrew | No | Yes, owned by the session user |
 
-Read across: Anthropic covers more languages; `agent-linux` covers the Lolay session
-tools and is a major version or two ahead on Node, Go and Python. Neither is a
-superset of the other.
+Anthropic's image has more languages; `agent-linux` has the Lolay session tools and
+is a major version or two ahead on Node, Go and Python. Neither is a superset of the
+other.
 
 ## Network and proxy
 
@@ -195,8 +205,8 @@ at container start and the setup script's output:
 
 ## Matching agent-linux on Anthropic's cloud
 
-An experiment, not a decision: give an Anthropic environment `agent-linux`'s tools
-and compare how fast sessions start and what they get.
+Gives an Anthropic environment `agent-linux`'s tools, and records how fast its
+sessions start.
 
 `scripts/anthropic/setup.sh` installs `agent-linux`'s toolsets in `agent-linux`'s
 order, with the same `install-toolset.sh`, timing each into
