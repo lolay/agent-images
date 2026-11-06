@@ -8,9 +8,10 @@ Run's GPU docs on 2026-11-06
 ## lolay/infrastructure (`stacks/gcp/agents`)
 
 1. **Orchestrator host to `e2-small`**, the machine type variable
-   (gcp-infrastructure.md "Network and the orchestrator host"). Needed before
-   `linux-gpu`'s env file lands on `main`, since that adds a fourth orchestrator to
-   an `e2-micro` with about 270 MiB to spare. About $12 a month.
+   (gcp-infrastructure.md "Network and the orchestrator host"). Needed before the
+   `claude-env-linux-gpu` secret exists: the supervisor starts a type's
+   orchestrator only once its secret reads, and a fourth one on the `e2-micro`
+   leaves about 270 MiB. About $12 a month.
 
 2. **GPU quota: probably nothing to apply.** The first GPU deploy in a region gets
    an automatic grant, subject to capacity: 3 L4 GPUs and 3,000 milliGPU (3) RTX PRO
