@@ -110,12 +110,11 @@ Before you create it, look for an open issue on lolay/agent-images with the same
 title. If one exists, add the new output to it as a comment instead.
 
 Create the issue with whatever GitHub access this session has (GitHub tools, or an
-authenticated `gh`), with the label `toolset-check` if the repository has that
-label. If the session can't reach lolay/agent-images, give the user a prefilled
-link instead:
+authenticated `gh`). If the session can't reach lolay/agent-images, give the user a
+prefilled link instead:
 
 ```text
-https://github.com/lolay/agent-images/issues/new?title=<url-encoded title>&body=<url-encoded body>&labels=toolset-check
+https://github.com/lolay/agent-images/issues/new?title=<url-encoded title>&body=<url-encoded body>
 ```
 
 Then print the body as well, so they can paste it if the link is cut short. GitHub

@@ -1,8 +1,9 @@
 # Plan: m4, binary checks, smoke tests and the versions report
 
-Status: s1 to s3 done 2026-11-06, green on lolay/agent-images#48 at `385a84f`.
-Waiting on Gary's review of s3 before s4 (the remaining smoke tests, by Sonnet
-subagents). To resume: check out this branch, read this plan and the PR.
+Status: s1 to s3 done 2026-11-06, green on lolay/agent-images#48. s4 approved and
+running: batch 1 subagents (native, jvm, node, python, go, rust). To resume: check
+out this branch, read this plan and the PR; `images/toolsets/<name>/smoke.sh`
+present means that toolset's script is written.
 Branch `claude/bold-albattani-fg54u5` (assigned by the harness), from `main` at
 `68115e6`.
 
@@ -215,8 +216,7 @@ or runs a test itself.
 - Nothing from the user's own work: no project files, environment dumps, tokens or
   paths outside the temp directory. The skill shows the body before filing.
 
-Labels: `toolset-check`, which s3 creates in the repo once, plus the toolset's
-name when that label exists (the skill adds none of its own). Test: a unit test that
+No label (Gary, 2026-11-06): the title format makes these issues searchable. Test: a unit test that
 every `agent-toolset-checks` subcommand the skill names exists in the runner, so
 the two can't drift.
 
@@ -278,7 +278,6 @@ leave the branch, promoted to gcp.md, as its last commit.
 - [x] s3, green at `385a84f`. The skill's one source is
   `images/toolsets/skills/agent-toolset-checks/SKILL.md`, installed where the
   runner is (the cloud runner Dockerfile, android's provision.sh), not on the Mac
-  or the LXD android image. The `toolset-check` label doesn't exist on
-  lolay/agent-images yet; the skill adds it only if it does.
-- [ ] s4
+  or the LXD android image. The label was dropped (Gary, 2026-11-06).
+- [ ] s4 (approved 2026-11-06; batch 1: native, jvm, node, python, go, rust)
 - [ ] s5
