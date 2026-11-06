@@ -1,8 +1,8 @@
 # Plan: m4, binary checks, smoke tests and the versions report
 
-Status: s1 to s4 done 2026-11-06 on lolay/agent-images#48; waiting on its
-`cloud-build` run for proto and terraform in the image, then Gary's review before
-s5. To resume: check out this branch, read this plan and the PR.
+Status: s1 to s4 done 2026-11-06, green on lolay/agent-images#48 at `30ef5c0`.
+Waiting on Gary's review before s5. To resume: check out this branch, read this
+plan and the PR.
 Branch `claude/bold-albattani-fg54u5` (assigned by the harness), from `main` at
 `68115e6`.
 
@@ -284,4 +284,7 @@ leave the branch, promoted to gcp.md, as its last commit.
   and terraform first run in the PR's linux image; android-go and android-rust on
   the android smoke VM, at the first deploy from `main`. Review fixes: native's and
   terraform's failure output, android-go's clang pick under pipefail.
+  Green at `30ef5c0`: linux's smoke passes `smoke-native`, `-jvm`, `-display`, `-node`,
+  `-python`, `-go` (4.6 s, the slowest), `-rust`, `-proto` and `-terraform`, the whole
+  smoke in 7 s; gis and linux-gpu green too.
 - [ ] s5
