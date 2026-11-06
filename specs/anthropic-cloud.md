@@ -265,7 +265,12 @@ Homebrew's installer leaves it; the prefix under it is `ubuntu`'s.
 Hooks don't get this PATH. A SessionStart hook runs with Claude Code's own
 environment, and `CLAUDE_ENV_FILE` applies only to Bash tool commands, so a hook
 that runs a repo's `make doctor` (the personal plugin's) sees Anthropic's PATH:
-in that session it reported `triage` missing, while the Bash tool found it.
+in that session it reported `triage` missing, while the Bash tool found it. So
+the script also puts the tools Anthropic's image lacks altogether into
+`/usr/local/bin`, which is on that PATH: symlinks for triage, nowline, sops,
+shellcheck, actionlint, pre-commit, protoc, buf and grpcurl, and a wrapper for
+Terraform that supplies `TENV_ROOT`. Nothing already there is replaced, and in a
+hook Node, Go, Python and Rust stay Anthropic's.
 
 Measured 2026-11-06 in a `cloud_default` session, running the same toolsets the
 same way as the image's `claude` user (which has passwordless sudo already). The

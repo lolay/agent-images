@@ -124,4 +124,22 @@ jq '.hooks.SessionStart = ((.hooks.SessionStart // [])
 	"$settings" >"$settings.new"
 mv "$settings.new" "$settings"
 
+# SessionStart hooks run with Claude Code's own PATH: CLAUDE_ENV_FILE reaches
+# only Bash tool commands, so a hook running a repo's `make doctor` wouldn't
+# find Homebrew's tools. The ones Anthropic's image lacks altogether go in
+# /usr/local/bin, which is on that PATH; the runtimes it has (Node, Go, Python,
+# Rust) stay its own there. Nothing already in /usr/local/bin is replaced.
+readonly brew_bin=/home/linuxbrew/.linuxbrew/bin
+for tool in triage nowline sops shellcheck actionlint pre-commit protoc buf grpcurl; do
+	[[ -e "/usr/local/bin/$tool" || ! -x "$brew_bin/$tool" ]] || ln -s "$brew_bin/$tool" "/usr/local/bin/$tool"
+done
+# tenv finds the selected Terraform through TENV_ROOT, which hooks don't get.
+if [[ ! -e /usr/local/bin/terraform && -x "$brew_bin/terraform" ]]; then
+	cat >/usr/local/bin/terraform <<EOF
+#!/bin/sh
+TENV_ROOT="\${TENV_ROOT:-/home/$user/.tenv}" exec $brew_bin/terraform "\$@"
+EOF
+	chmod 755 /usr/local/bin/terraform
+fi
+
 mark setup end "$(now)"
