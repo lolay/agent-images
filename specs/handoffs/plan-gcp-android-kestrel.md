@@ -1,6 +1,6 @@
 # Plan: m2, `android` on Compute Engine
 
-Status: s1 to s6 done 2026-11-06; waiting for the owner's go on s7 (opening the PR and merging, which deploys and spends money).
+Status: s1 to s6 done 2026-11-06, in lolay/agent-images#21; s7 starts when the owner merges it.
 Branch `claude/youthful-dijkstra-09v7kk` (assigned by the harness), cut
 from `main` at `ecc54c2`, after lolay/agent-images#18, #19 and #20.
 

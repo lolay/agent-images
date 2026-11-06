@@ -8,17 +8,14 @@ Branch `claude/youthful-dijkstra-09v7kk` (assigned by the harness), from `main` 
 - Checked that lolay/agent-images#18 merged; cut the branch from the latest `main`.
 - Wrote the plan (s1 to s8); built s1 to s6 (commits m2.s1 to m2.s6), and the PR draft `plan-gcp-android-kestrel-review.md`.
 
-## Pending: the owner's answer, verbatim
+## Pending
 
-> s1 to s6 are done and pushed. Go on s7: open the PR (draft in
-> plan-gcp-android-kestrel-review.md) and, once you merge it, the first deploy builds
-> the image and boots a smoke VM (about $0.50)? Before s8 you also need the "Agent:
-> Android" environment in claude.ai and the `claude-env-android` secret.
+lolay/agent-images#21 is open, and this session watches it (CI, reviews). The owner
+merges it; the merge starts s7. Before s8 the owner also creates the "Agent: Android"
+environment in claude.ai and the `claude-env-android` secret.
 
 ## Resume
 
-If the answer is go: on a runner, `git rm` the review draft, commit, push, then open the
-PR with the draft's text as the body (REST, not `gh pr create`), and subscribe to it.
 After the merge, watch `cloud-deploy`'s `vm image (android)` job: the Packer build
 (does the build VM's nested KVM boot the emulator?), the smoke VM's boot times in the
 run summary, and the promotion. Then s8 (the session test) once the environment and
