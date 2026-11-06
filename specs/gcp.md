@@ -62,7 +62,7 @@ Each type is four things, declared in `infra/gcp/<type>.env`:
 | Type | Image | Backend and resources | Scratch disk | Standby |
 | --- | --- | --- | --- | --- |
 | `linux` | `agent-linux` (`agent-base` as is) | Cloud Run job, 4 vCPU, 16 GiB | 10 GiB | 0: a standby holds 4 vCPU and 16 GiB, about $270 a month; 1 later if cold starts hurt |
-| `linux-gpu` | `agent-linux-gpu` (`agent-base-gpu` as is) | Cloud Run job, RTX PRO 6000, 20 vCPU, 80 GiB (that GPU's minimum); L4 for cheap tests | 10 GiB now, 100 GiB later | 0: a standby GPU bills the whole time |
+| `linux-gpu` | `agent-linux-gpu` (`linux`'s toolsets on CUDA's devel image, then `gpu`) | Cloud Run job, RTX PRO 6000, 20 vCPU, 80 GiB (that GPU's minimum); an L4 (4 vCPU, 16 GiB) while m3 tests it | 10 GiB now, 100 GiB later | 0: a standby GPU bills the whole time |
 | `gis` | `agent-gis` (toolsets core, native, node, gis: GDAL, PDAL, QGIS from conda-forge) | Cloud Run job, 8 vCPU, 32 GiB (Cloud Run's most memory; gis is bound by memory, not CPU) | 10 GiB now, 100 GiB later | 0: a standby is about $550 a month |
 | `3d-gpu` | `agent-3d-gpu` (from `agent-base-gpu`: COLMAP built for Blackwell, Blender) | Cloud Run job, RTX PRO 6000 | 10 GiB now, 200 GiB (two volumes) later | 0 |
 | `android` | Compute Engine image | Compute Engine VM per session with nested virtualization ([below](#compute-engine-vm-per-session-android-and-the-gpu-fallback)); Cloud Run has no KVM | 100 GB boot disk | 0 |
@@ -344,8 +344,12 @@ Runs only for a push to `main` (or a manual dispatch on `main`), one type at a t
 in a `concurrency` group that queues rather than cancels.
 
 Layer caching through the Actions cache (`cache-to type=gha`), not the registry, so a
-build reads nothing back from GCP. The cache holds 10 GB per repo, so a CUDA image may
-miss and rebuild in full; that costs time, not money. Hosted runners have about 14 GB
+build reads nothing back from GCP. The cache holds 10 GB per repo, shared by every
+type, and CUDA's layers alone are 4 GB, so `-gpu` types build without it (owner,
+2026-11-06): about 12 to 15 minutes from scratch, measured locally for `linux-gpu`,
+and only when something they use changed. The CPU types keep their caches.
+Raising the repo's cache limit ($0.07 per GB-month over 10 GB) would let them
+cache too. Hosted runners have about 14 GB
 of free disk, so GPU builds clear the runner's preinstalled toolchains first, the
 usual step for large images.
 

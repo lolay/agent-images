@@ -1,8 +1,8 @@
 # Plan: m3, the GPU types on GCP
 
 Status: s1 done 2026-11-06 ([infra-ask-m3-gpu.md](infra-ask-m3-gpu.md)). Layout
-decided (owner, 2026-11-06). s2 to s4 done 2026-11-06; s5 in progress (env file
-and bake target done; the deploy's cache waits on the owner).
+decided (owner, 2026-11-06). s2 to s5 done 2026-11-06. Next: open the pull
+request for s2 to s5; its merge starts s6.
 Branch `claude/vigilant-tesla-m2ipbw` (assigned by the harness), from `main` at
 `154787f`.
 
@@ -141,7 +141,7 @@ Vulkan, NVENC, NVDEC, OptiX, naming what's missing. So the first deploy's smoke
 log answers whether Cloud Run gives graphics libraries at all, before any session
 runs. Unit tests in `tests/unit/test_gpu_libs.py`; checked in the rebuilt image.
 
-#### s5 - `linux-gpu` type and its build [deep]
+#### s5 - `linux-gpu` type and its build [deep] (done)
 
 - `infra/gcp/linux-gpu.env` on the L4 (CPU and memory at the L4's minimums or the
   `linux` job's, whichever is larger), `MIN_IDLE=0`.
@@ -154,6 +154,15 @@ runs. Unit tests in `tests/unit/test_gpu_libs.py`; checked in the rebuilt image.
 - Docs: gcp.md "Images" and "Runner types", image-toolsets.md "Types".
 
 This and s2 to s4 are one pull request; its merge deploys `linux-gpu` to the L4.
+
+Done: `infra/gcp/linux-gpu.env` (L4, 4 vCPU, 16 GiB, `EXPECTED_SPAWN_SECONDS=300`
+until s6 measures), the `linux-gpu` bake target (in the default group), and
+`linux-gpu` in the pull request build. `changed-targets.sh` needed no change.
+Disk was a false alarm: about 44 GB free after "Free disk", and the image is
+about 10.8 GB unpacked (CUDA devel 7.1 GB). The Actions cache was the real limit
+(10 GB per repo; CUDA is 4 GB compressed): `-gpu` types build without it (owner),
+about 12 to 15 minutes from scratch, and the CPU types' cache settings are
+unchanged.
 
 #### s6 - First deploy and the session test on an L4 [deep]
 

@@ -51,7 +51,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [linux, gis, orchestrator]
+        target: [linux, linux-gpu, gis, orchestrator]
     steps:
       - uses: actions/checkout@v7.0.1
       # Hosted runners leave about 14 GB free, and agent-gis alone is 9 GB. The
