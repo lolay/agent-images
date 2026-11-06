@@ -230,6 +230,25 @@ class SmokeTests(EntrypointCase):
         self.assertIn("cargo: missing", line)
         self.assertIn("node: node 9.9", line)
 
+    def test_a_failed_check_says_why(self):
+        (self.toolsets / "first.check").write_text("node: echo 'node: not found' >&2; exit 1\n")
+        result = self.run_entrypoint("smoke")
+        line = next(line for line in result.stdout.splitlines() if " toolchains " in line)
+        self.assertIn("node: missing (node: not found)", line)
+
+    def test_checks_can_use_tmpdir_on_an_empty_scratch(self):
+        # Cloud Run mounts scratch empty, and the display toolset's screenshot
+        # check writes with mktemp before the scratch check runs.
+        (self.toolsets / "toolsets.txt").write_text("display\n")
+        (self.toolsets / "display.check").write_text(
+            'screenshot: f="$(mktemp --suffix=.png)" && echo "wrote $f"; rc=$?; rm -f "$f"; exit $rc\n'
+        )
+        self.assertFalse((self.scratch / "tmp").exists())
+        result = self.run_entrypoint("smoke")
+        line = next(line for line in result.stdout.splitlines() if " toolchains " in line)
+        self.assertTrue(line.startswith("smoke: pass toolchains"), line)
+        self.assertIn(f"screenshot: wrote {self.scratch}/tmp/", line)
+
     def test_homebrew_must_be_writable_by_the_session_user(self):
         result = self.run_entrypoint("smoke", FAKE_BREW_PREFIX=str(self.tmp / "missing"))
         line = next(line for line in result.stdout.splitlines() if " homebrew " in line)

@@ -157,7 +157,8 @@ smoke() {
 				if output="$(CHECKPOINT_DISABLE=1 bash -c "$command" 2>&1 </dev/null)"; then
 					versions+=("$label: $(head -n 1 <<<"$output")")
 				else
-					versions+=("$label: missing")
+					# The check's last line says why (a missing proxy, a failed command).
+					versions+=("$label: missing (${output##*$'\n'})")
 					failed=1
 				fi
 			done <"$AGENT_TOOLSETS_DIR/$name.check"
@@ -177,6 +178,11 @@ smoke() {
 }
 
 if [[ "${1:-}" == "smoke" ]]; then
+	# Checks run as sessions do: with TMPDIR and the caches on scratch, which
+	# Cloud Run mounts empty (the display toolset's screenshot check uses mktemp
+	# before the scratch check would have made them). The scratch check still
+	# reports a missing mount.
+	mkdir -p "$TMPDIR" "$XDG_CACHE_HOME" 2>/dev/null || true
 	# The display toolset's checks need the display running, as sessions get it.
 	start_display || true
 	if smoke; then
