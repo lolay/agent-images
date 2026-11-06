@@ -24,8 +24,8 @@ the L4 and starts s6.
 The owner chose to skip the review gate: the full review of `main` covering m1 and
 m2 runs later, and its high findings become steps in this plan.
 
-m2 isn't closed: `android`'s session test was running elsewhere when this was
-written.
+m2 closed on `main` (lolay/agent-images#35), and the branch has `main` merged in,
+with #36's rebuild cadence (`linux-gpu` is `weekly`).
 
 ## Resume
 

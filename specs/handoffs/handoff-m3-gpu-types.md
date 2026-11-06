@@ -1,26 +1,16 @@
 # Handoff: m3, the GPU types on GCP
 
-Written 2026-11-06, while m2's `android` session test was still running. The spec
-is [specs/gcp.md](../gcp.md) (m3 under "Milestones"); m1's and m2's results are in
-its results tables.
+Written 2026-11-06. The spec is [specs/gcp.md](../gcp.md) (m3 under
+"Milestones"); m1's and m2's results are in its results tables.
 
 ## Where we are
 
-m1 (`linux`) and m2's `gis` are done and tested. m2's `android` is built and
-deployed (lolay/agent-images#21, then #28 and #30 for the first deploy), and its
-session test ([tests/sessions/android.md](../../tests/sessions/android.md)) was
-running when this was written. m2 isn't closed until that test is recorded:
-
-- an "m2 `android` results" table in gcp.md, with the emulator boot time against
-  the Linux host's and the decision it was for (`android` stays on GCP, or goes
-  back to the Linux host);
-- the two `android` open items answered or carried (emulator speed under nested
-  virtualization, serial port logging);
-- [plan-gcp-android-kestrel.md](plan-gcp-android-kestrel.md) and
-  [handoff-gcp-android-kestrel.md](handoff-gcp-android-kestrel.md) removed, with
-  anything durable promoted to gcp.md, and
-  [handoff-m2-gis-android.md](handoff-m2-gis-android.md) removed once this one
-  replaces it.
+m1 (`linux`) and m2 (`gis`, `android`) are done and tested; m2 closed in
+lolay/agent-images#35, which kept `android` on GCP (warm emulator boot 6 s, 27 s
+from a disk still restoring, against the Linux host's 9 s). So the Compute Engine
+path is proven, which matters for m3: it's the GPU types' fallback if Cloud Run
+can't render. lolay/agent-images#36 added a rebuild cadence per type (`REBUILD`
+in the env file); the GPU types are `weekly`.
 
 What m3 builds on:
 
@@ -149,7 +139,7 @@ From gcp.md m3 and image-toolsets.md "Types":
 
 ## Review
 
-Pending, after m2 closes: a full codebase review of `main`
-(`personal-codebase-review`), logged in `specs/reviews/`, covering m1 and m2
-together (Gary, 2026-11-05, in [handoff-m2-gis-android.md](handoff-m2-gis-android.md)).
-The session that plans m3 runs it first and folds its high findings into the plan.
+Pending: a full codebase review of `main` (`personal-codebase-review`), logged in
+`specs/reviews/`, covering m1 and m2 together (Gary, 2026-11-05, in m2's handoff).
+Gary chose to plan m3 first (2026-11-06); when the review lands, its high
+findings in m1 or m2 code become steps in m3's plan.

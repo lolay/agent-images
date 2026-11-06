@@ -3,6 +3,10 @@
 #
 #   changed-targets.sh <base> <head>    the targets the diff touches
 #   changed-targets.sh --all            every target
+#   changed-targets.sh --schedule <class>
+#                                       the types whose REBUILD is <class>
+#                                       (nightly or weekly; unset is nightly),
+#                                       and the orchestrator with nightly
 #
 # Prints {"types": [{"type": "linux", "build": true}, ...], "vms": [{"type":
 # "android"}, ...], "orchestrator": bool, "prune": bool}. types are the Cloud
@@ -16,15 +20,22 @@
 set -euo pipefail
 
 all=false
+schedule=""
 if [[ "${1:-}" == "--all" ]]; then
 	all=true
+elif [[ "${1:-}" == "--schedule" ]]; then
+	if (($# != 2)) || [[ ! "$2" =~ ^(nightly|weekly)$ ]]; then
+		printf 'usage: %s --schedule nightly|weekly\n' "$(basename "$0")" >&2
+		exit 2
+	fi
+	schedule="$2"
 elif (($# == 2)); then
 	base="$1" head="$2"
 	if [[ -z "$base" ]] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
 		all=true
 	fi
 else
-	printf 'usage: %s <base> <head> | --all\n' "$(basename "$0")" >&2
+	printf 'usage: %s <base> <head> | --all | --schedule nightly|weekly\n' "$(basename "$0")" >&2
 	exit 2
 fi
 
@@ -35,7 +46,7 @@ mapfile -t types < <(gcp_types)
 
 changed=()
 deleted=()
-if ! $all; then
+if ! $all && [[ -z "$schedule" ]]; then
 	mapfile -t changed < <(git diff --name-only "$base" "$head")
 	mapfile -t deleted < <(git diff --name-only --diff-filter=D "$base" "$head" -- 'infra/gcp/*.env')
 fi
@@ -106,6 +117,27 @@ readonly every_vm=(
 	"images/shared/*" "images/toolsets/install-toolset.sh" "images/toolsets/write-claude-md.sh"
 	"infra/gcp/project.env"
 )
+
+# rebuild_of <type>: the scheduled rebuild it takes (specs/gcp.md, "Rebuild
+# cadence"). Unset is nightly, so a new type is never left off the schedule.
+rebuild_of() {
+	local rebuild
+	rebuild="$(sed -n -E 's/^REBUILD=([a-z]+).*/\1/p' "infra/gcp/$1.env" | tail -n 1)"
+	printf '%s' "${rebuild:-nightly}"
+}
+
+# A scheduled run rebuilds its class's types in full and nothing else; the
+# orchestrator (Claude Code, the hooks) rides the nightly.
+if [[ -n "$schedule" ]]; then
+	jq -n --argjson types "$(for type in "${types[@]}"; do
+		[[ "$(rebuild_of "$type")" == "$schedule" ]] || continue
+		jq -cn --arg type "$type" --arg backend "$(backend_of "$type")" '{type: $type, backend: $backend}'
+	done | jq -cs .)" --argjson orchestrator "$([[ "$schedule" == nightly ]] && echo true || echo false)" '
+		{types: [$types[] | select(.backend == "run") | {type, build: true}],
+		 vms: [$types[] | select(.backend == "compute") | {type}],
+		 orchestrator: $orchestrator, prune: false}'
+	exit 0
+fi
 
 entries=()
 vms=()

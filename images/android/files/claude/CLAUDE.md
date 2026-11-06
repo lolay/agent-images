@@ -25,6 +25,10 @@ needs them (deploys, Terraform plans and applies) runs in the repo's own CI.
 - An emulator (AVD `agent`, x86_64 Google APIs image, KVM-accelerated) boots when
   the VM starts and shows up as `emulator-5554`. Run `agent-emulator wait` before
   `connectedAndroidTest` or anything else that needs a device.
+- The emulator runs the newest API level, which old test libraries can break on:
+  Compose's `ui-test-junit4` pulls in `espresso-core` 3.5.0, which fails on API 37
+  with `NoSuchMethodException: ...InputManager.getInstance`. Pin
+  `androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")` or newer.
 - `agent-emulator status|stop|start` manage it. It starts clean every time and
   saves nothing. For other flags or another AVD, `agent-emulator stop` and run
   `emulator` yourself; keep `-crash-report-mode disabled` (its hang detector

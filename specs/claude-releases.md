@@ -49,11 +49,12 @@ Two smaller wins regardless of the image:
 
 ## Proposal
 
-The automation is for the GCP images, where builds are plain container builds on
-GitHub-hosted runners: an hourly watch from 08:00 to 22:00 Pacific that rebuilds when
-Claude or any other dependency moves, a nightly no-cache build at 04:00, one image
-kept, and build logs and manifests on GitHub. See
-[gcp.md](gcp.md#image-pipeline).
+The automation is for the GCP images: an hourly watch from 08:00 to 22:00 Pacific
+that rebuilds when Claude or any other dependency moves, scheduled no-cache builds,
+one image kept, and build logs and manifests on GitHub. See
+[gcp.md](gcp.md#image-pipeline). Both apply to the fast, cheap types only (`linux`,
+nightly); the costly ones (`gis`, `android`) rebuild weekly and keep upgrading Claude
+at start ([gcp.md](gcp.md#rebuild-cadence)).
 
 The macOS and Linux hosts stay manual: `make build` when you choose, and Claude
 upgrades itself at each VM start as it does today. Two small changes would still help

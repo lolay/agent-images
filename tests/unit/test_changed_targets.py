@@ -195,6 +195,29 @@ class ChangedTargetsTests(unittest.TestCase):
             },
         )
 
+    def test_schedule_unset_is_nightly(self):
+        nightly = self.targets("--schedule", "nightly")
+        self.assertEqual(nightly["types"], [{"type": "linux", "build": True}, {"type": "linux-gpu", "build": True}])
+        self.assertTrue(nightly["orchestrator"])
+        self.assertFalse(nightly["prune"])
+        self.assertEqual(self.targets("--schedule", "weekly"), {"types": [], "vms": [], "orchestrator": False, "prune": False})
+
+    def test_schedule_takes_the_types_class(self):
+        self.write("infra/gcp/linux-gpu.env", "CPU=20\nREBUILD=weekly\n")
+        self.assertEqual(self.targets("--schedule", "nightly")["types"], [{"type": "linux", "build": True}])
+        weekly = self.targets("--schedule", "weekly")
+        self.assertEqual(weekly["types"], [{"type": "linux-gpu", "build": True}])
+        self.assertFalse(weekly["orchestrator"])
+
+    def test_schedule_refuses_an_unknown_class(self):
+        for args in (["--schedule", "monthly"], ["--schedule"], ["--schedule", "weekly", "extra"]):
+            with self.subTest(args=args):
+                result = subprocess.run(
+                    ["bash", str(SCRIPT), *args], cwd=self.repo, capture_output=True, text=True, timeout=30
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("usage", result.stderr)
+
     def test_deleting_a_type_prunes_and_redeploys_the_orchestrator(self):
         self.git("rm", "-q", "infra/gcp/linux-gpu.env")
         self.commit("drop linux-gpu")
@@ -264,6 +287,13 @@ class ComputeTypeTests(ChangedTargetsTests):
         result = self.targets("--all")
         self.assertEqual(result["vms"], self.ANDROID)
         self.assertNotIn("android", [entry["type"] for entry in result["types"]])
+
+    def test_schedule_puts_it_in_vms(self):
+        self.write("infra/gcp/android.env", "BACKEND=compute\nREBUILD=weekly\n")
+        self.assertEqual(
+            self.targets("--schedule", "weekly"), {"types": [], "vms": self.ANDROID, "orchestrator": False, "prune": False}
+        )
+        self.assertEqual(self.targets("--schedule", "nightly")["vms"], [])
 
     # Inherited ones whose fixture now includes android's toolsets.
     def test_a_toolset_no_cloud_type_installs_deploys_nothing(self):

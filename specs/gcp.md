@@ -2,11 +2,12 @@
 
 Status: **m1 (`linux`) done, 2026-11-05**: sessions run on Cloud Run, tested twice
 ([m1 results](#m1-results)). Written 2026-11-04; the foundation is applied
-(`lolay/infrastructure`, `stacks/gcp/agents`). m2 is under way
-([handoffs/handoff-m2-gis-android.md](handoffs/handoff-m2-gis-android.md)): **`gis`
-done, 2026-11-06** ([m2 `gis` results](#m2-gis-results)), and `android` (a Compute
-Engine VM per session) is built and waiting for its first deploy. Recheck
-anything marked preview before building on it.
+(`lolay/infrastructure`, `stacks/gcp/agents`). **m2 done, 2026-11-06**: `gis`
+([m2 `gis` results](#m2-gis-results)) and `android`, a Compute Engine VM per
+session ([m2 `android` results](#m2-android-results)). m3, the GPU types, is under
+way ([handoffs/handoff-m3-gpu-types.md](handoffs/handoff-m3-gpu-types.md)): the
+`gpu` toolset and `linux-gpu` on an L4 are built, waiting for their first deploy.
+Recheck anything marked preview before building on it.
 
 The same model as the Mac and Linux runners, with Google running the hardware: Claude's
 orchestrator calls a hook per queued session, the hook starts one throwaway workload,
@@ -55,7 +56,7 @@ Each type is four things, declared in `infra/gcp/<type>.env`:
 | Part | Per type |
 | --- | --- |
 | Claude environment and its secret | Created in claude.ai; the secret goes in Secret Manager as `claude-env-<type>` |
-| Image | `agent-<type>`, built `FROM` `agent-base` or `agent-base-gpu` plus the type's tools |
+| Image | `agent-<type>`, built `FROM` `agent-base` (Ubuntu, or CUDA's devel image for `-gpu` types: bake target `base-gpu`) plus the type's tools |
 | Backend | A Cloud Run job (`agent-<type>`) with its resources, or a Compute Engine template |
 | Orchestrator settings | `--min-idle`, `--expected-spawn-seconds`, runner flags |
 
@@ -197,10 +198,12 @@ Choices, carried over from [design.md](design.md):
   the same on both; a tag can trail Docker Hub's for a while after it moves.
 - **No secrets in images or sessions** ([secrets.md](secrets.md)). The runner's
   service account gets logging and the two buckets (below) only.
-- **Claude upgrades itself at start until m4.** The plan is no self-update: the watch
-  rebuilds within the hour of a release. Until the watch exists, an image is only as
-  fresh as the last push, so the runner keeps `CLAUDE_UPGRADE=true` (the shared
-  default) and m4 turns it off. The image still installs Claude in its own last layer.
+- **Claude upgrades itself at start, on the weekly types for good.** A `nightly`
+  type ([Rebuild cadence](#rebuild-cadence)) is at most a day behind today, and
+  within the hour once m4's watch rebuilds it on a release; m4 then turns its
+  self-update off. A `weekly` type can be a week behind, so it keeps
+  `CLAUDE_UPGRADE=true` (the shared default): about 6 s per start, against a rebuild
+  that costs up to 45 minutes. The image still installs Claude in its own last layer.
 
 Layer order, slowest-moving first, so a rebuild only redoes what changed:
 
@@ -229,8 +232,8 @@ a lock update from the watch, a change to `images/cloud` or `images/shared`, or 
 revert. A push to `main` runs the deploy workflow; nothing else pushes images or
 updates jobs. Enforced in three places, so one mistake doesn't open it up:
 
-- The deploy workflow triggers on `push` to `main` and `workflow_dispatch`, and its
-  jobs run in a GitHub environment, `production`, whose deployment branch policy
+- The deploy workflow triggers on `push` to `main`, `schedule` (which GitHub runs on
+  the default branch, `main`) and `workflow_dispatch`, and its jobs run in a GitHub environment, `production`, whose deployment branch policy
   allows only `main`.
 - The workload identity provider's attribute condition accepts only this repo's
   numeric id with `ref` `refs/heads/main` and that environment, so a token from any
@@ -251,10 +254,9 @@ matrix. A failed deploy makes the next one redeploy more, never less:
 | --- | --- |
 | `images/shared/**`, `images/toolsets/install-toolset.sh`, `images/toolsets/write-claude-md.sh`, `images/cloud/base/**`, `images/cloud/runner/**`, `images/cloud/entrypoint.sh`, `images/cloud/docker-bake.hcl`, `.dockerignore` | Every runner type |
 | `images/toolsets/<toolset>/**` | The types whose Dockerfiles (or build parents') install that toolset |
-| `images/cloud/base-gpu/**` | Every `-gpu` type (each is built `FROM` it) |
 | `images/cloud/<type>/**`, including its `versions.lock` | That type |
 | `hooks/gcp/**`, `images/cloud/orchestrator/**` | The orchestrator host (new image, then the host restarts its container) |
-| `infra/gcp/<type>.env` (CPU, memory, GPU, timeout, `--min-idle`) | That type's job and orchestrator settings, no image build |
+| `infra/gcp/<type>.env` (CPU, memory, GPU, timeout, `--min-idle`, `REBUILD`) | That type's job and orchestrator settings, no image build |
 | `scripts/cloud/job-spec.sh` | Every type's job, no image build |
 | `images/android/**` (the LXD image's scripts and files, and `gce/`), the toolsets in `images/android/toolsets.txt`, `images/shared/**`, the two toolset scripts | The `android` Compute Engine image: Packer build, smoke VM, then family `agent-android` ([below](#compute-engine-vm-per-session-android-and-the-gpu-fallback)) |
 | `infra/gcp/android.env` | The orchestrator only: the hook reads it at each spawn, from the orchestrator image |
@@ -340,7 +342,7 @@ times a week, Homebrew less.
 
 ### Deploy: build, smoke, promote
 
-Runs only for a push to `main` (or a manual dispatch on `main`), one type at a time
+Runs only on `main`: a push, a scheduled rebuild or a manual dispatch, one type at a time
 in a `concurrency` group that queues rather than cancels.
 
 Layer caching through the Actions cache (`cache-to type=gha`), not the registry, so a
@@ -374,12 +376,48 @@ disk-backed type, while the API's `emptyDir` takes `medium: DISK`. Every job run
 with `maxRetries: 0` and one task: a retried task would come back with a spent work
 order.
 
-### Nightly: 04:00 Pacific, Tuesday through Saturday
+### Rebuild cadence
 
-A scheduled run of the deploy workflow on `main` (scheduled workflows always run on
-the default branch): a no-cache build with `--pull` of the lock on `main`, promoted
-the same way. It catches what the lock can't see (a curl installer), retries a failed
-deploy, and keeps the "track latest" promise even if a check is wrong.
+Not every image is worth rebuilding every night. Each type's `REBUILD` in
+`infra/gcp/<type>.env` puts it on one of two schedules of the deploy workflow, a
+no-cache build promoted the same way as a push's. A type without `REBUILD` is
+`nightly`, so a new one is never left off. `scripts/cloud/changed-targets.sh
+--schedule <class>` lists a class's targets.
+
+| Image | Rebuild cost | `REBUILD` | Claude between builds |
+| --- | --- | --- | --- |
+| `linux` | Minutes; Claude is the last layer | `nightly`: 04:07 Pacific, Tuesday to Saturday, after the weekday's Claude releases | Self-updates until m4's watch |
+| Orchestrator | A minute or two | Rides `nightly` (not a type, so no env file) | Baked in; rebuilt nightly |
+| `gis` | 9 GB, most of the Actions cache's 10 GB; conda-forge moves slowly | `weekly`: 05:37 Pacific, Sunday | Self-updates |
+| `android` | About 45 min of Packer with no layer cache, the disk capture and a smoke VM; about $0.50 in GCP | `weekly` | Self-updates |
+| `linux-gpu`, `3d-gpu` (m3) | About 12 to 15 min from scratch; `-gpu` types build without the Actions cache (CUDA is 4 GB of it) | `weekly` | Self-updates |
+
+The trade is build cost against how fast an image's contents move and what being
+behind costs a session. Claude, the thing that moves most, updates itself at runner
+start on every type, so a week-old `android` or `gis` image still runs today's
+Claude; what a week costs it is apt and Homebrew updates, which a session with
+`sudo` (`android`) or Homebrew (all) can pull when it needs one. Every type still
+rebuilds on any push that touches its inputs ([above](#what-a-push-to-main-deploys)).
+`android` included: a runner fix in `images/shared` reaches every type, not only
+the cheap ones.
+
+A scheduled run catches what the lock can't see (a curl installer), retries a failed
+deploy, and keeps the "track latest" promise even if a check is wrong. Before m4 it's
+the only way apt and Homebrew updates reach an image that nothing has pushed to.
+With m4, the nightly builds `--pull` from the lock on `main`, and the hourly watch
+covers `nightly` types only; a `weekly` type's lock updates on its schedule.
+
+A scheduled run can displace a push run waiting in the deploy's `concurrency` queue
+(GitHub keeps one pending run); the next push covers it, since `plan` diffs against
+the last successful push deploy.
+
+The macOS image (Tart) and the Linux host's LXD image stay manual, `make build` on
+an Xcode or OS release or about monthly; both upgrade Claude at VM start.
+
+Deferred: splitting `android` into a base image (toolsets, SDK, the emulator's
+snapshot) and a thin top (`images/shared`, Claude), so a runner fix doesn't redo
+the SDK. Worth it only if pushes to `images/shared` keep triggering `android`
+builds; the 100 GB disk capture still costs every build.
 
 ### Standbys
 
@@ -756,10 +794,20 @@ Tart issue reports VMs failing to start on a headless `mac2.metal`.
 Cloud Run gives a container no KVM, so `android` runs as a Compute Engine VM per
 session, the cloud version of the Linux host's LXD VMs. The same path is the GPU
 fallback if Cloud Run can't render, and the answer for any type that needs Docker in
-the session or a full GPU desktop. Built in m2
-([handoffs/plan-gcp-android-kestrel.md](handoffs/plan-gcp-android-kestrel.md)); not yet
-deployed.
+the session or a full GPU desktop. Built in m2 (plan:
+`specs/handoffs/plan-gcp-android-kestrel.md`, removed once it was done; in git history
+at `0e34c0f`), deployed and tested 2026-11-06 ([m2 `android` results](#m2-android-results)).
 
+- **Why it builds in GCP:** the other images are containers, built on the GitHub
+  runner and pushed. This one is a Compute Engine disk image, and the build boots
+  the emulator once for its quickboot snapshot, which needs KVM in the VM doing the
+  build. Packer's `googlecompute` builder makes both easy: it boots a VM in the
+  project, provisions it, and saves its disk as the image, in place. Building on the
+  GitHub runner would mean producing a raw 100 GB disk there, then uploading and
+  importing it: slower, more steps to fail, and a hosted runner with about 14 GB
+  free to fit it on.
+  The GitHub job only drives Packer and waits, so the build's cost is the build VM
+  (an `n2-standard-8` for about 45 minutes, about $0.40) plus the smoke VM.
 - **Image:** Packer's `googlecompute` builder (`images/android/gce`), run by the
   deploy on `main`: a build VM with nested virtualization, no external IP (Packer
   reaches it through IAP, tag `packer`) and no service account. `provision.sh`
@@ -859,8 +907,7 @@ deploys found:
   branch, the reaper (Cloud NAT is already there). Done when
   [tests/sessions/android.md](../tests/sessions/android.md) passes, with the emulator
   boot time compared against the Linux host's. Plan:
-  [handoffs/plan-gcp-android-kestrel.md](handoffs/plan-gcp-android-kestrel.md); built,
-  waiting for its first deploy.
+  done 2026-11-06 ([m2 `android` results](#m2-android-results)).
 
 #### m2 `gis` results
 
@@ -879,6 +926,47 @@ with nothing installed during the session. What it found:
 | Not run | The cost line (no price lookup yet) and QGIS desktop (`gis` has no display) |
 | Test fixes | The NDVI red-band offset and floor, noise before the DSM, inclusive `writers.gdal` bounds, a map inset, Overpass's encoding: folded into the test |
 
+#### m2 `android` results
+
+Done 2026-11-06: [lolay/agent-images#21](https://github.com/lolay/agent-images/pull/21)
+(the type), then #23, #26, #28 and #30 for what the first builds found, deployed by
+[run 18](https://github.com/lolay/agent-images/actions/runs/42162644618).
+[tests/sessions/android.md](../tests/sessions/android.md) passed every check on an
+"Agent: Android" session (2026-11-06T05:29Z), with nothing installed in the image during
+the session.
+
+**Recommendation: keep `android` on GCP**, with the Linux host's LXD image (same
+scripts) as the fallback. Everything works end to end; the warm emulator boot beats
+the Linux host's; builds and the Compose UI test ran without trouble; and a VM per
+session needs no host to keep up. What GCP costs that the host doesn't: about $0.40 an
+hour per session (`n2-standard-8`), a cold VM per session (spawn time not measured
+yet), and a 27 s first emulator boot while the disk restores.
+
+The session test:
+
+| Check | Result |
+| --- | --- |
+| VM | Ubuntu 24.04.5, 8 vCPU, 31 GiB, 96 GB disk; passwordless sudo; `$DISPLAY` `:99`; `kvm-ok` passes |
+| Toolchain | OpenJDK 21.0.12.1, platform `android-37.0`, build-tools 37.0.0, NDK 30.0.16248370, emulator 37.2.13.0 |
+| Emulator | Booted before the session started (`agent-emulator wait` 0.25 s); API 37, x86_64 |
+| App | Kotlin and Compose (AGP 9.5.1, Kotlin 2.4.21, Compose BOM 2026.09.00, Gradle 9.8.2): unit test, `assembleDebug` (11.1 MiB APK), Compose UI test on the emulator, install, two taps, screenshot: all pass, no `FATAL EXCEPTION` |
+| Build times | Cold `assembleDebug` 54 s (dependencies already cached by the unit test), warm 19 s after a one-line edit; the Gradle wrapper's first fetch 57 s |
+| Credentials | No unexpected credential names in the environment |
+| Found in the test stack | Compose's `ui-test-junit4` pulls in `espresso-core` 3.5.0, which fails on API 37 (`InputManager.getInstance` is gone); pinning 3.7.0 fixes it. Now a line in the session's `CLAUDE.md` |
+| Not on the VMs | `$AGENT_OUTPUTS` and `$AGENT_DATASETS` (open item below), and the session notice (cost, retire time), which only the Cloud Run hook sends |
+
+What the deploys found:
+
+| Finding | Result |
+| --- | --- |
+| Emulator boot from the snapshot, smoke VM (`n2-standard-8`) | 27.2 s on a fresh VM (its disk still restoring from the image), 6.1 to 6.4 s warm. The Linux host's hosted smoke: about 9 s |
+| Snapshot boot in the Packer build VM | Works under nested KVM on Compute Engine: 43 to 45 s, saving the snapshot |
+| Build time | About 43 min: provisioning 9 to 25 min (Google's regional Ubuntu mirror once served the JDK at 140 kB/s), then up to 30 min creating the 100 GB image (Packer's 5 min default timed out, #28) |
+| Packer in CI | IAP SSH with no external IP works; provisioning has to run from `/` (#23), and the Homebrew installer's progress kept off stderr (#26) |
+| Smoke on Cloud Run | Needed `TMPDIR` before the checks, since scratch is mounted empty (#30); that blocked `linux` and `gis` too, and with them the orchestrator |
+| Smoke VM | `runuser -l` has no `/usr/sbin` on PATH; `kvm-ok` by its full path (#30) |
+| Leftovers | A failed or cancelled Packer build can leave its build disk (and, when cancelled, its VM): delete `packer-*` disks and instances by hand. Don't cancel a build mid-run |
+
 ### m3 - GPU types
 
 - Host to `e2-small`.
@@ -895,9 +983,11 @@ with nothing installed during the session. What it found:
 
 ### m4 - Dependency watch
 
-The lock files, the hourly watch, the lock bot, the nightly rebuild, the cleanup
-policy out of dry run, and manifests; with the watch in place, turn off Claude's
-self-update at start (`CLAUDE_UPGRADE=false`). Independent of the types; it can start
+The lock files, the hourly watch (for `nightly` types), the lock bot, the scheduled
+rebuilds building from the lock, the cleanup policy out of dry run, and manifests;
+with the watch in place, turn off Claude's self-update at start
+(`CLAUDE_UPGRADE=false`) on the `nightly` types only
+([Rebuild cadence](#rebuild-cadence)). The schedules themselves already run. Independent of the types; it can start
 any time after m1.
 
 ## Open items
@@ -907,7 +997,8 @@ any time after m1.
 | Graphics libraries on Cloud Run GPUs | Decides whether a virtual head runs on Cloud Run |
 | Cold start of a multi-GB GPU image | Sets `--expected-spawn-seconds` and whether a standby is worth paying for |
 | Cloud Run GPU quota grant | New projects get a default grant; may need a request for RTX PRO 6000 |
-| Emulator speed under nested virtualization on Compute Engine | Decides whether `android` stays on GCP or on the Linux host; every image build's smoke VM measures it, then m2's session test |
+| `android` spawn time | Not measured: the session test starts once the VM is up. Time a queued session to its first prompt, then set `EXPECTED_SPAWN_SECONDS` (240 now) |
+| Session notice on the `android` VMs | The cost and retire-time notice comes from the Cloud Run session hook; the VMs don't run it yet |
 | Outputs and datasets on the `android` VMs | gcsfuse mounts like the Cloud Run types'; left out of m2, since its test doesn't use them |
 | Serial port logging for the `android` VMs | Their journal reaches Cloud Logging only if `compute.disableSerialPortLogging` isn't enforced; m2's first deploy shows which |
 | Data | Keep data-heavy work next to wherever its data is: cross-cloud egress is about $0.08 to $0.12 per GB |

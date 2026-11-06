@@ -94,6 +94,21 @@ which the wrapper's PATH entry fixes. The doctor still exits 2 there: this
 repo's `make doctor` checks the Linux host (KVM, LXD, `.env`, the runner), none
 of which a cloud session has.
 
+Checked again after #33, in a session that ran the script (224.3 s: core 71.8,
+native 6.0, jvm 5.4, browser 3.0, display 4.5, node 44.0, python 13.1, go 13.3,
+rust 37.5, proto 13.2, terraform 12.6): under Claude Code's own PATH all nine
+linked tools and `terraform` (1.17.1, through the wrapper) ran, and all 32 smoke
+checks passed in the Bash tool's shell. The five runs of the full script so far
+took 166 to 247 s.
+
+Which route reaches which shell: login shells read `/etc/profile.d`,
+interactive shells (`bash -ic`) read the `~/.bashrc` line, and the Bash tool's
+commands get the fragment only through the SessionStart hook, since the shell
+snapshot they start from ends by exporting Claude Code's PATH. A cached report
+from before the hook existed showed it: the `~/.bashrc` line was in place and
+the Bash tool still had Anthropic's PATH. `CLAUDE_ENV_FILE` is set for hooks,
+not in the commands' environment, so its absence there is expected.
+
 246.5 s leaves under a minute of the five-minute budget. A slow day for
 Homebrew's bottles could push a rebuild past it, and then every session pays the
 script until it fits again. If that happens, run the Homebrew toolsets in
