@@ -102,7 +102,8 @@
 - Evidence: the smoke runs on `agent-<type>-next` with the production task timeout (34200 s); toolset checks have no timeouts; the `types` job has no `timeout-minutes`, and cancelling `gcloud … --wait` leaves the execution running. On `linux-gpu` that's an L4.
 - Verified: confirmed.
 - Recommendation: pass `--task-timeout=900s` to the smoke execution and set `timeout-minutes` on the `types` job.
-- Status: open
+- Status: fixed
+- Resolution: lolay/agent-images#48: the smoke execution runs with `--task-timeout=1800s` (deploy.sh `DEPLOY_SMOKE_TASK_TIMEOUT_SEC`; the job has `maxRetries: 0`), the `types` job has `timeout-minutes: 120`, and each smoke test has its own 120 s limit; test_deploy.py pins the flag. Not yet seen in a real deploy (r2)
 
 ## tests
 
@@ -325,6 +326,7 @@
 - Verified: confirmed; the android `*.path` gap is latent (only `gpu` has a `path.txt`). Lowered from medium.
 - Recommendation: move the check runner and the PATH/profile assembly into `images/toolsets/` and use them from the cloud entrypoint and profile, `agent-gce-smoke` and the workflow; keep only KVM and emulator checks bespoke.
 - Status: open
+- Resolution: partly lolay/agent-images#48: one runner, `images/toolsets/toolset-checks.sh` (`agent-toolset-checks`), now serves the cloud entrypoint, `agent-gce-smoke` and the session skill, so android-go's and android-rust's `check.txt` run on the android smoke VM (not yet observed). Still open: the PATH and profile assembly (`images/android/files/profile.sh` hard-codes PATH and ignores `*.path`), and `android-image-smoke.yml`, which still hand-lists its checks; r2.f3 covers the install sites (r2)
 
 ### r1.f28 - Toolset environment is half-migrated: `$JAVA_HOME` is promised but only Android sets it
 
