@@ -1,9 +1,8 @@
 # Plan: m4, binary checks, smoke tests and the versions report
 
-Status: s1 to s3 done 2026-11-06, green on lolay/agent-images#48. s4 running:
-batch 1 committed, batch 2 (proto, terraform, android-go, android-rust) with
-subagents. To resume: check out this branch, read this plan and the PR;
-`images/toolsets/<name>/smoke.sh` present means that toolset's test is written.
+Status: s1 to s4 done 2026-11-06 on lolay/agent-images#48; waiting on its
+`cloud-build` run for proto and terraform in the image, then Gary's review before
+s5. To resume: check out this branch, read this plan and the PR.
 Branch `claude/bold-albattani-fg54u5` (assigned by the harness), from `main` at
 `68115e6`.
 
@@ -279,7 +278,10 @@ leave the branch, promoted to gcp.md, as its last commit.
   `images/toolsets/skills/agent-toolset-checks/SKILL.md`, installed where the
   runner is (the cloud runner Dockerfile, android's provision.sh), not on the Mac
   or the LXD android image. The label was dropped (Gary, 2026-11-06).
-- [ ] s4 (approved 2026-11-06). Batch 1 (native, jvm, node, python, go, rust) committed; each passed
+- [x] s4 (approved 2026-11-06). Batch 1 (native, jvm, node, python, go, rust) passed
   through `agent-toolset-checks smoke` here. Batch 2 (proto, terraform, android-go,
-  android-rust) running.
+  android-rust) is linted only: none of those toolchains is in the session. proto
+  and terraform first run in the PR's linux image; android-go and android-rust on
+  the android smoke VM, at the first deploy from `main`. Review fixes: native's and
+  terraform's failure output, android-go's clang pick under pipefail.
 - [ ] s5
