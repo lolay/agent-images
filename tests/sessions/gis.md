@@ -24,21 +24,27 @@ Search the public Earth Search STAC API
 (`https://earth-search.aws.element84.com/v1`, collection `sentinel-2-l2a`) for the
 least cloudy scene over the box between June and August of last year. Read only the
 box from the red and near-infrared bands, straight from the cloud-optimized GeoTIFFs
-over HTTP (`/vsicurl/` or rasterio windows; don't download whole scenes). Compute
-NDVI, mask clouds and no-data with the scene classification band, and write:
+over HTTP (`/vsicurl/` or rasterio windows; don't download whole scenes). Convert
+digital numbers to reflectance with the scene's offset and scale (from processing
+baseline 04.00 on, reflectance is `(DN - 1000) / 10000`; the item's
+`raster:bands` say so). Over dense irrigated canopy, red can come out at or below
+zero: clamp red reflectance at 0.0001 rather than dropping those pixels, which would
+bias the mean low, and record the share clamped. Compute NDVI, mask clouds and
+no-data with the scene classification band, and write:
 
 - `ndvi.tif`: a cloud-optimized GeoTIFF in the scene's UTM zone, with overviews.
 - `ndvi.png`: a color quicklook.
 
 Pass if every valid value is within -1 to 1 and the box's mean NDVI over cropland is
 above 0.3 (summer, irrigated). Record bytes read over the network against the size of
-the full band files.
+the full band files (GDAL counts them only with `CPL_VSIL_NETWORK_STATS_ENABLED=YES`).
 
 ## 3. Vectors: fields and zonal statistics
 
 Get field polygons for the box from OpenStreetMap (Overpass API: `landuse=farmland`
-and `landuse=orchard`). If Overpass doesn't answer, use a 500 m grid instead and say
-so. Write them as a GeoPackage and as GeoJSON (Polygons and MultiPolygons only), in
+and `landuse=orchard`; send the query with `--data-urlencode`, since
+`overpass-api.de` refuses a raw POST body). If Overpass doesn't answer, use a 500 m
+grid instead and say so. Write them as a GeoPackage and as GeoJSON (Polygons and MultiPolygons only), in
 WGS 84 and in the UTM zone. Compute mean, min, max and standard deviation of NDVI per
 polygon to `fields_ndvi.csv`, and record the five highest and lowest.
 
@@ -49,14 +55,19 @@ trees in it (orchards), using the public index of 3DEP Entwine point tiles
 (`https://raw.githubusercontent.com/hobuinc/usgs-lidar/master/boundaries/resources.geojson`).
 With a PDAL pipeline reading only that square from the EPT:
 
-- classify ground (`filters.smrf`) and write a 1 m DTM and a 1 m DSM (`writers.gdal`);
+- drop noise first (classes 7 and 18, then `filters.outlier`): a few stray returns
+  put the DSM's maximum far above any tree;
+- classify ground (`filters.smrf`) and write a 1 m DTM and a 1 m DSM (`writers.gdal`;
+  its `bounds` are inclusive, so give the upper edge minus half a cell to get exactly
+  500 by 500 cells);
 - compute the canopy height model as DSM minus DTM, `chm.tif`;
 - count trees as local maxima above 2 m with a 2 m minimum spacing, `trees.geojson`
   (Points only);
 - write `hillshade.png` from the DTM (`gdaldem hillshade`).
 
 Pass if the CHM's 99th percentile is plausible for orchard trees (2 to 15 m) and the
-tree count is non-zero. Record points read.
+tree count is non-zero, and the DSM's maximum is within 30 m of the DTM's (no noise
+left). Record points read.
 
 ## 5. QGIS
 
@@ -64,7 +75,8 @@ tree count is non-zero. Record points read.
   for three of the fields, or the hillshade) and compare the result with yours. Pass
   if they agree within rounding.
 - With PyQGIS and `QT_QPA_PLATFORM=offscreen`, render a map of NDVI with the field
-  outlines and tree points on top to `map.png`.
+  outlines and tree points on top to `map.png`, with an inset zoomed to about 50 m of
+  the LiDAR square: at the scene's extent thousands of tree points merge into a block.
 - If `$DISPLAY` is set, open QGIS desktop with the same layers and screenshot the
   display to `qgis-desktop.png`.
 
