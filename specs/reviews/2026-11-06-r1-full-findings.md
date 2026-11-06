@@ -326,7 +326,7 @@
 - Verified: confirmed; the android `*.path` gap is latent (only `gpu` has a `path.txt`). Lowered from medium.
 - Recommendation: move the check runner and the PATH/profile assembly into `images/toolsets/` and use them from the cloud entrypoint and profile, `agent-gce-smoke` and the workflow; keep only KVM and emulator checks bespoke.
 - Status: open
-- Resolution: partly lolay/agent-images#48: one runner, `images/toolsets/toolset-checks.sh` (`agent-toolset-checks`), now serves the cloud entrypoint, `agent-gce-smoke` and the session skill, so android-go's and android-rust's `check.txt` run on the android smoke VM (not yet observed). Still open: the PATH and profile assembly (`images/android/files/profile.sh` hard-codes PATH and ignores `*.path`), and `android-image-smoke.yml`, which still hand-lists its checks; r2.f3 covers the install sites (r2)
+- Resolution: partly lolay/agent-images#48: one runner, `images/toolsets/toolset-checks.sh` (`agent-toolset-checks`), now serves the cloud entrypoint, `agent-gce-smoke` and the session skill, so android-go's and android-rust's `check.txt` run on the android smoke VM (not yet observed). Still open: the PATH and profile assembly (`images/android/files/profile.sh` hard-codes PATH and ignores `*.path`), and `android-image-smoke.yml`, which still hand-lists its checks; r2.f10 covers the install sites (r2)
 
 ### r1.f28 - Toolset environment is half-migrated: `$JAVA_HOME` is promised but only Android sets it
 

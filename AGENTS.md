@@ -29,4 +29,10 @@ parsing, the Anthropic toolset list; `specs/reviews/2026-11-06-r1-full.md`).
 
 A test fake rejects what the real API would reject: a malformed body, a failed
 operation, an unknown flag. A fake that accepts anything lets a broken error path
-pass every test (r1.f10, f11, f14).
+pass every test (r1.f10, f11, f14; r2.f4, an unknown subcommand).
+
+## Tests that can fail
+
+A test for a guard fails when the guard is gone. Before landing one, delete or
+invert the guard and watch the test go red: a test that stays green checks nothing.
+r2 found four that stayed green (r2.f1, f2, f3, f6).
