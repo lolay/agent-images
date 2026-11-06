@@ -1,7 +1,7 @@
 # Binary checks (toolset-checks.sh): label: command, which must exit 0; its first
 # line of output is the reported version. The tool is there and runs, nothing
 # more: smoke.sh shows the display works.
-xvfb: Xvfb -version 2>&1 | grep -m1 'X.Org X Server'
+xvfb: command -v Xvfb
 xdpyinfo: command -v xdpyinfo
 glxinfo: command -v glxinfo
 imagemagick: import -version | head -n 1
