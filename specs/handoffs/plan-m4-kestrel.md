@@ -1,8 +1,10 @@
 # Plan: m4, binary checks, smoke tests and the versions report
 
-Status: approved 2026-11-06 (s1). s1 built and committed: lint and unit tests pass
-in the session; waiting on the draft PR's `cloud-build` run for the loads, the disk
-and the smoke in the images, then Gary's review of s1 before s2.
+Status: approved 2026-11-06 (s1). s1 built, committed and pushed; draft PR
+lolay/agent-images#48 is open for `cloud-build`. Next: read that run (the loads, `df`
+after each, the binary checks and smoke lines per type), fix what it finds, record
+the disk numbers here, then ask Gary to review s1 before starting s2. To resume:
+check out this branch, read this plan and the PR's latest `cloud-build` run.
 Branch `claude/bold-albattani-fg54u5` (assigned by the harness), from `main` at
 `68115e6`.
 
