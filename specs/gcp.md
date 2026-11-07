@@ -1318,7 +1318,7 @@ self-update at start (`CLAUDE_UPGRADE=false`) on the `nightly` types only
 - **The first deploy from the locks** (run 42312876441, `main` at `10f4e44`, PR A):
   `gis` and `linux` built from their locks, passed `-next` in Cloud Run and were
   promoted; the android image built and passed its smoke VM as before. `linux-gpu`
-  builds only (`DEPLOY=false`); its result goes here with s13's.
+  (`DEPLOY=false`) built and pushed from its lock. Every job green.
 - **The watch's `resolve` on a hosted runner** (a throwaway job on PR B's branch,
   run 42314834276): every type resolved in about two minutes and matched its lock
   on `main`, so the apt snapshot held and the decision was "nothing to push". Two
