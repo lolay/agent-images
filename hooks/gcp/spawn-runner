@@ -147,7 +147,7 @@ runner_env() {
 		"RUNNER_LABEL=$label" \
 		"CLAUDE_BASE_DIR=/scratch/workspace" \
 		"CLAUDE_RETIRE_AT=$((now + MAX_RUN_DURATION_SEC - retire_margin))"
-	gcp_runner_settings
+	gcp_runner_settings "$RUNNER_TYPE"
 }
 
 # The API's reason for a failed request or operation, as a retry decision:

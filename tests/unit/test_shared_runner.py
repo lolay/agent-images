@@ -456,7 +456,7 @@ class CloudRunChainTests(EntrypointCase):
         container = json.loads(result.stdout)["template"]["template"]["containers"][0]
         return {item["name"]: item["value"] for item in container["env"]}
 
-    def runner_flags(self, job_env: dict) -> dict:
+    def runner_flags(self, job_env: dict, upgrades: bool = False) -> dict:
         before = int(time.time())
         result = self.run_entrypoint(AGENT_RUNNER_COMMAND=str(self.fake_bin / "agent-runner"), **job_env)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -466,9 +466,18 @@ class CloudRunChainTests(EntrypointCase):
         self.assertLessEqual(abs(retire_at - (before + timeout)), 5)
         self.assertEqual(found["--base-dir"], f"{self.scratch}/workspace")
         self.assertEqual(found["--client-label"], "linux-abc123")
-        # The Linux image has Homebrew on PATH; Claude still updates itself.
-        self.assertIn("update", (self.out / "claude.calls").read_text().splitlines())
+        # linux is nightly, so it runs the Claude Code its lock baked in (m5, D6);
+        # a weekly type updates itself at start.
+        calls = (self.out / "claude.calls").read_text().splitlines()
+        if upgrades:
+            self.assertIn("update", calls)
+        else:
+            self.assertNotIn("update", calls)
         return found
+
+    def test_a_weekly_type_updates_claude_itself(self):
+        env_dir = env_dir_without_runner_keys(self.tmp, "linux", REBUILD="weekly")
+        self.runner_flags(self.job_env(env_dir), upgrades=True)
 
     def test_the_committed_settings_reach_the_runner(self):
         found = self.runner_flags(self.job_env())

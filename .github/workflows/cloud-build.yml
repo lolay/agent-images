@@ -4,29 +4,51 @@
 # `smoke pr`) and a versions report, with no push and no GCP credentials
 # (specs/gcp.md, "Only main deploys"; m4, m5). It has no id-token permission and
 # no environment, so it couldn't get a GCP token if it tried. m5's lock pull
-# requests merge on it.
+# requests merge on it: main's ruleset requires `gate`, whose name stays the
+# same as types come and go (the matrix jobs' names don't).
+#
+# It runs on every pull request, so `gate` always reports; `changes` decides
+# whether the pull request touches anything this checks, and when it doesn't,
+# the rest is skipped and `gate` passes. (A `paths` filter on the trigger would
+# leave a pull request that touches only specs/ waiting forever for `gate`.)
 name: cloud-build
 
 on:
   pull_request:
-    paths:
-      - images/cloud/**
-      - images/android/**
-      - images/shared/**
-      - images/toolsets/**
-      - hooks/gcp/**
-      - infra/gcp/**
-      - scripts/cloud/**
-      - tests/unit/**
-      - .dockerignore
-      - Makefile
-      - .github/workflows/cloud-*.yml
 
 permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      relevant: ${{ steps.diff.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Paths
+        id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        # What this workflow checks: the paths that build, smoke or test a cloud
+        # image, and the workflows that do it.
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "$BASE...$HEAD")"
+          printf '%s\n' "$changed"
+          relevant=false
+          if grep -qE '^(images/(cloud|android|shared|toolsets)/|hooks/gcp/|infra/gcp/|scripts/cloud/|tests/unit/|\.dockerignore$|Makefile$|\.github/workflows/(cloud-[^/]*|lock-watch)\.yml$)' <<<"$changed"; then
+            relevant=true
+          fi
+          echo "relevant=$relevant" | tee -a "$GITHUB_OUTPUT"
+
   check:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -50,6 +72,8 @@ jobs:
   # infra/gcp, as the deploy plans them) and the orchestrator, so a pull request
   # adding a type builds it (make cloud-targets, the list make cloud-ci builds).
   plan:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -121,6 +145,7 @@ jobs:
           name="versions-$TARGET-pr$PR-${COMMIT::12}.md"
           cp "$report" "out/$name"
           echo "name=$name" >>"$GITHUB_OUTPUT"
+          # shellcheck disable=SC2016 # markdown backticks
           { printf 'Pull request #%s at `%s`: what agent-%s would contain.\n\n' "$PR" "$COMMIT" "$TARGET"
             cat "$report"; } >>"$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -130,3 +155,26 @@ jobs:
           path: out/${{ steps.versions.outputs.name }}
           retention-days: 90
           if-no-files-found: error
+
+  # The one check main's ruleset requires. It passes when the pull request
+  # touches nothing this workflow checks, or when `check` and every `build` leg
+  # passed; anything else (a failure, a cancel, a skip after a failed `plan`)
+  # fails it.
+  gate:
+    needs: [changes, check, build]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Gate
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          RELEVANT: ${{ needs.changes.outputs.relevant }}
+          CHECK: ${{ needs.check.result }}
+          BUILD: ${{ needs.build.result }}
+        run: |
+          set -euo pipefail
+          echo "changes=$CHANGES relevant=$RELEVANT check=$CHECK build=$BUILD"
+          [[ "$CHANGES" == success ]] || { echo "::error::changes: $CHANGES"; exit 1; }
+          [[ "$RELEVANT" == true ]] || { echo "Nothing cloud-build checks changed."; exit 0; }
+          [[ "$CHECK" == success && "$BUILD" == success ]] || { echo "::error::check: $CHECK, build: $BUILD"; exit 1; }

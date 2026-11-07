@@ -50,11 +50,15 @@ gcp_rebuild_class() { gcp_type_setting "$1" REBUILD nightly; }
 # that builds but isn't deployed, waiting for its quota).
 gcp_deploys() { [[ "$(gcp_type_setting "$1" DEPLOY true)" != false ]]; }
 
-# gcp_runner_settings: the runner.env settings (images/shared/runners/claude.sh)
-# that the loaded type's env file sets, one KEY=value line each, for both
-# backends: the Cloud Run job's env (scripts/cloud/job-spec.sh) and a compute
-# VM's runner-env metadata (hooks/gcp/spawn-runner). A key the env file doesn't
-# set is left out, so claude.sh's default applies; set but empty means "never".
+# gcp_runner_settings <type>: the runner.env settings
+# (images/shared/runners/claude.sh) for the loaded type, one KEY=value line
+# each, for both backends: the Cloud Run job's env (scripts/cloud/job-spec.sh)
+# and a compute VM's runner-env metadata (hooks/gcp/spawn-runner). A key the env
+# file doesn't set is left out, so claude.sh's default applies; set but empty
+# means "never". A nightly type runs the Claude Code its lock baked in
+# (CLAUDE_UPGRADE=false): the watch moves it within the hour, so a session
+# updating itself would only run something nothing smoked (specs/gcp.md, m5,
+# D6). A weekly type keeps updating itself at start.
 gcp_runner_settings() {
 	local key
 	for key in EXIT_IF_UNUSED_MIN RELEASE_IDLE_SESSION_MIN KILL_SESSION_AFTER_MIN; do
@@ -62,6 +66,9 @@ gcp_runner_settings() {
 			printf 'CLAUDE_%s=%s\n' "$key" "${!key}"
 		fi
 	done
+	if [[ "$(gcp_rebuild_class "$1")" == nightly ]]; then
+		printf 'CLAUDE_UPGRADE=false\n'
+	fi
 }
 
 # gcp_retire_margin <hard stop sec>: print how long before the hard stop (the

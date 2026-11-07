@@ -79,7 +79,7 @@ jq -n \
 	--arg task_timeout "$TASK_TIMEOUT_SEC" \
 	--arg retire_margin "$retire_margin" \
 	--arg notice_tz "${AGENT_NOTICE_TZ:-UTC}" \
-	--arg runner_settings "$(gcp_runner_settings)" \
+	--arg runner_settings "$(gcp_runner_settings "$type")" \
 	'
 	def env_list: to_entries | map({name: .key, value: .value});
 	# KEY=value lines, as gcp_runner_settings prints them.

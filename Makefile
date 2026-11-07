@@ -105,6 +105,12 @@ CLOUD_SCRIPTS := $(wildcard images/cloud/*.sh images/cloud/runner/*.sh images/cl
 # Every Cloud Run type (the BACKEND=run files in infra/gcp) and the orchestrator:
 # what TYPE=all and cloud-ci build, and the pull request check's matrix.
 CLOUD_TARGETS = $(shell scripts/cloud/changed-targets.sh --all | jq -r '.types[].type, "orchestrator"')
+# The workflows that build, check and deploy the cloud images, and the lock
+# watch: what cloud-lint runs actionlint on. actionlint comes through Go's module
+# proxy (checksummed by sum.golang.org), at a version that knows schedules'
+# `timezone`.
+CLOUD_WORKFLOWS := $(wildcard .github/workflows/cloud-*.yml) .github/workflows/lock-watch.yml
+ACTIONLINT_VERSION := v1.7.12
 # TYPE=all builds every type and the orchestrator (CLOUD_TARGETS).
 TYPE ?= linux
 # The orchestrator's Claude Code: an exact version or a channel. Runner types
@@ -322,9 +328,10 @@ cloud-smoke: ## Check a built image's toolset record, then run its binary checks
 	docker run --rm -v /scratch -v /mnt/outputs --tmpfs /mnt/datasets:ro \
 	  agent-$(TYPE):local smoke $(SMOKE)
 
-cloud-lint: ## Lint the cloud scripts and settings, and validate the android Packer template (no writes)
+cloud-lint: ## Lint the cloud scripts, workflows and settings, and validate the android Packer template (no writes; needs Go for actionlint)
 	shellcheck -x $(CLOUD_SCRIPTS)
 	shfmt -d $(CLOUD_SCRIPTS)
+	go run github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION) $(CLOUD_WORKFLOWS)
 	packer init $(ANDROID_GCE_DIR) >/dev/null
 	packer fmt -check -recursive $(ANDROID_GCE_DIR)
 	packer validate -var project_id=check -var zone=check -var network=check -var subnetwork=check \
