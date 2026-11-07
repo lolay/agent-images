@@ -3,9 +3,10 @@
 Status: approved as written (owner, 2026-11-06), D1 to D9 as recommended, and the
 draft PR for s4. Groups 1 to 3 (s1 to s9) done; PR A, lolay/agent-images#54,
 merged as `10f4e44`. Group 4 approved (owner, 2026-11-06): s10 to s12 done on
-branch `claude/m5-lock-watch` (from `main` at `10f4e44`). STOP: your setup (the
-list after s12), then PR B's walkthrough and your go to open it. s13 runs on
-`main` after PR B merges.
+branch `claude/m5-lock-watch` (from `main` at `10f4e44`), opened as PR B,
+lolay/agent-images#56 (owner's go, 2026-11-07). STOP: PR B waits for your setup
+(the list after s12; require `gate` only after the merge) and your review and
+merge. s13 runs on `main` after that.
 
 The design is m5 in [specs/gcp.md](../gcp.md), with "The lock", "Watch", "The lock
 bot", "Rebuild cadence" and "Pinning a dependency" above it. Context:
