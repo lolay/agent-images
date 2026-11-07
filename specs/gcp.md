@@ -1313,6 +1313,21 @@ self-update at start (`CLAUDE_UPGRADE=false`) on the `nightly` types only
 
 - Handoff: [handoffs/handoff-m5-dependency-watch.md](handoffs/handoff-m5-dependency-watch.md).
 
+#### m5 results so far
+
+- **The first deploy from the locks** (run 42312876441, `main` at `10f4e44`, PR A):
+  `gis` and `linux` built from their locks, passed `-next` in Cloud Run and were
+  promoted; the android image built and passed its smoke VM as before. `linux-gpu`
+  builds only (`DEPLOY=false`); its result goes here with s13's.
+- **The watch's `resolve` on a hosted runner** (a throwaway job on PR B's branch,
+  run 42314834276): every type resolved in about two minutes and matched its lock
+  on `main`, so the apt snapshot held and the decision was "nothing to push". Two
+  resolutions an hour apart agreeing is the stability the hourly watch needs.
+- Still to show (s13, on `main`): a lock pull request opened by the bot, merging
+  itself on `gate`, and promoted; a pin with a closed issue in the summary; a red
+  candidate refreshed rather than duplicated; a `linux` session with
+  `CLAUDE_UPGRADE=false`; the cleanup policy's first live run.
+
 ## Open items
 
 | Item | Why |
