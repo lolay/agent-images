@@ -27,12 +27,95 @@ Run's GPU docs on 2026-11-06
    pushes, and nothing else deploys. Remove that line, then run `cloud-deploy`
    with targets `linux-gpu orchestrator`.
 
-3. **Ephemeral disk, later.** `linux-gpu`'s test fits the default 10 GiB. `3d-gpu`
-   (120 renders, COLMAP's dense model, the splat model, PyTorch's caches) wants the
-   planned 200 GiB per instance before s10, not now.
+3. **Ephemeral disk: 100 GiB per instance now, 200 GiB later.** `linux-gpu`'s test
+   fits the default 10 GiB. `gis` and `linux-gpu` are planned at 100 GiB. `3d-gpu`
+   (120 renders, COLMAP's dense model, the splat model, PyTorch's caches) wants 200
+   GiB per instance, as two 100 GiB volumes, before s10; that's a new request when
+   `3d-gpu` is built. The regional quota has to cover the peak too: 4 executions at
+   100 GiB is 400 GiB in `us-central1`, against a 100 GiB default.
 
 4. **Budget.** The project budget alerts at $50, $90 and $100 a month. Check the RTX
    PRO 6000 rate before s8: a day of GPU testing could hit those alerts.
+
+## Google Cloud Support cases
+
+Two quota requests are open for `lolay-agents`. Support (Allen) asked workload
+questions on both; replies drafted 2026-11-08, waiting on Google. The case numbers
+aren't recorded here: they're in Gary's email.
+
+| Case | Quota | Asked for |
+| --- | --- | --- |
+| GPU | `run.googleapis.com/nvidia_l4_gpu_allocation_no_zonal_redundancy` and `run.googleapis.com/nvidia_rtx_pro_6000_gpu_allocation_no_zonal_redundancy`, `us-central1` | 3 of each |
+| Ephemeral disk | Cloud Run ephemeral disk per instance, and the `us-central1` regional total | 100 GiB per instance (Support offered 100; accepted, since 200 is only for `3d-gpu`), 400 GiB regional |
+
+What the replies told Google, so a later request stays consistent:
+
+- Cloud Run Jobs only, one task per execution, one execution per agent session,
+  `MIN_IDLE=0`.
+- Peak 3 GPU executions and 4 disk-using executions, typically 1 or 2. These are
+  estimates: nothing in the repo caps concurrency.
+- Sessions run minutes to a few hours, a few a day on weekdays, capped by
+  `TASK_TIMEOUT_SEC` (9.5 hours), plus a short weekly smoke test per image.
+- Per instance: `gis` 8 vCPU and 32 GiB; L4 4 vCPU and 16 GiB; RTX PRO 6000 20 vCPU
+  and 80 GiB.
+- Needed ongoing. No CE or FSR contacts.
+
+### GPU case reply
+
+> Hi Allen,
+>
+> Thanks. Answers below.
+>
+> 1. Peak concurrency: 3 instances. Typically 1 or 2, and often none.
+> 2. Ephemeral disk: 10 GiB per instance today. Later, 100 GiB on L4 instances and
+>    200 GiB on RTX PRO 6000 instances. That's a separate case I have open.
+> 3. Workload type: Cloud Run Jobs only. Each run is one job execution with one task.
+> 4. Per instance: L4 jobs use 4 vCPU and 16 GiB. RTX PRO 6000 jobs use 20 vCPU and
+>    80 GiB, the minimum for that GPU.
+> 5. GPU: both L4 and RTX PRO 6000, one per instance, without zonal redundancy (jobs
+>    require that). The quotas are `nvidia_l4_gpu_allocation_no_zonal_redundancy` and
+>    `nvidia_rtx_pro_6000_gpu_allocation_no_zonal_redundancy` in us-central1. 3 of
+>    each would cover us.
+> 6. Usage pattern: intermittent bursts. Each execution backs one AI coding agent
+>    session (ML and 3D reconstruction work) that a person starts. We keep no idle
+>    instances (min 0), so GPUs are only allocated while a session runs. Sessions run
+>    from minutes to a few hours, capped at 9.5 hours. There's also a weekly smoke
+>    test of a few minutes per image.
+> 7. Duration: ongoing.
+> 8. No CE or FSR contacts.
+>
+> Thanks,
+> Gary
+
+### Ephemeral disk case reply
+
+> Hi Allen,
+>
+> Thanks. Answers below.
+>
+> 1. Concurrency: up to 4 job executions at once, typically 1 or 2. Each execution
+>    has one task.
+> 2. Yes, Cloud Run Jobs only. No services.
+> 3. 100 GiB per instance works for now. It covers the GIS and GPU job types. Since
+>    each instance would use up to 100 GiB, I'd also need the us-central1 regional
+>    ephemeral disk quota raised to 400 GiB to cover 4 at once. A photogrammetry type
+>    later will want 200 GiB per instance, mounted as two 100 GiB volumes. I'll open
+>    a new request when it's ready.
+> 4. Per instance: GIS jobs use 8 vCPU and 32 GiB. GPU jobs use 4 vCPU and 16 GiB on
+>    L4, or 20 vCPU and 80 GiB on RTX PRO 6000.
+> 5. GPU: none for GIS. The GPU jobs use L4 and RTX PRO 6000, which I've requested in
+>    a separate case.
+> 6. Duration and frequency: each execution is one AI coding agent session that a
+>    person starts, a few a day on weekdays, with no fixed schedule. Sessions
+>    typically run 30 minutes to a few hours, with a hard timeout of 9.5 hours.
+>    There's also a short weekly smoke test per image. The disk is scratch space for
+>    downloads and intermediate rasters and point clouds, and it's discarded when the
+>    execution ends.
+> 7. Duration: ongoing.
+> 8. No CE or FSR contacts.
+>
+> Thanks,
+> Gary
 
 ## claude.ai and Secret Manager (by hand)
 
