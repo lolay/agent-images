@@ -33,8 +33,8 @@ Run's GPU docs on 2026-11-06
    GiB per instance, as two 100 GiB volumes, before s10; that's a new request when
    `3d-gpu` is built. The regional quota has to cover the peak too: 4 executions at
    100 GiB is 400 GiB in `us-central1`, against a 100 GiB default. Regional total
-   approved at 500 GiB on 2026-11-08 (see the cases below); per instance not yet
-   confirmed.
+   approved at 500 GiB on 2026-11-08; per instance still 10 GiB (see the cases
+   below).
 
 4. **Budget.** The project budget alerts at $50, $90 and $100 a month. Check the RTX
    PRO 6000 rate before s8: a day of GPU testing could hit those alerts.
@@ -48,16 +48,25 @@ Gary's email.
 | Case | Quota | Asked for | Status |
 | --- | --- | --- | --- |
 | GPU | `run.googleapis.com/nvidia_l4_gpu_allocation_no_zonal_redundancy` and `run.googleapis.com/nvidia_rtx_pro_6000_gpu_allocation_no_zonal_redundancy`, `us-central1` | 3 of each | Waiting on Google |
-| Ephemeral disk | Cloud Run ephemeral disk per instance, and the `us-central1` regional total | 100 GiB per instance (Support offered 100; accepted, since 200 is only for `3d-gpu`), 400 GiB regional | Regional approved 2026-11-08, per instance unconfirmed |
+| Ephemeral disk | Cloud Run ephemeral disk per instance, and the `us-central1` regional total | 100 GiB per instance (Support offered 100; accepted, since 200 is only for `3d-gpu`), 400 GiB regional | Regional 500 GiB approved 2026-11-08; per instance still 10 GiB, follow-up owed on the case |
 
-Google's approval (Cloud Support, 2026-11-08) names one quota:
-`EphemeralDiskAllocPerProjectRegion` in `us-central1`, adjusted to 536870912000
-bytes, which is 500 GiB, 100 more than asked. It says nothing about the per-instance
-limit. To do: check both in the console (IAM & Admin, Quotas & System Limits,
-Cloud Run Admin API, `us-central1`). If per instance still shows 10 GiB, reply on
-the same case before raising any type's disk above the default; a deploy asking for
-more than the per-instance limit fails. gcp-infrastructure.md still says 10 GiB per
-instance for every type; update it once the per-instance number is known.
+Google's approval (Cloud Support, 2026-11-08) raised only the regional quota.
+Checked 2026-11-08 with `gcloud beta quotas info list --project=lolay-agents
+--service=run.googleapis.com --filter="metric~ephemeral"`:
+
+| Quota ID | Metric | `us-central1` |
+| --- | --- | --- |
+| `EphemeralDiskAllocPerProjectRegion` | `run.googleapis.com/ephemeral_disk_allocation` | 536870912000 bytes (500 GiB) |
+| `MaxPerInstanceEphemeralDiskSizePerProjectRegion` | `run.googleapis.com/max_per_instance_ephemeral_disk` | 10737418240 bytes (10 GiB, the default) |
+
+To do: reply on the same case asking for
+`MaxPerInstanceEphemeralDiskSizePerProjectRegion` at 100 GiB in `us-central1`.
+Until it lands, keep every type's `SCRATCH_GIB` at 10 or below: a deploy asking for
+more than the per-instance limit fails. Once it lands, update gcp-infrastructure.md
+"Storage", which still says 10 GiB per instance for every type.
+
+Cloud Run also requires disk per instance times maximum instances to fit the
+regional total: 500 GiB covers 5 executions at 100 GiB, or two `3d-gpu` at 200.
 
 What the replies told Google, so a later request stays consistent:
 
