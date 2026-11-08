@@ -41,16 +41,16 @@ Run's GPU docs on 2026-11-06
 
 ## Google Cloud Support cases
 
-Two quota requests for `lolay-agents`. Support asked workload questions on
-both; replies sent 2026-11-08. The case numbers aren't recorded here: they're in
-Gary's email.
+Quota requests for `lolay-agents`. Support asked workload questions on the GPU and
+per-instance disk cases; replies sent 2026-11-08.
 
 | Case | Quota | Asked for | Status |
 | --- | --- | --- | --- |
-| GPU | `run.googleapis.com/nvidia_l4_gpu_allocation_no_zonal_redundancy` and `run.googleapis.com/nvidia_rtx_pro_6000_gpu_allocation_no_zonal_redundancy`, `us-central1` | 3 of each | Waiting on Google |
-| Ephemeral disk | Cloud Run ephemeral disk per instance, and the `us-central1` regional total | 100 GiB per instance (Support offered 100; accepted, since 200 is only for `3d-gpu`), 400 GiB regional | Regional 500 GiB approved 2026-11-08 on its own case; per instance still 10 GiB, its case waiting on Google after the reply below |
+| GPU (number not recorded) | `run.googleapis.com/nvidia_l4_gpu_allocation_no_zonal_redundancy` and `run.googleapis.com/nvidia_rtx_pro_6000_gpu_allocation_no_zonal_redundancy`, `us-central1` | 3 of each | Waiting on Google |
+| 77257018 | `EphemeralDiskAllocPerProjectRegion`, `us-central1` | 400 GiB | Approved 2026-11-08 at 500 GiB |
+| 77257019 | `MaxPerInstanceEphemeralDiskSizePerProjectRegion`, `us-central1` | 100 GiB (Support offered 100; accepted, since 200 is only for `3d-gpu`) | Waiting on Google after the reply below |
 
-Google's approval (Cloud Support, 2026-11-08) raised only the regional quota.
+Google's approval on 77257018 (2026-11-08) raised only the regional quota.
 Checked 2026-11-08 with `gcloud beta quotas info list --project=lolay-agents
 --service=run.googleapis.com --filter="metric~ephemeral"`:
 
@@ -59,9 +59,8 @@ Checked 2026-11-08 with `gcloud beta quotas info list --project=lolay-agents
 | `EphemeralDiskAllocPerProjectRegion` | `run.googleapis.com/ephemeral_disk_allocation` | 536870912000 bytes (500 GiB) |
 | `MaxPerInstanceEphemeralDiskSizePerProjectRegion` | `run.googleapis.com/max_per_instance_ephemeral_disk` | 10737418240 bytes (10 GiB, the default) |
 
-The regional and per-instance quotas were separate cases. The per-instance one is
-the case the reply below answered, and it's still waiting on Google; no follow-up is
-owed. Until it lands, keep every type's `SCRATCH_GIB` at 10 or below: a deploy asking for
+The per-instance limit is 77257019, still with Google; no follow-up is owed. Until
+it lands, keep every type's `SCRATCH_GIB` at 10 or below: a deploy asking for
 more than the per-instance limit fails. Once it lands, update gcp-infrastructure.md
 "Storage", which still says 10 GiB per instance for every type.
 
@@ -107,7 +106,7 @@ What the replies told Google, so a later request stays consistent:
 > Thanks,
 > Gary
 
-### Ephemeral disk case reply
+### Ephemeral disk case reply (77257019)
 
 > Hi,
 >
