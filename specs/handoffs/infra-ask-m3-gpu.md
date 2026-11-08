@@ -41,12 +41,14 @@ Run's GPU docs on 2026-11-06
 
 ## Google Cloud Support cases
 
-Quota requests for `lolay-agents`. Support asked workload questions on the GPU and
-per-instance disk cases; replies sent 2026-11-08.
+Quota requests for `lolay-agents`. Gary sees only two cases, 77257018 and 77257019.
+The GPU reply below was drafted, but there's no GPU case of its own: it either went
+on 77257018 (whose approval named only the disk quota) or was never sent. Check
+77257018's original request in the console's quota request history.
 
 | Case | Quota | Asked for | Status |
 | --- | --- | --- | --- |
-| GPU (number not recorded) | `run.googleapis.com/nvidia_l4_gpu_allocation_no_zonal_redundancy` and `run.googleapis.com/nvidia_rtx_pro_6000_gpu_allocation_no_zonal_redundancy`, `us-central1` | 3 of each | Waiting on Google |
+| None found | `NvidiaL4GpuAllocNoZonalRedundancyPerProjectRegion` and `NvidiaRtxPro6000GpuAllocNoZonalRedundancyPerProjectRegion`, `us-central1` | 3 of each | Not granted: both have no value in `us-central1` (checked 2026-11-08) |
 | 77257018 | `EphemeralDiskAllocPerProjectRegion`, `us-central1` | 400 GiB | Approved 2026-11-08 at 500 GiB |
 | 77257019 | `MaxPerInstanceEphemeralDiskSizePerProjectRegion`, `us-central1` | 100 GiB (Support offered 100; accepted, since 200 is only for `3d-gpu`) | Waiting on Google after the reply below |
 
@@ -63,6 +65,13 @@ The per-instance limit is 77257019, still with Google; no follow-up is owed. Unt
 it lands, keep every type's `SCRATCH_GIB` at 10 or below: a deploy asking for
 more than the per-instance limit fails. Once it lands, update gcp-infrastructure.md
 "Storage", which still says 10 GiB per instance for every type.
+
+GPU quotas, checked 2026-11-08 with the same command and
+`--filter="metric~no_zonal_redundancy"`: `us-central1` sits in the default group
+with no value for both, so neither is granted and `linux-gpu` stays `DEPLOY=false`.
+The RTX PRO 6000 quota counts milli GPUs (its display name says "in milli GPU",
+though `metricUnit` is `1`): 3 GPUs is 3000. The L4 quota counts whole GPUs. A
+request for "3" RTX PRO 6000 would grant 0.003 of a GPU.
 
 Cloud Run also requires disk per instance times maximum instances to fit the
 regional total: 500 GiB covers 5 executions at 100 GiB, or two `3d-gpu` at 200.
