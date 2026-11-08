@@ -410,8 +410,10 @@ needs no bypass.
 ### The lock bot
 
 With pull requests, the bot never writes `main`: it writes its own branch and asks,
-and `main`'s ruleset (pull requests required, squash only, no force pushes or
-deletions, no bypass actors) holds for it as for anyone. What's left to guard is
+and `main`'s ruleset (pull requests required with no approvals, squash only, `gate`
+required from GitHub Actions, no force pushes or deletions, no bypass actors) holds
+for it as for anyone. The ruleset is a repository ruleset, created 2026-11-07 with
+m5; before that `main` had no protection, though this section said it did. What's left to guard is
 what it can push to its branch, and that only lands through the required checks:
 
 | Layer | What it stops |
@@ -1323,10 +1325,28 @@ self-update at start (`CLAUDE_UPGRADE=false`) on the `nightly` types only
   run 42314834276): every type resolved in about two minutes and matched its lock
   on `main`, so the apt snapshot held and the decision was "nothing to push". Two
   resolutions an hour apart agreeing is the stability the hourly watch needs.
-- Still to show (s13, on `main`): a lock pull request opened by the bot, merging
-  itself on `gate`, and promoted; a pin with a closed issue in the summary; a red
-  candidate refreshed rather than duplicated; a `linux` session with
-  `CLAUDE_UPGRADE=false`; the cleanup policy's first live run.
+- **PR B's deploy** (run 42425777979, `5bcaada`): `linux` and `gis` jobs rewritten
+  with no image build (only `job-spec.sh` and `hooks/gcp` changed), `-next`
+  passed, promoted; `linux`'s job now sets `CLAUDE_UPGRADE=false`. The
+  orchestrator redeployed with the new `lib.sh`.
+- **The loop, end to end, with no human** (2026-11-08). The first scheduled watch
+  run (run 42431042335; the 16:17 Pacific slot, started 16:43) resolved `linux`,
+  found Homebrew's `fmt` moved (12.2.0 to 12.2.1), and the bot opened #58,
+  `lock(linux): fmt 12.2.1`, with auto-merge on. `cloud-build` built and smoked
+  every type, `gate` passed, #58 merged itself (`27aa776`, the bot as
+  co-author), and the push deploy (run 42432105264) built `linux` from the new
+  lock, passed `-next` and promoted it. Plan's done criterion met, on a Homebrew
+  move rather than a Claude release; the path is the same.
+- **The next run** (run 42433885148; the 17:17 slot, started 17:21) resolved
+  `linux` again, matched `main`, and skipped `propose`: nothing to push.
+- **Schedules run in Pacific time.** Both runs landed in the Pacific slots, so
+  `timezone: America/Los_Angeles` is honored. GitHub started them 4 to 26
+  minutes late, so the hourly cadence is approximate.
+- Still to show: a pin with a closed issue in the summary; a red candidate
+  refreshed rather than duplicated; a `linux` session showing
+  `CLAUDE_UPGRADE=false` and no upgrade at start; the weekly run (Sunday 04:47
+  Pacific) covering `gis` and `linux-gpu`; the cleanup policy's first live run,
+  once `cleanup_policy_dry_run = false` lands in lolay/infrastructure.
 
 ## Open items
 

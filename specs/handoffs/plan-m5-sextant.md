@@ -413,7 +413,12 @@ repo:
 
 PR B opens after a walkthrough. **STOP: PR B waits for your review and merge.**
 
-#### s13 - Verify on `main` `[deep]`
+#### s13 - Verify on `main` `[deep]` (in progress)
+
+First results (2026-11-08) are under m5 in gcp.md: the bot's first lock PR (#58)
+merged itself on `gate` and the deploy promoted `linux`. The rest of the list
+below is still open.
+
 
 - A manual `lock-watch` dispatch opens a pull request, `gate` goes green, it
   merges itself, and the push deploy promotes `linux` from the new lock.
