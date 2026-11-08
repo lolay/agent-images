@@ -253,7 +253,7 @@ brew bzip2 1.0.8
 brew c-ares 1.34.9
 brew ca-certificates 2026-11-05
 brew expat 2.10.0
-brew fmt 12.2.0
+brew fmt 12.2.1
 brew gh 2.103.3
 brew gmp 6.3.0
 brew hdrhistogram_c 0.12.1
