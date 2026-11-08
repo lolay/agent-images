@@ -41,7 +41,7 @@ Run's GPU docs on 2026-11-06
 
 ## Google Cloud Support cases
 
-Two quota requests for `lolay-agents`. Support (Allen) asked workload questions on
+Two quota requests for `lolay-agents`. Support asked workload questions on
 both; replies sent 2026-11-08. The case numbers aren't recorded here: they're in
 Gary's email.
 
@@ -50,7 +50,7 @@ Gary's email.
 | GPU | `run.googleapis.com/nvidia_l4_gpu_allocation_no_zonal_redundancy` and `run.googleapis.com/nvidia_rtx_pro_6000_gpu_allocation_no_zonal_redundancy`, `us-central1` | 3 of each | Waiting on Google |
 | Ephemeral disk | Cloud Run ephemeral disk per instance, and the `us-central1` regional total | 100 GiB per instance (Support offered 100; accepted, since 200 is only for `3d-gpu`), 400 GiB regional | Regional approved 2026-11-08, per instance unconfirmed |
 
-Google's approval (Sha, Cloud Support, 2026-11-08) names one quota:
+Google's approval (Cloud Support, 2026-11-08) names one quota:
 `EphemeralDiskAllocPerProjectRegion` in `us-central1`, adjusted to 536870912000
 bytes, which is 500 GiB, 100 more than asked. It says nothing about the per-instance
 limit. To do: check both in the console (IAM & Admin, Quotas & System Limits,
@@ -73,7 +73,7 @@ What the replies told Google, so a later request stays consistent:
 
 ### GPU case reply
 
-> Hi Allen,
+> Hi,
 >
 > Thanks. Answers below.
 >
@@ -100,7 +100,7 @@ What the replies told Google, so a later request stays consistent:
 
 ### Ephemeral disk case reply
 
-> Hi Allen,
+> Hi,
 >
 > Thanks. Answers below.
 >
