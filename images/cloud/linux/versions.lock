@@ -245,8 +245,8 @@ apt mesa-utils 9.0.0-2
 apt mesa-utils-bin 9.0.0-2
 apt netbase 6.4
 apt ninja-build 1.11.1-2
-apt openjdk-21-jdk-headless 21.0.12.1+1-1~24.04.4
-apt openjdk-21-jre-headless 21.0.12.1+1-1~24.04.4
+apt openjdk-21-jdk-headless 21.0.13.0.3+1-1~24.04.1
+apt openjdk-21-jre-headless 21.0.13.0.3+1-1~24.04.1
 apt openssl 3.0.13-0ubuntu3.16
 apt patch 2.7.6-7build3
 apt perl 5.38.2-3.2ubuntu0.6
@@ -279,7 +279,7 @@ apt xvfb 2:21.1.12-1ubuntu1.9
 apt xz-utils 5.6.1+really5.4.5-1ubuntu0.4
 apt zip 3.0-13ubuntu0.2
 apt zlib1g-dev 1:1.3.dfsg-3.1ubuntu2.3
-apt-snapshot - 20261106T222014Z
+apt-snapshot - 20261109T192211Z
 base - mirror.gcr.io/library/ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
 brew abseil 20260817.0
 brew actionlint 1.7.12
@@ -349,7 +349,7 @@ brew uvwasi 0.0.23
 brew xz 5.8.4
 brew zlib-ng-compat 2.3.3_1
 brew zstd 1.5.7_1
-claude - 2.1.319
+claude - 2.1.321
 release tflint v0.66.0
 rust - 1.99.1
 terraform - 1.17.1
