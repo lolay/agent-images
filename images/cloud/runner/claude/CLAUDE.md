@@ -19,6 +19,10 @@ Install anything else with `brew install` (Homebrew is yours) or the project's
 own package manager. `/etc/agent-images/versions.md` lists everything the image
 holds, with versions; `/agent-toolset-checks` checks that its toolchains work.
 
+`gh` needs no sign-in: Claude Code wraps it so it reaches GitHub through the
+session's own access, as git does, so use it rather than the GitHub connector. If
+it asks for `gh auth login`, the wrapper isn't on PATH: report that, don't sign in.
+
 ## No cloud access
 
 There's no gcloud and no cloud credentials, and none should be added. Work that

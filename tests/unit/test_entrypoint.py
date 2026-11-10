@@ -434,11 +434,11 @@ class ProfileTests(unittest.TestCase):
     def tearDown(self):
         subprocess.run(["rm", "-rf", str(self.toolsets)], check=True)
 
-    def path_after(self, start_path, *, shell="sh", times=1, bash_env=False, then="printf %s \"$PATH\""):
+    def path_after(self, start_path, *, shell="sh", times=1, bash_env=False, then="printf %s \"$PATH\"", **extra):
         script = ". \"$PROFILE\"; " * times + then
         env = {"HOME": self.HOME, "HOMEBREW_PREFIX": self.BREW, "PATH": start_path,
                "PROFILE": str(PROFILE), "AGENT_SCRATCH": "/scratch",
-               "AGENT_TOOLSETS_DIR": str(self.toolsets)}
+               "AGENT_TOOLSETS_DIR": str(self.toolsets), **extra}
         command = [f"/bin/{shell}", "-c", script]
         if bash_env:
             env["BASH_ENV"] = str(PROFILE)
@@ -484,6 +484,32 @@ class ProfileTests(unittest.TestCase):
                 path[:4], [f"{self.HOME}/bin", f"{self.HOME}/.local/bin", "/opt/gis/bin", f"{self.BREW}/opt/rustup/bin"]
             )
             self.assertEqual(len(path), len(set(path)), f"duplicates in {path}")
+
+    def gh_shim(self, *, executable=True):
+        config = self.toolsets / "claude-config"
+        shim = config / "ccr/bin"
+        shim.mkdir(parents=True)
+        (shim / "gh").write_text("#!/bin/sh\n")
+        (shim / "gh").chmod(0o755 if executable else 0o644)
+        return str(config), str(shim)
+
+    def test_claude_code_gh_shim_goes_first(self):
+        # Claude Code's snapshot drops the shim (the env file's case), or the
+        # inherited PATH has it behind Homebrew (BASH_ENV in a nested bash).
+        config, shim = self.gh_shim()
+        for start in ("/usr/bin:/bin", f"{self.BREW}/bin:{shim}:/usr/bin:/bin"):
+            for times in (1, 3):
+                path = self.path_after(start, times=times, CLAUDE_CONFIG_DIR=config)
+                self.assertEqual(path[0], shim)
+                self.assert_front(path[1:])
+            path = self.path_after(start, bash_env=True, CLAUDE_CONFIG_DIR=config)
+            self.assertEqual(path[0], shim)
+
+    def test_no_shim_no_change(self):
+        config, shim = self.gh_shim(executable=False)
+        path = self.path_after("/usr/bin:/bin", CLAUDE_CONFIG_DIR=config)
+        self.assert_front(path)
+        self.assertNotIn(shim, path)
 
     def test_toolset_profiles_are_sourced(self):
         (self.toolsets / "gis.profile.sh").write_text("export GIS_ENV=/opt/gis\n")

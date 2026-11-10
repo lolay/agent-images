@@ -4,7 +4,8 @@
 # so this runs when each session starts or resumes. It:
 #   1. gives the session its own folder in the outputs bucket and exports it as
 #      AGENT_OUTPUTS through $CLAUDE_ENV_FILE (a standby starts before it has a
-#      session, so the entrypoint can't);
+#      session, so the entrypoint can't), and has every Bash tool command
+#      source the image's profile after Claude Code's shell snapshot;
 #   2. prints the session notice: when the session ends and, once the deploy
 #      sets AGENT_COST_USD_PER_HOUR, what the runtime costs;
 #   3. adds a line of storage facts to the session's context.
@@ -18,6 +19,7 @@ set -uo pipefail
 : "${AGENT_OUTPUTS_ROOT:=/mnt/outputs}"
 : "${AGENT_DATASETS:=/mnt/datasets}"
 : "${AGENT_TYPE:=unknown}"
+: "${AGENT_PROFILE:=/etc/profile.d/agent-images.sh}"
 : "${AGENT_NOTICE_TZ:=UTC}"
 : "${CLAUDE_RELEASE_IDLE_SESSION_MIN=60}"
 : "${CLAUDE_KILL_SESSION_AFTER_MIN=480}"
@@ -57,6 +59,12 @@ else
 fi
 if [[ -n "$outputs" && -n "${CLAUDE_ENV_FILE:-}" ]]; then
 	printf 'export AGENT_OUTPUTS=%q\n' "$outputs" >>"$CLAUDE_ENV_FILE"
+fi
+# Claude Code's shell snapshot ends by exporting the PATH it was taken with,
+# which lacks the session's gh shim; CLAUDE_ENV_FILE is sourced after it, so
+# sourcing the profile there puts the shim back in front (profile.sh).
+if [[ -n "${CLAUDE_ENV_FILE:-}" ]] && ! grep -qF "$AGENT_PROFILE" "$CLAUDE_ENV_FILE" 2>/dev/null; then
+	printf '. %q\n' "$AGENT_PROFILE" >>"$CLAUDE_ENV_FILE"
 fi
 
 duration() {
