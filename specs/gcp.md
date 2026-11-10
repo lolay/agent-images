@@ -1344,11 +1344,24 @@ self-update at start (`CLAUDE_UPGRADE=false`) on the `nightly` types only
 - **Schedules run in Pacific time.** Both runs landed in the Pacific slots, so
   `timezone: America/Los_Angeles` is honored. GitHub started them 4 to 26
   minutes late, so the hourly cadence is approximate.
+- **The weekly run** (run 42482181775, Sunday 2026-11-08, 04:51 Pacific) resolved
+  every type and opened #59, `lock(gis, linux-gpu): gis: fmt 12.2.1; linux-gpu:
+  fmt 12.2.1`, which merged itself. So a `weekly` type's lock moves once a week,
+  as designed.
+- **Claude releases through the loop.** In the first three days the bot opened
+  and merged seven lock pull requests (#58, #59, #60, #63, #64, #66, #69), all on
+  green `gate`, none touched by a person. Two were Claude releases: #63
+  (`claude 2.1.321, apt 2 packages`) and #64 (`claude 2.1.322`). That's the
+  milestone's done criterion as written.
+- **One failed run** (run 42673647532, 2026-11-09 10:23 Pacific): `resolve`
+  passed and set its outputs, then the run failed without creating `propose`. The
+  job logs don't say why; the run page's annotations should. The next hourly run
+  proposed the same change (#63), so nothing was lost, but if it recurs it needs
+  a root cause.
 - Still to show: a pin with a closed issue in the summary; a red candidate
   refreshed rather than duplicated; a `linux` session showing
-  `CLAUDE_UPGRADE=false` and no upgrade at start; the weekly run (Sunday 04:47
-  Pacific) covering `gis` and `linux-gpu`; the cleanup policy's first live run,
-  once `cleanup_policy_dry_run = false` lands in lolay/infrastructure.
+  `CLAUDE_UPGRADE=false` and no upgrade at start; the cleanup policy's first
+  live run, once `cleanup_policy_dry_run = false` lands in lolay/infrastructure.
 
 ## Open items
 
