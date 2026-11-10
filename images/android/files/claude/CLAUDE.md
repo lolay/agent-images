@@ -16,6 +16,10 @@ Installed at their latest release when the image was built, so check a repo's
 `/etc/agent-images/versions.md` lists everything the image holds, with versions;
 `/agent-toolset-checks` checks that its toolchains work.
 
+`gh` needs no sign-in: Claude Code wraps it so it reaches GitHub through the
+session's own access, as git does, so use it rather than the GitHub connector. If
+it asks for `gh auth login`, the wrapper isn't on PATH: report that, don't sign in.
+
 There's no gcloud and no cloud credentials, and none should be added. Work that
 needs them (deploys, Terraform plans and applies) runs in the repo's own CI.
 

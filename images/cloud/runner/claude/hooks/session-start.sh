@@ -4,7 +4,8 @@
 # so this runs when each session starts or resumes. It:
 #   1. gives the session its own folder in the outputs bucket and exports it as
 #      AGENT_OUTPUTS through $CLAUDE_ENV_FILE (a standby starts before it has a
-#      session, so the entrypoint can't);
+#      session, so the entrypoint can't; the shared session-profile.sh hook
+#      has the same file source the image's profile);
 #   2. prints the session notice: when the session ends and, once the deploy
 #      sets AGENT_COST_USD_PER_HOUR, what the runtime costs;
 #   3. adds a line of storage facts to the session's context.
