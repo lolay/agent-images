@@ -349,7 +349,7 @@ brew uvwasi 0.0.23
 brew xz 5.8.4
 brew zlib-ng-compat 2.3.3_1
 brew zstd 1.5.7_1
-claude - 2.1.321
+claude - 2.1.322
 release tflint v0.66.0
 rust - 1.99.1
 terraform - 1.17.1
