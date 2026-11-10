@@ -413,7 +413,14 @@ repo:
 
 PR B opens after a walkthrough. **STOP: PR B waits for your review and merge.**
 
-#### s13 - Verify on `main` `[deep]`
+#### s13 - Verify on `main` `[deep]` (in progress)
+
+Results so far are under m5 in gcp.md: seven bot lock PRs merged themselves on
+`gate` by 2026-11-10, two of them Claude releases (#63, #64), and the weekly run
+moved `gis` and `linux-gpu` (#59). Still open: the closed-issue pin, the red
+candidate, a session's `CLAUDE_UPGRADE=false`, the cleanup policy's live run,
+and the cause of one failed watch run (42673647532).
+
 
 - A manual `lock-watch` dispatch opens a pull request, `gate` goes green, it
   merges itself, and the push deploy promotes `linux` from the new lock.
