@@ -13,6 +13,7 @@ from support import REPO, base_env, read_env_file, write_executable
 ENTRYPOINT = REPO / "images/cloud/entrypoint.sh"
 TOOLSET_CHECKS = REPO / "images/toolsets/toolset-checks.sh"
 PROFILE = REPO / "images/cloud/runner/profile.sh"
+GH_SHIM_PROFILE = REPO / "images/shared/profile-gh-shim.sh"
 TOOLCHAINS = (
     "node", "pnpm", "python3", "uv", "go", "cargo", "rustc", "protoc", "buf",
     "grpcurl", "terraform", "tflint", "actionlint", "shellcheck", "mandoc", "java",
@@ -438,7 +439,8 @@ class ProfileTests(unittest.TestCase):
         script = ". \"$PROFILE\"; " * times + then
         env = {"HOME": self.HOME, "HOMEBREW_PREFIX": self.BREW, "PATH": start_path,
                "PROFILE": str(PROFILE), "AGENT_SCRATCH": "/scratch",
-               "AGENT_TOOLSETS_DIR": str(self.toolsets), **extra}
+               "AGENT_TOOLSETS_DIR": str(self.toolsets),
+               "AGENT_GH_SHIM_PROFILE": str(GH_SHIM_PROFILE), **extra}
         command = [f"/bin/{shell}", "-c", script]
         if bash_env:
             env["BASH_ENV"] = str(PROFILE)
