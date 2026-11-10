@@ -38,10 +38,19 @@ for agent_file in "$AGENT_TOOLSETS_DIR"/*.path; do
 		agent_toolset_path="${agent_toolset_path:+$agent_toolset_path:}$agent_dir"
 	done <"$agent_file"
 done
+# Claude Code's agent proxy writes a gh shim into each session's config dir. The
+# shim wraps Homebrew's gh and, when no token is set, sends it through the
+# session's GitHub relay, so it has to come before Homebrew: behind it, the real
+# gh runs signed out. Claude Code puts the shim first in each command's PATH, but
+# its shell snapshot then exports a PATH without it, so this adds it back.
+agent_gh_shim=""
+if [ -n "${CLAUDE_CONFIG_DIR:-}" ] && [ -x "$CLAUDE_CONFIG_DIR/ccr/bin/gh" ]; then
+	agent_gh_shim="$CLAUDE_CONFIG_DIR/ccr/bin"
+fi
 # The front of PATH is always these, in this order, whatever PATH the shell
 # inherited (a session's can lack them, or have them behind /usr/bin); duplicates
 # go. A PATH that already starts with them is left alone.
-agent_path_front="$HOME/bin:$HOME/.local/bin${agent_toolset_path:+:$agent_toolset_path}:$HOMEBREW_PREFIX/opt/rustup/bin:$HOMEBREW_PREFIX/bin:$HOMEBREW_PREFIX/sbin"
+agent_path_front="${agent_gh_shim:+$agent_gh_shim:}$HOME/bin:$HOME/.local/bin${agent_toolset_path:+:$agent_toolset_path}:$HOMEBREW_PREFIX/opt/rustup/bin:$HOMEBREW_PREFIX/bin:$HOMEBREW_PREFIX/sbin"
 case "$PATH" in
 "$agent_path_front" | "$agent_path_front":*) ;;
 *)
@@ -52,7 +61,7 @@ case "$PATH" in
 		END { printf "%s", out }')"
 	;;
 esac
-unset agent_path_front agent_toolset_path agent_file agent_dir
+unset agent_path_front agent_toolset_path agent_file agent_dir agent_gh_shim
 case ":$PATH:" in
 *":$CARGO_HOME/bin:"*) ;;
 *) PATH="$PATH:$CARGO_HOME/bin" ;;

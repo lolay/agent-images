@@ -11,6 +11,8 @@ from support import REPO, base_env
 HOOK = REPO / "images/cloud/runner/claude/hooks/session-start.sh"
 # 2026-11-05T02:00:00Z, 6:00 PM PST on the 4th.
 NOW = 1793844000
+PROFILE = "/etc/profile.d/agent-images.sh"
+SOURCE_PROFILE = f". {PROFILE}\n"
 
 
 class SessionStartTests(unittest.TestCase):
@@ -37,6 +39,7 @@ class SessionStartTests(unittest.TestCase):
             "AGENT_NOTICE_TZ": "America/Los_Angeles",
             "AGENT_NOW": str(NOW),
             "CLAUDE_ENV_FILE": str(self.env_file),
+            "AGENT_PROFILE": PROFILE,
             "CLAUDE_CODE_REMOTE_SESSION_ID": "session_01ABC",
             "CLAUDE_RELEASE_IDLE_SESSION_MIN": "60",
             "CLAUDE_KILL_SESSION_AFTER_MIN": "480",
@@ -61,7 +64,7 @@ class SessionStartTests(unittest.TestCase):
         output = self.run_hook()
         folder = self.outputs / "linux/2026-11-05/session_01ABC"
         self.assertTrue(folder.is_dir())
-        self.assertEqual(self.env_file.read_text(), f"export AGENT_OUTPUTS={folder}\n")
+        self.assertEqual(self.env_file.read_text(), f"export AGENT_OUTPUTS={folder}\n{SOURCE_PROFILE}")
         self.assertEqual(output["hookSpecificOutput"]["hookEventName"], "SessionStart")
         self.assertIn(
             "gs://lolay-agents-outputs/linux/2026-11-05/session_01ABC", self.context(output)
@@ -79,7 +82,7 @@ class SessionStartTests(unittest.TestCase):
         earlier.mkdir(parents=True)
         self.run_hook()
         self.assertFalse((self.outputs / "linux/2026-11-05").exists())
-        self.assertEqual(self.env_file.read_text(), f"export AGENT_OUTPUTS={earlier}\n")
+        self.assertEqual(self.env_file.read_text(), f"export AGENT_OUTPUTS={earlier}\n{SOURCE_PROFILE}")
 
     def test_notice_ends_at_the_session_cap(self):
         output = self.run_hook()
@@ -114,7 +117,13 @@ class SessionStartTests(unittest.TestCase):
         self.outputs.write_text("not a directory")
         output = self.run_hook()
         self.assertIn("is the outputs bucket mounted?", output["systemMessage"])
-        self.assertEqual(self.env_file.read_text(), "")
+        self.assertEqual(self.env_file.read_text(), SOURCE_PROFILE)
+
+    def test_bash_commands_source_the_profile_once(self):
+        # A resumed session runs the hook again on the same env file.
+        self.run_hook()
+        self.run_hook()
+        self.assertEqual(self.env_file.read_text().count(SOURCE_PROFILE), 1)
 
     def test_session_id_is_kept_to_one_path_component(self):
         self.run_hook(CLAUDE_CODE_REMOTE_SESSION_ID="../../etc")
