@@ -63,9 +63,9 @@ Each type is four things, declared in `infra/gcp/<type>.env`:
 | Type | Image | Backend and resources | Scratch disk | Standby |
 | --- | --- | --- | --- | --- |
 | `linux` | `agent-linux` (`agent-base` as is) | Cloud Run job, 4 vCPU, 16 GiB | 10 GiB | 0: a standby holds 4 vCPU and 16 GiB, about $270 a month; 1 later if cold starts hurt |
-| `linux-gpu` | `agent-linux-gpu` (`linux`'s toolsets on CUDA's devel image, then `gpu`) | Cloud Run job, RTX PRO 6000, 20 vCPU, 80 GiB (that GPU's minimum); an L4 (4 vCPU, 16 GiB) while m3 tests it | 10 GiB now, 100 GiB later | 0: a standby GPU bills the whole time |
-| `gis` | `agent-gis` (toolsets core, native, node, gis: GDAL, PDAL, QGIS from conda-forge) | Cloud Run job, 8 vCPU, 32 GiB (Cloud Run's most memory; gis is bound by memory, not CPU) | 10 GiB now, 100 GiB later | 0: a standby is about $550 a month |
-| `3d-gpu` | `agent-3d-gpu` (from `agent-base-gpu`: COLMAP built for Blackwell, Blender) | Cloud Run job, RTX PRO 6000 | 10 GiB now, 200 GiB (two volumes) later | 0 |
+| `linux-gpu` | `agent-linux-gpu` (`linux`'s toolsets on CUDA's devel image, then `gpu`) | Cloud Run job, RTX PRO 6000, 20 vCPU, 80 GiB (that GPU's minimum); an L4 (4 vCPU, 16 GiB) while m3 tests it | 10 GiB while m3 tests the L4, 100 GiB with the RTX PRO 6000 | 0: a standby GPU bills the whole time |
+| `gis` | `agent-gis` (toolsets core, native, node, gis: GDAL, PDAL, QGIS from conda-forge) | Cloud Run job, 8 vCPU, 32 GiB (Cloud Run's most memory; gis is bound by memory, not CPU) | 100 GiB | 0: a standby is about $550 a month |
+| `3d-gpu` | `agent-3d-gpu` (from `agent-base-gpu`: COLMAP built for Blackwell, Blender) | Cloud Run job, RTX PRO 6000 | 200 GiB (two volumes) | 0 |
 | `android` | Compute Engine image | Compute Engine VM per session with nested virtualization ([below](#compute-engine-vm-per-session-android-and-the-gpu-fallback)); Cloud Run has no KVM | 100 GB boot disk | 0 |
 | `mac` | Not on GCP | agent-images' Macs (Tart), as today: Mac development, iOS included | The VM's disk | Per host |
 
@@ -727,10 +727,12 @@ don't care which type they're on:
   `/scratch/workspace`), downloads, intermediate files, builds. Without it, Cloud
   Run's filesystem is in memory, and every file written takes memory from the
   session. Each volume holds 1 to 100 GiB, up to ten per instance, and it's gone when
-  the execution ends, crash included. Every type gets 10 GiB for now, the default
-  quota per instance, which needs no approval; the region's 100 GiB is granted on
-  first use. The larger GIS and GPU sizes above need a quota increase
-  (`lolay/infrastructure`). `TMPDIR` and the caches (`XDG_CACHE_HOME`, pip, Homebrew)
+  the execution ends, crash included. `lolay-agents` may give an instance up to
+  200 GiB (`MaxPerInstanceEphemeralDiskSizePerProjectRegion` in `us-central1`, raised
+  from the default 10 GiB on 2026-11-10), so every size above fits. All instances in
+  the region share 500 GiB (`EphemeralDiskAllocPerProjectRegion`): a `gis` and a
+  `3d-gpu` session at once plus a handful of `linux` ones. A session that would go
+  past it doesn't start. `TMPDIR` and the caches (`XDG_CACHE_HOME`, pip, Homebrew)
   point at scratch too.
 - **Outputs** is for anything worth keeping that's too big for git: dense point
   clouds, trained models, renders, rasters. Each session writes under

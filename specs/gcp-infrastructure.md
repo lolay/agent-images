@@ -79,11 +79,15 @@ no Terraform change and no key lands in state.
   30 days, no versioning. Sessions mount it read-write with Cloud Storage FUSE.
 - Bucket `lolay-agents-datasets`: reusable inputs Gary adds by hand. Uniform access,
   no public access, no lifecycle rule. Sessions mount it read-only.
-- Cloud Run ephemeral disk quota: 10 GiB per instance for every type for now, the
-  default grant, which needs no approval. The region's 100 GiB default is granted when
-  a job first uses scratch (until then the granted value reads 0, so Terraform doesn't
-  manage the regional preference). `gis`, `linux-gpu` and `3d-gpu` need more (100, 100
-  and 200 GiB per instance), asked for when those types arrive.
+- Cloud Run ephemeral disk quota, two quota preferences in `us-central1`:
+  - `run-ephemeral-disk-per-instance-us-central1`
+    (`MaxPerInstanceEphemeralDiskSizePerProjectRegion`): 200 GiB, granted by Google on
+    2026-11-10. It covers `gis` and `linux-gpu` (100 GiB) and `3d-gpu` (200 GiB). Its
+    preferred value must be 200 GiB too (`ephemeral_disk_per_instance_gib`): an apply
+    that asks for less can take the grant back down.
+  - `run-ephemeral-disk-us-central1` (`EphemeralDiskAllocPerProjectRegion`): 500 GiB
+    across every instance in the region, room for a `gis` and a `3d-gpu` session at
+    once plus a handful of `linux` ones.
 
 ### Network and the orchestrator host
 
