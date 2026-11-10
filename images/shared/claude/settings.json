@@ -1,5 +1,16 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "\"$CLAUDE_CONFIG_DIR/hooks/session-profile.sh\""
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

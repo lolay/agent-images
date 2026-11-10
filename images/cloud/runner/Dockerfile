@@ -10,7 +10,7 @@
 FROM agent-tools AS runner
 
 # The runner (images/shared), the Claude Code settings the runner seeds into
-# every session (the shared Stop hook plus the cloud SessionStart hook), the
+# every session (the shared hooks plus the cloud SessionStart hook), the
 # cloud CLAUDE.md, the login environment, the entrypoint and the runner of the
 # toolsets' binary checks and smoke tests (on PATH, so sessions can run them too).
 RUN --mount=type=bind,source=images/shared,target=/tmp/images/shared \
@@ -34,10 +34,11 @@ for hook in "$shared"/claude/hooks/*.sh "$runner"/claude/hooks/*.sh; do
 	[ -e "$hook" ] || continue
 	install -m 755 "$hook" "$HOME/.claude/hooks/$(basename "$hook")"
 done
-jq -s '.[0] * .[1]' "$shared/claude/settings.json" "$runner/claude/settings.json" >"$HOME/.claude/settings.json"
+bash "$runner/merge-settings.sh" "$shared/claude/settings.json" "$runner/claude/settings.json" >"$HOME/.claude/settings.json"
 # The cloud CLAUDE.md, with a line per toolset the type installed.
 bash /tmp/images/write-claude-md.sh "$runner/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
 sudo install -m 644 "$runner/profile.sh" /etc/profile.d/agent-images.sh
+sudo install -D -m 644 "$shared/profile-gh-shim.sh" /etc/agent-images/profile-gh-shim.sh
 # Interactive shells that aren't login shells read only ~/.bashrc, so it sources
 # the profile too, above Ubuntu's early return for non-interactive shells.
 { printf '# agent-images: PATH, scratch and caches (images/cloud/runner/profile.sh)\n. /etc/profile.d/agent-images.sh\n\n'; cat "$HOME/.bashrc"; } >"$HOME/.bashrc.new"
