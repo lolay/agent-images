@@ -22,59 +22,42 @@ Run's GPU docs on 2026-11-06
    - `run.googleapis.com/nvidia_l4_gpu_allocation_no_zonal_redundancy`: 1 to 3,
      for s6.
    - `run.googleapis.com/nvidia_rtx_pro_6000_gpu_allocation_no_zonal_redundancy`:
-     1 to 3, for s8 and `3d-gpu`.
+     1 to 3, for s8 and `3d-gpu`. This one counts milli GPUs, so 3 GPUs is 3000
+     (below).
    Until it lands, `linux-gpu.env` has `DEPLOY=false`: the image builds and
    pushes, and nothing else deploys. Remove that line, then run `cloud-deploy`
    with targets `linux-gpu orchestrator`.
 
-3. **Ephemeral disk: 100 GiB per instance now, 200 GiB later.** `linux-gpu`'s test
-   fits the default 10 GiB. `gis` and `linux-gpu` are planned at 100 GiB. `3d-gpu`
-   (120 renders, COLMAP's dense model, the splat model, PyTorch's caches) wants 200
-   GiB per instance, as two 100 GiB volumes, before s10; that's a new request when
-   `3d-gpu` is built. The regional quota has to cover the peak too: 4 executions at
-   100 GiB is 400 GiB in `us-central1`, against a 100 GiB default. Regional total
-   approved at 500 GiB on 2026-11-08; per instance still 10 GiB (see the cases
-   below).
+3. **Ephemeral disk: done.** Google granted 200 GiB per instance (77257019,
+   2026-11-10) and 500 GiB across `us-central1` (77257018, 2026-11-08), which
+   covers `3d-gpu`'s 200 GiB too. specs/gcp.md "Storage" and gcp-infrastructure.md
+   record both; `gis` runs at 100 GiB since lolay/agent-images#65.
 
 4. **Budget.** The project budget alerts at $50, $90 and $100 a month. Check the RTX
    PRO 6000 rate before s8: a day of GPU testing could hit those alerts.
 
 ## Google Cloud Support cases
 
-Quota requests for `lolay-agents`. Gary sees only two cases, 77257018 and 77257019.
-The GPU reply below was drafted, but there's no GPU case of its own: it either went
-on 77257018 (whose approval named only the disk quota) or was never sent. Check
-77257018's original request in the console's quota request history.
-
-| Case | Quota | Asked for | Status |
-| --- | --- | --- | --- |
-| None found | `NvidiaL4GpuAllocNoZonalRedundancyPerProjectRegion` and `NvidiaRtxPro6000GpuAllocNoZonalRedundancyPerProjectRegion`, `us-central1` | 3 of each | Not granted: both have no value in `us-central1` (checked 2026-11-08) |
-| 77257018 | `EphemeralDiskAllocPerProjectRegion`, `us-central1` | 400 GiB | Approved 2026-11-08 at 500 GiB |
-| 77257019 | `MaxPerInstanceEphemeralDiskSizePerProjectRegion`, `us-central1` | 100 GiB (Support offered 100; accepted, since 200 is only for `3d-gpu`) | Waiting on Google after the reply below |
-
-Google's approval on 77257018 (2026-11-08) raised only the regional quota.
-Checked 2026-11-08 with `gcloud beta quotas info list --project=lolay-agents
---service=run.googleapis.com --filter="metric~ephemeral"`:
-
-| Quota ID | Metric | `us-central1` |
+| Case | Quota (`us-central1`) | Status |
 | --- | --- | --- |
-| `EphemeralDiskAllocPerProjectRegion` | `run.googleapis.com/ephemeral_disk_allocation` | 536870912000 bytes (500 GiB) |
-| `MaxPerInstanceEphemeralDiskSizePerProjectRegion` | `run.googleapis.com/max_per_instance_ephemeral_disk` | 10737418240 bytes (10 GiB, the default) |
+| 77257018 | `EphemeralDiskAllocPerProjectRegion` | Granted 500 GiB, 2026-11-08 |
+| 77257019 | `MaxPerInstanceEphemeralDiskSizePerProjectRegion` | Granted 200 GiB, 2026-11-10 |
+| None | `NvidiaL4GpuAllocNoZonalRedundancyPerProjectRegion`, `NvidiaRtxPro6000GpuAllocNoZonalRedundancyPerProjectRegion` | Not granted, no case found |
 
-The per-instance limit is 77257019, still with Google; no follow-up is owed. Until
-it lands, keep every type's `SCRATCH_GIB` at 10 or below: a deploy asking for
-more than the per-instance limit fails. Once it lands, update gcp-infrastructure.md
-"Storage", which still says 10 GiB per instance for every type.
+**GPU: still open.** Checked 2026-11-08 with `gcloud beta quotas info list
+--project=lolay-agents --service=run.googleapis.com
+--filter="metric~no_zonal_redundancy"`: `us-central1` sits in the default group with
+no value for both, so neither is granted and `linux-gpu` stays `DEPLOY=false`. Gary
+sees only the two disk cases, so the GPU reply below either went on 77257018 (whose
+approval named only the disk) or was never sent. To do: check 77257018's original
+request in the console's quota request history; if the GPU quotas are on it, reply
+there, otherwise file a new request.
 
-GPU quotas, checked 2026-11-08 with the same command and
-`--filter="metric~no_zonal_redundancy"`: `us-central1` sits in the default group
-with no value for both, so neither is granted and `linux-gpu` stays `DEPLOY=false`.
 The RTX PRO 6000 quota counts milli GPUs (its display name says "in milli GPU",
 though `metricUnit` is `1`): 3 GPUs is 3000. The L4 quota counts whole GPUs. A
-request for "3" RTX PRO 6000 would grant 0.003 of a GPU.
-
-Cloud Run also requires disk per instance times maximum instances to fit the
-regional total: 500 GiB covers 5 executions at 100 GiB, or two `3d-gpu` at 200.
+request for "3" RTX PRO 6000 would grant 0.003 of a GPU. gcp-infrastructure.md "GPU
+quota" says "start at 1 or 2" without the unit; lolay/infrastructure's preference,
+if it has one, needs the same check.
 
 What the replies told Google, so a later request stays consistent:
 
@@ -88,57 +71,28 @@ What the replies told Google, so a later request stays consistent:
   and 80 GiB.
 - Needed ongoing. No CE or FSR contacts.
 
-### GPU case reply
+### GPU case reply (draft, not confirmed sent)
 
 > Hi,
 >
 > Thanks. Answers below.
 >
 > 1. Peak concurrency: 3 instances. Typically 1 or 2, and often none.
-> 2. Ephemeral disk: 10 GiB per instance today. Later, 100 GiB on L4 instances and
->    200 GiB on RTX PRO 6000 instances. That's a separate case I have open.
+> 2. Ephemeral disk: already granted (200 GiB per instance, 500 GiB regional) in
+>    cases 77257018 and 77257019.
 > 3. Workload type: Cloud Run Jobs only. Each run is one job execution with one task.
 > 4. Per instance: L4 jobs use 4 vCPU and 16 GiB. RTX PRO 6000 jobs use 20 vCPU and
 >    80 GiB, the minimum for that GPU.
 > 5. GPU: both L4 and RTX PRO 6000, one per instance, without zonal redundancy (jobs
 >    require that). The quotas are `nvidia_l4_gpu_allocation_no_zonal_redundancy` and
 >    `nvidia_rtx_pro_6000_gpu_allocation_no_zonal_redundancy` in us-central1. 3 of
->    each would cover us.
+>    each would cover us: 3 for L4, and 3000 for the RTX PRO 6000 quota, which
+>    counts milli GPUs.
 > 6. Usage pattern: intermittent bursts. Each execution backs one AI coding agent
 >    session (ML and 3D reconstruction work) that a person starts. We keep no idle
 >    instances (min 0), so GPUs are only allocated while a session runs. Sessions run
 >    from minutes to a few hours, capped at 9.5 hours. There's also a weekly smoke
 >    test of a few minutes per image.
-> 7. Duration: ongoing.
-> 8. No CE or FSR contacts.
->
-> Thanks,
-> Gary
-
-### Ephemeral disk case reply (77257019)
-
-> Hi,
->
-> Thanks. Answers below.
->
-> 1. Concurrency: up to 4 job executions at once, typically 1 or 2. Each execution
->    has one task.
-> 2. Yes, Cloud Run Jobs only. No services.
-> 3. 100 GiB per instance works for now. It covers the GIS and GPU job types. Since
->    each instance would use up to 100 GiB, I'd also need the us-central1 regional
->    ephemeral disk quota raised to 400 GiB to cover 4 at once. A photogrammetry type
->    later will want 200 GiB per instance, mounted as two 100 GiB volumes. I'll open
->    a new request when it's ready.
-> 4. Per instance: GIS jobs use 8 vCPU and 32 GiB. GPU jobs use 4 vCPU and 16 GiB on
->    L4, or 20 vCPU and 80 GiB on RTX PRO 6000.
-> 5. GPU: none for GIS. The GPU jobs use L4 and RTX PRO 6000, which I've requested in
->    a separate case.
-> 6. Duration and frequency: each execution is one AI coding agent session that a
->    person starts, a few a day on weekdays, with no fixed schedule. Sessions
->    typically run 30 minutes to a few hours, with a hard timeout of 9.5 hours.
->    There's also a short weekly smoke test per image. The disk is scratch space for
->    downloads and intermediate rasters and point clouds, and it's discarded when the
->    execution ends.
 > 7. Duration: ongoing.
 > 8. No CE or FSR contacts.
 >
