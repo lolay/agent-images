@@ -18,3 +18,9 @@ for agent_file in /etc/agent-images/toolsets/*.profile.sh; do
 	[ -f "$agent_file" ] && . "$agent_file"
 done
 unset agent_file
+# Last, so Homebrew above doesn't hide it: Claude Code's gh shim goes in front
+# of everything (images/shared/profile-gh-shim.sh).
+agent_file="${AGENT_GH_SHIM_PROFILE:-/etc/agent-images/profile-gh-shim.sh}"
+# shellcheck source=/dev/null
+[ -f "$agent_file" ] && . "$agent_file"
+unset agent_file

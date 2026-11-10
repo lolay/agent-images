@@ -48,6 +48,7 @@ for hook in "$STAGING_DIR"/claude/hooks/*.sh; do
 done
 
 sudo install -m 644 "$STAGING_DIR/profile.sh" /etc/profile.d/agent-images.sh
+sudo install -D -m 644 "$STAGING_DIR/profile-gh-shim.sh" /etc/agent-images/profile-gh-shim.sh
 
 for template in "$STAGING_DIR"/agent-runner*.service "$STAGING_DIR"/agent-runner*.path "$STAGING_DIR"/agent-runner*.timer \
 	"$STAGING_DIR"/agent-xvfb.service; do
