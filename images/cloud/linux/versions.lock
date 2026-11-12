@@ -302,7 +302,7 @@ brew grpcurl 1.9.4
 brew hdrhistogram_c 0.12.1
 brew icu4c@79 79.1
 brew keyutils 1.6.3
-brew krb5 1.22.2_2
+brew krb5 1.22.3
 brew libedit 20260512-3.1
 brew libevent 2.1.13_1
 brew libffi 3.8.0
@@ -353,4 +353,4 @@ brew zstd 1.5.7_1
 claude - 2.1.322
 release tflint v0.66.0
 rust - 1.99.1
-terraform - 1.17.1
+terraform - 1.17.2
