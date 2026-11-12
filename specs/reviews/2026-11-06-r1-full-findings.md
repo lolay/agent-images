@@ -151,6 +151,7 @@
 - Verified: the path filter covers every source the tests exercise, so every PR touching tested code runs them; the gap is direct pushes and the help text. Lowered from medium; fix → decision.
 - Recommendation: fix the help text; decide whether `cloud-deploy` runs `make cloud-test` first (about 75 s) and whether `cloud-build`'s `check` job drops its path filter so it can be required.
 - Status: open
+- Resolution: partly overtaken by lolay/agent-images#54 and #71: cloud-build now runs on every pull request and its `gate` is what main's ruleset requires. Still open (r3): `make test`'s help (Makefile:199) still says it runs helper unit tests, the deploy has no test step, and no decision is recorded
 
 ### r1.f13 - Tart and LXD host runner scripts have no tests
 
@@ -198,6 +199,7 @@
 - Verified: each workflow matches the template it validates, so nothing fails today. Lowered from medium.
 - Recommendation: move everything to 1.16.2 and keep the version in one file all three workflows read.
 - Status: open
+- Resolution: partly lolay/agent-images#61 (Renovate): ci.yml, cloud-build.yml and cloud-deploy.yml all install 1.16.2. Still open (r3): the version is still written in three workflows, and README.md:79,89, `images/macos/plugins.pkr.hcl:2` and `triage.yaml:95` still say 1.16.1 (README.md:89, about ci.yml, is now wrong)
 
 ### r1.f17 - shellcheck and shfmt lint the same scripts at two versions
 
@@ -220,6 +222,7 @@
 - Verified: no rationale recorded anywhere. Not verified: the CUDA 26.04 tag list.
 - Recommendation: record the constraint beside `ARG BASE_IMAGE` and in gcp.md's choices, with what lifts it; decide separately whether the orchestrator, GCE and LXD images follow.
 - Status: open
+- Resolution: partly lolay/agent-images#79: the CUDA reason is recorded for the Actions runners only (`.github/renovate.json`'s github-runners rule). Still open (r3): nothing beside docker-bake.hcl's BASE_IMAGE or in gcp.md says why the images stay on 24.04
 
 ## contracts
 
@@ -255,7 +258,8 @@
 - Evidence: the entrypoint copies `CLAUDE_UPGRADE`, `CLAUDE_USE_GIT_PROXY` and five more into runner.env if set, but nothing sets them: the job's env is a fixed list, the hook overrides only the secret and label, and no env-file key maps to them. The deploy always resolves `latest`. gcp.md:472's pin procedure ("set the runner's `CLAUDE_UPGRADE=false`") has nothing behind it.
 - Verified: confirmed; the pin table is framed around m4's lock, not built yet. Lowered from medium. Because of r1.f1, an image-level pin would hold on Linux today.
 - Recommendation: define the runner settings an env file may carry (with r1.f19's helper), add a `CLAUDE_VERSION` input to the deploy, and drop pass-through names outside that contract; or leave it to m4 and say so in gcp.md.
-- Status: open
+- Status: fixed
+- Resolution: m5, lolay/agent-images#54 and #56 (D6): nightly types run the Claude their lock names (`CLAUDE_VERSION` in docker-bake.hcl, resolved by lock.sh) with `CLAUDE_UPGRADE=false` from `gcp_runner_settings`, and gcp.md:609 describes what exists, including that a weekly type can't pin (r3). Left over, not this finding: entrypoint.sh:232-235 passes through runner.env names nothing sets
 
 ### r1.f22 - A missing key in a type's env file retries forever instead of failing
 
@@ -326,7 +330,7 @@
 - Verified: confirmed; the android `*.path` gap is latent (only `gpu` has a `path.txt`). Lowered from medium.
 - Recommendation: move the check runner and the PATH/profile assembly into `images/toolsets/` and use them from the cloud entrypoint and profile, `agent-gce-smoke` and the workflow; keep only KVM and emulator checks bespoke.
 - Status: open
-- Resolution: partly lolay/agent-images#48: one runner, `images/toolsets/toolset-checks.sh` (`agent-toolset-checks`), now serves the cloud entrypoint, `agent-gce-smoke` and the session skill, so android-go's and android-rust's `check.txt` run on the android smoke VM (not yet observed). Still open: the PATH and profile assembly (`images/android/files/profile.sh` hard-codes PATH and ignores `*.path`), and `android-image-smoke.yml`, which still hand-lists its checks; r2.f10 covers the install sites (r2)
+- Resolution: partly lolay/agent-images#48: one runner, `images/toolsets/toolset-checks.sh` (`agent-toolset-checks`), serves the cloud entrypoint, `agent-gce-smoke` and the session skill (r2); #52 moved the android install sites into install-packages.sh (r2.f10). Still open (r3): `images/android/files/profile.sh:5-12` hard-codes ANDROID_HOME, JAVA_HOME and PATH and ignores `*.path`, and `android-image-smoke.yml:60-84` still hand-lists its checks
 
 ### r1.f28 - Toolset environment is half-migrated: `$JAVA_HOME` is promised but only Android sets it
 
@@ -394,6 +398,7 @@
 - Verified: confirmed, latent.
 - Recommendation: one `gcp_type_setting` helper that sources in a subshell; the watchdog reads both values from one sourced subshell.
 - Status: open
+- Resolution: partly lolay/agent-images#54: `gcp_type_setting` (hooks/gcp/lib.sh) sources the env file in a subshell, and changed-targets, deploy and the supervisor read BACKEND, REBUILD and DEPLOY through it. Still open (r3): `images/shared/agent-runner-watchdog.sh` sources runner.env then reads WATCHDOG_ACTION with sed (:25,39), and cloud-deploy.yml greps project.env into GITHUB_ENV (:133,280,355,411)
 
 ### r1.f34 - The Anthropic setup script copies linux's toolset list and isn't linted
 
