@@ -5,9 +5,11 @@ Subject: lolay/agent-images#62 (Renovate, head 3743b22). Nothing changed on the 
 
 ## Status
 
-Findings reported; waiting on the Owner to pick a path. Pending question, verbatim:
-
-> Fix it (recommended), merge as is, or pin and close?
+The Owner chose the fix. Done on this branch: `.github/actionlint.yaml`, the android-image-smoke comment, and
+the Renovate rule. Verified: actionlint v1.7.12 passes on PR 62's edit with the config and fails without it;
+Renovate 44.235.1's local dry run skips android-image-smoke (`disabled`) and still proposes 26.04 for the other 13.
+Pending: the Owner's go to open the PR (this handoff is removed in the PR's last commit), then tick PR 62's
+rebase box after it merges.
 
 ## Findings
 
@@ -29,7 +31,7 @@ Findings reported; waiting on the Owner to pick a path. Pending question, verbat
 - Unexercised by PR checks: cloud-deploy (auth, setup-gcloud, vm-images) and lock-watch run only from main.
   The nightly deploy (04:07 PT, Tue to Sat) is their first 26.04 run.
 
-## Recommended fix (not started)
+## The fix
 
 A separate PR from this branch, then let Renovate rebase PR 62:
 

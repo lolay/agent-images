@@ -21,6 +21,14 @@
       "matchUpdateTypes": ["major"],
       "groupName": "GitHub Actions (major)",
       "automerge": false
+    },
+    {
+      "description": "android-image-smoke's runner stands in for the Android image's Ubuntu VM, so it moves with that base (images/android/gce/build.pkr.hcl, r1.f18), not with Renovate.",
+      "matchManagers": ["github-actions"],
+      "matchDatasources": ["github-runners"],
+      "matchDepNames": ["ubuntu"],
+      "matchFileNames": [".github/workflows/android-image-smoke.yml"],
+      "enabled": false
     }
   ]
 }
