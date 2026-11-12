@@ -21,6 +21,13 @@
       "matchUpdateTypes": ["major"],
       "groupName": "GitHub Actions (major)",
       "automerge": false
+    },
+    {
+      "description": "Ubuntu runners stay on the images' Ubuntu (r1.f18): every image moves to 26.04 together once Cloud Run's driver supports a CUDA with an ubuntu26.04 image (13.3 or later; it is 13.0), and the runners move with them. Until then 26.04 runners buy nothing, since builds run in Docker.",
+      "matchManagers": ["github-actions"],
+      "matchDatasources": ["github-runners"],
+      "matchDepNames": ["ubuntu"],
+      "enabled": false
     }
   ]
 }
