@@ -346,7 +346,7 @@ brew tenv 4.15.1
 brew tmux 3.8
 brew utf8proc 2.12.0
 brew util-linux 2.42.4
-brew uv 0.13.7
+brew uv 0.13.8
 brew uvwasi 0.0.23
 brew xz 5.8.4
 brew zlib-ng-compat 2.3.3_1
