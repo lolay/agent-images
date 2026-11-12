@@ -45,7 +45,7 @@ concurrency:
 
 jobs:
   plan:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       actions: read
@@ -113,7 +113,7 @@ jobs:
   types:
     needs: plan
     if: needs.plan.outputs.has-types == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # Per type: a no-cache build, the push and the smoke, whose execution has its
     # own 30 min limit (deploy.sh). Cancelling gcloud's wait wouldn't stop the
     # execution, so that limit, not this one, is what bounds its cost (r1.f8).
@@ -263,7 +263,7 @@ jobs:
   vm-images:
     needs: plan
     if: needs.plan.outputs.has-vms == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 150
     environment: production
     permissions:
@@ -344,7 +344,7 @@ jobs:
       always() && needs.plan.result == 'success' && needs.plan.outputs.orchestrator == 'true'
       && (needs.types.result == 'success' || needs.types.result == 'skipped')
       && (needs.vm-images.result == 'success' || needs.vm-images.result == 'skipped')
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     environment: production
     permissions:
       contents: read
@@ -400,7 +400,7 @@ jobs:
       always() && needs.plan.result == 'success' && needs.plan.outputs.prune == 'true'
       && needs.types.result != 'failure' && needs.vm-images.result != 'failure'
       && needs.orchestrator.result != 'failure'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     environment: production
     permissions:
       contents: read
