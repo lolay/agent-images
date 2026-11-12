@@ -352,6 +352,14 @@ nightly build). Found on 2026-11-11, when snapshot.ubuntu.com was unreachable
 and builds failed with "Unable to locate package sudo" rather than the fetch
 error.
 
+The resolve's one registry read, the base tag's digest, does retry, but only on
+a 429: mirror.gcr.io answers one when Google's quota on its reads from Docker
+Hub runs out, a limit that clears in minutes, unlike an outage. `lock.sh` waits
+30, 60 and 120 seconds between attempts, the way its curl calls already retry
+with `--retry 3`; any other failure, or a 429 after the last wait, fails the
+resolve at once with the registry's error. Found on 2026-11-12 (lock-watch run
+43141207783), when the 429 failed the watch with a bare exit 4 from `jq`.
+
 Homebrew is the exception, and stays that way (owner, 2026-11-06): it only installs
 current versions, so its lock entries are a record and a change trigger, never a pin.
 A moved formula is what makes the watch propose a lock and so a build, but the build

@@ -40,6 +40,8 @@
 #
 #   LOCK_NOW       the snapshot id to use if apt moved (default: now, UTC)
 #   LOCK_DIR       where the current locks are (default images/cloud)
+#   LOCK_REGISTRY_WAITS  seconds to wait before each retry of a rate-limited
+#                  registry read (default "30 60 120"; tests set zeros)
 # Run from the repo root.
 set -euo pipefail
 # A failure inside $(...) fails the script too: a lock resolved halfway must
@@ -55,6 +57,7 @@ readonly lock_dir="${LOCK_DIR:-images/cloud}"
 readonly claude_releases=https://downloads.claude.ai/claude-code-releases
 readonly rust_dist=https://static.rust-lang.org/dist
 readonly terraform_index=https://releases.hashicorp.com/terraform/index.json
+readonly registry_waits="${LOCK_REGISTRY_WAITS:-30 60 120}"
 
 die() {
 	printf 'lock: %s\n' "$*" >&2
@@ -111,8 +114,28 @@ github_latest() {
 	printf '%s' "${url##*/}"
 }
 
+# image_digest <ref>: the digest a tag names now. mirror.gcr.io answers 429
+# when Google's quota on its reads from Docker Hub runs out (lock-watch run
+# 43141207783, 2026-11-12), a limit that clears in minutes, so a 429 is retried
+# after each of registry_waits, the way curl's --retry treats one above. Any
+# other failure fails at once.
 image_digest() {
-	docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' | jq -er .digest
+	local wait out err
+	err="$(mktemp)"
+	for wait in $registry_waits -; do
+		if out="$(docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' 2>"$err")"; then
+			rm -f "$err"
+			jq -er .digest <<<"$out" || die "no digest for $1 in: $out"
+			return
+		fi
+		if [[ "$wait" == - ]] || ! grep -qE '429 Too Many Requests|toomanyrequests' "$err"; then
+			cat "$err" >&2
+			rm -f "$err"
+			die "couldn't read $1's digest"
+		fi
+		printf 'lock: %s: registry rate limit (429), retrying in %ss\n' "$1" "$wait" >&2
+		sleep "$wait"
+	done
 }
 
 resolve_claude() {
