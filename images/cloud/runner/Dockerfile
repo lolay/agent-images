@@ -54,8 +54,9 @@ cp -R /tmp/images/skills/. "$HOME/.claude/skills/"
 sudo install -d -m 755 -o ubuntu -g ubuntu /scratch /mnt/outputs
 sudo install -d -m 755 /mnt/datasets
 # The toolsets are in; a session's own apt (on a runtime that allows sudo) reads
-# today's archive, not the build's snapshot (images/cloud/base/Dockerfile).
-sudo rm -f /etc/apt/apt.conf.d/50agent-snapshot
+# today's archive, not the build's snapshot, with apt's own error handling, not
+# the build's (images/cloud/base/Dockerfile).
+sudo rm -f /etc/apt/apt.conf.d/50agent-snapshot /etc/apt/apt.conf.d/40agent-build
 SCRIPT
 
 # profile.sh's PATH: Homebrew (and rustup's proxies) ahead of the system.

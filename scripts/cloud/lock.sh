@@ -239,8 +239,12 @@ resolve_apt() {
 	local type="$1" base="$2" old="$3" packages now resolved
 	mapfile -t packages < <(packages_of "$type")
 	now="${LOCK_NOW:-$(date -u +%Y%m%dT%H%M%SZ)}"
-	# --entrypoint: CUDA's entrypoint prints a banner on stdout.
-	resolved="$(docker run --rm --entrypoint /bin/bash -e PACKAGES="${packages[*]}" "$base" -c '
+	# --entrypoint: CUDA's entrypoint prints a banner on stdout. apt-build.conf
+	# fails the update when part of the archive doesn't download, rather than
+	# resolving without it. --mount, unlike -v, refuses a missing source.
+	resolved="$(docker run --rm --entrypoint /bin/bash \
+		--mount "type=bind,source=$PWD/images/cloud/base/apt-build.conf,target=/tmp/apt-build.conf,readonly" \
+		-e APT_CONFIG=/tmp/apt-build.conf -e PACKAGES="${packages[*]}" "$base" -c '
 		set -euo pipefail
 		apt-get update -q >/tmp/update.log 2>&1 || { cat /tmp/update.log >&2; exit 1; }
 		# shellcheck disable=SC2086 # a list of names

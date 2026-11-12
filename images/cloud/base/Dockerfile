@@ -20,10 +20,14 @@ FROM ${BASE_IMAGE}
 # HTTPS only and the stock image has no CA certificates, so ca-certificates
 # (and on plain Ubuntu its openssl) comes from today's archive first: the one
 # apt install the snapshot doesn't hold. packages.txt is what the base needs
-# before any toolset (sudo, and curl for Homebrew's installer).
+# before any toolset (sudo, and curl for Homebrew's installer). apt-build.conf
+# goes in first, so a part of the archive that fails to download fails this
+# layer and every toolset's rather than leaving its packages out.
 ARG APT_SNAPSHOT
 RUN --mount=type=bind,source=images/cloud/base/packages.txt,target=/tmp/base-packages.txt \
+	--mount=type=bind,source=images/cloud/base/apt-build.conf,target=/tmp/apt-build.conf \
 	: "${APT_SNAPSHOT:?the build passes the lock's apt-snapshot (scripts/cloud/lock.sh bake-args)}" \
+	&& cp /tmp/apt-build.conf /etc/apt/apt.conf.d/40agent-build \
 	&& apt-get update \
 	&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates \
 	&& printf 'APT::Snapshot "%s";\n' "$APT_SNAPSHOT" >/etc/apt/apt.conf.d/50agent-snapshot \

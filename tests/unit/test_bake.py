@@ -179,5 +179,34 @@ class BakeTests(unittest.TestCase):
                 self.assertLessEqual(types, built)
 
 
+class AptBuildConfTests(unittest.TestCase):
+    """images/cloud/base/apt-build.conf reaches every apt-get update a cloud build
+    runs, and no further, read as text (a build would need the archive down)."""
+
+    CONF = "images/cloud/base/apt-build.conf"
+    INSTALLED = "/etc/apt/apt.conf.d/40agent-build"
+
+    def text(self, path):
+        return (REPO / path).read_text()
+
+    def test_the_conf_fails_an_update_on_any_failed_download(self):
+        self.assertIn('\nAPT::Update::Error-Mode "any";\n', self.text(self.CONF))
+
+    def test_the_base_installs_it_before_its_first_update(self):
+        base = self.text("images/cloud/base/Dockerfile")
+        self.assertIn(f"source={self.CONF},target=/tmp/apt-build.conf", base)
+        installed = base.index(f"cp /tmp/apt-build.conf {self.INSTALLED}")
+        self.assertLess(installed, base.index("apt-get update"))
+
+    def test_the_orchestrator_passes_it_for_its_update(self):
+        orchestrator = self.text("images/cloud/orchestrator/Dockerfile")
+        self.assertIn(f"source={self.CONF},target=/tmp/apt-build.conf", orchestrator)
+        self.assertIn("APT_CONFIG=/tmp/apt-build.conf apt-get update", orchestrator)
+        self.assertEqual(orchestrator.count("apt-get update"), 1)
+
+    def test_the_runner_stage_removes_it(self):
+        self.assertIn(self.INSTALLED, self.text("images/cloud/runner/Dockerfile").split("rm -f", 1)[1].splitlines()[0])
+
+
 if __name__ == "__main__":
     unittest.main()
