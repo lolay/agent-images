@@ -297,7 +297,7 @@ brew curl 8.23.0
 brew cyrus-sasl 2.1.28_4
 brew expat 2.10.0
 brew fmt 12.2.1
-brew gh 2.103.3
+brew gh 2.104.0
 brew gmp 6.3.0
 brew go 1.27.4
 brew grpcurl 1.9.4
@@ -336,7 +336,7 @@ brew protobuf 36.2
 brew python@3.15 3.15.2
 brew readline 8.3.6
 brew ripgrep 15.2.0
-brew ruff 0.17.4
+brew ruff 0.17.5
 brew rustup 1.29.3
 brew shellcheck 0.11.0
 brew shfmt 3.14.1
@@ -353,7 +353,7 @@ brew uvwasi 0.0.23
 brew xz 5.8.4
 brew zlib-ng-compat 2.3.3_1
 brew zstd 1.5.7_1
-claude - 2.1.322
+claude - 2.1.323
 release tflint v0.66.0
 rust - 1.100.0
 terraform - 1.17.2
