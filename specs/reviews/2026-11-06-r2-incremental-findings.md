@@ -118,7 +118,7 @@
 - Verified: confirmed by reading; latent, since no compute env file sets `DEPLOY` and gcp.md:274 defines it for jobs.
 - Recommendation: either honor `DEPLOY=false` in the vm deploy path too, or refuse it for `BACKEND=compute` (in deploy.sh and the supervisor), and read it through one `gcp_type_setting` helper (r1.f33).
 - Status: fixed
-- Resolution: lolay/agent-images#53: deploy.sh's `load_compute_type` and the supervisor both refuse DEPLOY=false on a compute type, each tested. The supervisor's refusal opened a new gap, see r3.f3
+- Resolution: lolay/agent-images#53: deploy.sh's `load_compute_type` and the supervisor both refuse DEPLOY=false on a compute type, each tested. The supervisor's refusal opened a new gap, see r3.f2
 
 ## drift
 
