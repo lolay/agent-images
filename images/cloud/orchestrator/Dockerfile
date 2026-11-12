@@ -8,7 +8,9 @@
 # pulls, and mirror.gcr.io caches the same images without that limit.
 FROM mirror.gcr.io/library/ubuntu:24.04
 
-RUN apt-get update \
+# apt-build.conf: a part of the archive that fails to download fails the build.
+RUN --mount=type=bind,source=images/cloud/base/apt-build.conf,target=/tmp/apt-build.conf \
+	APT_CONFIG=/tmp/apt-build.conf apt-get update \
 	&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl jq procps \
 	&& rm -rf /var/lib/apt/lists/*
 

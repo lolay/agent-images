@@ -35,8 +35,28 @@ if args[:3] == ["buildx", "imagetools", "inspect"] and args[4:] == ["--format", 
     digest = hashlib.sha256((ref + os.environ.get("FAKE_DIGEST_SALT", "")).encode()).hexdigest()
     print(json.dumps({"mediaType": "application/vnd.oci.image.index.v1+json", "digest": "sha256:" + digest}))
     sys.exit(0)
-if args[:4] == ["run", "--rm", "--entrypoint", "/bin/bash"] and args[4] == "-e" and args[5].startswith("PACKAGES=") and args[7] == "-c" and len(args) == 9:
-    log("apt " + args[6] + " " + args[5])
+if args[:4] == ["run", "--rm", "--entrypoint", "/bin/bash"]:
+    rest, mounts, env = args[4:], [], []
+    while rest and rest[0] in ("--mount", "-e"):
+        (mounts if rest[0] == "--mount" else env).append(rest[1]); rest = rest[2:]
+    if len(rest) != 3 or rest[1] != "-c":
+        sys.exit("docker: fake: unexpected run: " + " ".join(args))
+    for mount in mounts:
+        fields = dict(f.partition("=")[::2] for f in mount.split(","))
+        if fields.get("type") != "bind" or not fields.get("target"):
+            sys.exit("docker: invalid mount config: " + mount)
+        # Like docker's --mount (not -v): a missing source is an error.
+        if not os.path.isabs(fields.get("source", "")) or not os.path.exists(fields["source"]):
+            sys.exit("docker: Error response from daemon: invalid mount config for type \"bind\": bind source path does not exist: " + fields.get("source", ""))
+    packages = next((e for e in env if e.startswith("PACKAGES=")), None)
+    if packages is None:
+        sys.exit("docker: fake: no PACKAGES")
+    log("apt " + rest[0] + " " + packages)
+    for mount in mounts:
+        log("mount " + mount)
+    for e in env:
+        if not e.startswith("PACKAGES="):
+            log("env " + e)
     if os.environ.get("FAKE_APT_FAIL"):
         sys.exit("E: Unable to locate package nosuchthing")
     sys.stdout.write(open(os.environ["FAKE_APT"]).read())
@@ -256,6 +276,16 @@ class ResolveTests(unittest.TestCase):
         self.assertTrue(apt.startswith(f"apt {ubuntu}@{digest_of(ubuntu)} PACKAGES=sudo ca-certificates curl "), apt)
         self.assertIn(" openjdk-21-jdk-headless ", apt)
         self.assertIn(" xvfb ", apt)
+
+    def test_apt_resolves_with_the_build_apt_settings(self):
+        # A part of the archive that fails to download has to fail the resolve,
+        # not lock older versions resolved without it (apt-build.conf).
+        self.resolve()
+        log = self.log.read_text().splitlines()
+        conf = self.repo / "images/cloud/base/apt-build.conf"
+        self.assertIn(f"mount type=bind,source={conf},target=/tmp/apt-build.conf,readonly", log)
+        self.assertIn("env APT_CONFIG=/tmp/apt-build.conf", log)
+        self.assertIn('\nAPT::Update::Error-Mode "any";\n', conf.read_text())
 
     def test_taps_are_trusted_before_resolving(self):
         self.resolve()

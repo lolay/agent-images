@@ -337,6 +337,21 @@ sets the snapshot. The runner stage drops the setting, so a session's own apt
 reads today's archive. The VM images (android) take each `install.sh`'s default
 and have no lock (m5, D2).
 
+Every `apt-get update` in a cloud build, and `lock.sh`'s resolve, runs with
+`images/cloud/base/apt-build.conf`: `APT::Update::Error-Mode "any"`
+(`--error-on=any`), so a part of the archive that fails to download fails the
+update. apt's default only warns and carries on without it. A build missing
+`noble-security` would install unpatched packages and pass its smoke, and a
+resolve missing `noble-updates` would lock release versions. The base layer
+installs the file for itself and the toolset layers, the runner stage drops it
+with the snapshot, and the orchestrator build and the resolve pass it in
+`APT_CONFIG`. No extra retries: apt already retries each download three times
+with backoff. An outage longer than that is the workflows' to ride out (lock
+pull requests retry hourly, a failed deploy is covered by the next push or
+nightly build). Found on 2026-11-11, when snapshot.ubuntu.com was unreachable
+and builds failed with "Unable to locate package sudo" rather than the fetch
+error.
+
 Homebrew is the exception, and stays that way (owner, 2026-11-06): it only installs
 current versions, so its lock entries are a record and a change trigger, never a pin.
 A moved formula is what makes the watch propose a lock and so a build, but the build
