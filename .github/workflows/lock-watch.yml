@@ -4,10 +4,12 @@
 # branch, lock/watch. It never deploys: the pull request merges itself once
 # cloud-build's gate passes, and that push to main deploys.
 #
-# Two jobs, so the App's key never shares a runner with anything resolved from
-# upstream: `resolve` (read-only GITHUB_TOKEN) pulls base images, runs apt in
-# them and reads Homebrew; `propose` (the lock-bot environment, main only) only
-# commits the files `resolve` handed over, after checking each is a lock.
+# Separate jobs, so the App's key never shares a runner with anything resolved
+# from upstream: `resolve` (read-only GITHUB_TOKEN) pulls base images, runs apt
+# in them and reads Homebrew; `propose` (the lock-bot environment, main only)
+# only commits the files `resolve` handed over, after checking each is a lock;
+# `retry` (GITHUB_TOKEN with Actions write, no key) reruns the open pull
+# request's failed build when there's nothing new to push.
 name: lock-watch
 
 on:
@@ -105,7 +107,9 @@ jobs:
             ((open == 0)) || action=close
             echo "No lock moved."
           elif ((open > 0)) && scripts/cloud/lock-watch.sh proposed out/candidate origin/main origin/lock/watch; then
-            action=none
+            # Nothing to push, so nothing new reruns its checks: the retry job
+            # reruns a failed build instead.
+            action=retry
             echo "The open pull request already proposes these locks on main's head."
           else
             action=push
@@ -196,3 +200,27 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
         run: scripts/cloud/lock-watch.sh revoke
+
+  # The open pull request already proposes what upstream offers, so no push
+  # reruns its checks: a build that failed on something passing (a mirror down)
+  # would hold it until upstream moved again. Rerun the failed jobs, capped in
+  # lock-watch.sh (retry_max), so a broken candidate isn't rebuilt every hour.
+  retry:
+    needs: resolve
+    if: needs.resolve.outputs.action == 'retry'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Retry
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          scripts/cloud/lock-watch.sh retry | tee -a "$GITHUB_STEP_SUMMARY"

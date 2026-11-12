@@ -373,8 +373,13 @@ deploys; it only proposes a pull request:
    hourly run never drops the weekly run's `gis` candidate.
 3. Nothing moved: done, green, nothing pushed (an open lock pull request is closed,
    since `main` already matches upstream). The open pull request already proposes
-   exactly this on `main`'s head (`lock-watch.sh proposed`): done too, so a red
-   candidate isn't rebuilt every hour.
+   exactly this on `main`'s head (`lock-watch.sh proposed`): nothing is pushed, so
+   nothing new reruns its checks. A third job, `retry` (`GITHUB_TOKEN` with Actions
+   write, no key), reruns the failed jobs of its `cloud-build` run
+   (`lock-watch.sh retry`), up to four attempts in all, an hour apart. That rides
+   out an upstream outage without rebuilding a broken candidate every hour: on
+   2026-11-11 snapshot.ubuntu.com was unreachable for an afternoon, and before
+   `retry` the red pull request it left sat until upstream moved again.
 4. Something moved: `propose` (environment `lock-bot`) commits the moved locks onto
    `main`'s head as `lock/watch` and opens the pull request, or refreshes the open
    one, titled from `lock.sh summary` (`lock(linux): claude 2.1.318, go 1.26.1, apt
@@ -391,7 +396,7 @@ issue's state, read with `GITHUB_TOKEN` (the bot has no Issues permission); a cl
 issue reads **closed**: remove the pin?
 
 A version that breaks something never reaches `main`: its pull request stays open
-and red, which is the notification, and the next run that sees `main` or upstream
+and red once its retries are spent, which is the notification, and the next run that sees `main` or upstream
 move refreshes the same pull request rather than opening another. Fix forward (a
 toolset change on its own pull request) or pin ([below](#pinning-a-dependency));
 either way the next watch run rebases the lock onto it.

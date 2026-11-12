@@ -30,6 +30,10 @@
 #                                             main's head as lock/watch, open or
 #                                             refresh the pull request, auto-merge on
 #   lock-watch.sh close                       close the open lock pull request
+#   lock-watch.sh retry                       rerun the failed jobs of the open lock
+#                                             pull request's cloud-build run, up to
+#                                             retry_max attempts (GH_TOKEN with
+#                                             Actions write)
 #
 # <base> and <candidate> are trees laid out like the repo (images/cloud/<type>/
 # versions.lock). GITHUB_REPOSITORY names the repo, GITHUB_API_URL the API. Run
@@ -48,12 +52,16 @@ readonly lock_pattern='^images/cloud/[a-z0-9-]+/versions\.lock$'
 readonly api="${GITHUB_API_URL:-https://api.github.com}"
 # GitHub's limit is 256; a longer title is cut.
 readonly title_max=256
+# The attempts a lock pull request's cloud-build run gets, the first included.
+# Hourly runs space them an hour apart, which rides out an upstream outage
+# (snapshot.ubuntu.com, 2026-11-11) without rebuilding a broken candidate all day.
+readonly retry_max=4
 
 die() {
 	printf 'lock-watch: %s\n' "$*" >&2
 	exit 1
 }
-usage() { die "usage: lock-watch.sh types|changed|carry|proposed|guard|title|body|pins|token|revoke|propose|close ..."; }
+usage() { die "usage: lock-watch.sh types|changed|carry|proposed|guard|title|body|pins|token|revoke|propose|close|retry ..."; }
 
 repo() {
 	[[ "${GITHUB_REPOSITORY:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "GITHUB_REPOSITORY isn't owner/name"
@@ -174,7 +182,7 @@ cmd_body() {
 		printf ' ([run](%s/%s/actions/runs/%s))' "${GITHUB_SERVER_URL:-https://github.com}" "$(repo)" "$GITHUB_RUN_ID"
 	fi
 	# shellcheck disable=SC2016 # markdown backticks, not expansions
-	printf '. It merges itself when `cloud-build`'"'"'s `gate` passes; a red check holds it, and the next run refreshes it (specs/gcp.md, "Watch").\n'
+	printf '. It merges itself when `cloud-build`'"'"'s `gate` passes. A red check holds it: the next runs retry the failed jobs up to %s attempts in all, and the next run that sees `main` or upstream move refreshes it (specs/gcp.md, "Watch").\n' "$retry_max"
 	while read -r path; do
 		old="$base/$path"
 		[[ -f "$old" ]] || old=/dev/null
@@ -351,6 +359,39 @@ cmd_close() {
 	printf 'closed pull request #%s: the locks on main are current\n' "$number"
 }
 
+# cmd_retry: a lock pull request that already proposes what upstream offers is
+# never pushed again, so nothing new reruns its checks. When its cloud-build run
+# failed (a mirror down, a flaky runner), rerun the failed jobs, which gate
+# depends on, until retry_max attempts; after that the red check stands as the
+# notification.
+cmd_retry() {
+	local name head run id conclusion attempt
+	name="$(repo)"
+	if [[ -z "$(open_pr)" ]]; then
+		printf 'No lock pull request is open.\n'
+		return 0
+	fi
+	head="$(ref_sha "$branch")"
+	[[ "$head" =~ ^[0-9a-f]{40}$ ]] || die "no head for $branch"
+	run="$(gh api "repos/$name/actions/workflows/cloud-build.yml/runs?event=pull_request&head_sha=$head" \
+		--jq '.workflow_runs | max_by(.id) | select(. != null) | "\(.id) \(.conclusion // .status) \(.run_attempt)"')"
+	if [[ -z "$run" ]]; then
+		printf 'No cloud-build run for %s yet.\n' "$head"
+		return 0
+	fi
+	# A run still going has no conclusion yet, so it reads as its status.
+	read -r id conclusion attempt <<<"$run"
+	[[ "$id" =~ ^[0-9]+$ && "$attempt" =~ ^[0-9]+$ ]] || die "cloud-build run unreadable: $run"
+	if [[ "$conclusion" != failure && "$conclusion" != timed_out ]]; then
+		printf 'cloud-build run %s: %s, nothing to retry.\n' "$id" "$conclusion"
+	elif ((attempt >= retry_max)); then
+		printf 'cloud-build run %s: %s after %s attempts; left red for a person.\n' "$id" "$conclusion" "$attempt"
+	else
+		gh api -X POST "repos/$name/actions/runs/$id/rerun-failed-jobs" >/dev/null
+		printf 'cloud-build run %s: %s; reran its failed jobs (attempt %s of %s).\n' "$id" "$conclusion" $((attempt + 1)) "$retry_max"
+	fi
+}
+
 # Each command runs as a plain call, never after || or &&, where bash switches
 # errexit off inside it.
 case "${1:-}" in
@@ -401,6 +442,10 @@ propose)
 close)
 	(($# == 1)) || usage
 	cmd_close
+	;;
+retry)
+	(($# == 1)) || usage
+	cmd_retry
 	;;
 *) usage ;;
 esac

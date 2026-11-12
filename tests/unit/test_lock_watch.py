@@ -168,6 +168,25 @@ if rest.startswith("pulls/") and method == "PATCH":
             fail(422, "unknown field " + key)
     pr.update(fields); log("edit " + str(pr["number"]) + " " + ",".join(sorted(fields)))
     out(pr)
+if rest.startswith("actions/workflows/") and "/runs?" in rest and method == "GET":
+    workflow, _, query = rest[len("actions/workflows/"):].partition("/runs?")
+    query = dict(part.split("=", 1) for part in query.split("&"))
+    if set(query) - {"event", "head_sha"}:
+        fail(422, "fake: unknown parameter " + ",".join(sorted(set(query) - {"event", "head_sha"})))
+    runs = [r for r in state.get("runs", []) if r["workflow"] == workflow
+            and all(r[key] == value for key, value in query.items())]
+    out({"total_count": len(runs), "workflow_runs": sorted(runs, key=lambda r: -r["id"])})
+if rest.startswith("actions/runs/") and rest.endswith("/rerun-failed-jobs") and method == "POST":
+    run = next((r for r in state.get("runs", []) if str(r["id"]) == rest.split("/")[2]), None)
+    if run is None:
+        fail(404, "Not Found")
+    if run["status"] != "completed":
+        fail(403, "This workflow is already running")
+    if run["conclusion"] not in ("failure", "timed_out", "cancelled"):
+        fail(403, "This workflow run has no failed jobs")
+    run.update(status="queued", conclusion=None, run_attempt=run["run_attempt"] + 1)
+    log("rerun " + str(run["id"]))
+    out({})
 fail(404, "Not Found: " + method + " " + path)
 '''
 
@@ -402,7 +421,8 @@ class GitTests(Base):
         self.assertEqual(self.run_git_watch("proposed", str(self.tree("same", branch)), "main", "lock/watch").returncode, 1)
 
 
-class ProposeTests(Base):
+class FakeGitHubBase(Base):
+    """main with one lock, a candidate that moves Claude, and the fake gh."""
     MAIN = "a" * 40
 
     def setUp(self):
@@ -426,6 +446,8 @@ class ProposeTests(Base):
         return self.run_watch("propose", str(self.candidate), title, str(self.tmp / "body.md"),
                               env={"FAKE_GH_STATE": str(self.state_path), "FAKE_REPO": "lolay/agent-images"})
 
+
+class ProposeTests(FakeGitHubBase):
     def test_opens_a_pull_request_with_auto_merge(self):
         result = self.propose()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -482,6 +504,82 @@ class ProposeTests(Base):
         self.assertEqual(self.load()["pulls"][0]["state"], "closed")
         again = self.run_watch("close", env={"FAKE_GH_STATE": str(self.state_path), "FAKE_REPO": "lolay/agent-images"})
         self.assertEqual((again.returncode, again.stdout), (0, ""))
+
+
+class RetryTests(FakeGitHubBase):
+    """The open lock pull request's failed build is rerun when there's nothing
+    new to push, up to the script's retry_max attempts."""
+
+    def setUp(self):
+        super().setUp()
+        self.assertEqual(self.propose().returncode, 0)
+        self.head = self.load()["refs"]["lock/watch"]
+
+    def build(self, status="completed", conclusion="failure", attempt=1, head=None, event="pull_request"):
+        state = self.load()
+        state.setdefault("runs", []).append({
+            "id": 100 + len(state["runs"]), "workflow": "cloud-build.yml", "event": event,
+            "head_sha": head or self.head, "status": status, "conclusion": conclusion, "run_attempt": attempt})
+        self.save()
+
+    def retry(self):
+        result = self.run_watch("retry", env={"FAKE_GH_STATE": str(self.state_path), "FAKE_REPO": "lolay/agent-images"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout, [line for line in self.load().get("log", []) if line.startswith("rerun")]
+
+    def test_a_failed_build_is_rerun(self):
+        self.build()
+        stdout, reruns = self.retry()
+        self.assertEqual(reruns, ["rerun 100"])
+        self.assertIn("attempt 2 of 4", stdout)
+
+    def test_a_timed_out_build_is_rerun(self):
+        self.build(conclusion="timed_out")
+        self.assertEqual(self.retry()[1], ["rerun 100"])
+
+    def test_the_newest_run_for_the_head_is_the_one_read(self):
+        self.build(conclusion="failure")
+        self.build(conclusion="success")
+        stdout, reruns = self.retry()
+        self.assertEqual(reruns, [])
+        self.assertIn("run 101: success", stdout)
+
+    def test_a_run_for_an_older_head_is_ignored(self):
+        self.build(head="c" * 40)
+        stdout, reruns = self.retry()
+        self.assertEqual(reruns, [])
+        self.assertIn("No cloud-build run", stdout)
+
+    def test_a_running_build_is_left_alone(self):
+        self.build(status="in_progress", conclusion=None)
+        self.assertEqual(self.retry()[1], [])
+
+    def test_a_green_build_is_left_alone(self):
+        self.build(conclusion="success")
+        self.assertEqual(self.retry()[1], [])
+
+    def test_a_cancelled_build_is_left_alone(self):
+        self.build(conclusion="cancelled")
+        self.assertEqual(self.retry()[1], [])
+
+    def test_stops_at_the_cap(self):
+        self.build(attempt=4)
+        stdout, reruns = self.retry()
+        self.assertEqual(reruns, [])
+        self.assertIn("left red for a person", stdout)
+
+    def test_below_the_cap_still_reruns(self):
+        self.build(attempt=3)
+        self.assertEqual(self.retry()[1], ["rerun 100"])
+
+    def test_no_open_pull_request(self):
+        self.build()
+        state = self.load()
+        state["pulls"][0]["state"] = "closed"
+        self.save()
+        stdout, reruns = self.retry()
+        self.assertEqual(reruns, [])
+        self.assertIn("No lock pull request is open", stdout)
 
 
 class TokenTests(Base):
@@ -585,6 +683,17 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("environment:", resolve)
         self.assertIn("environment: lock-bot", propose)
         self.assertIn("if: github.ref == 'refs/heads/main'", resolve)
+
+    def test_the_retry_job_holds_no_key_and_runs_only_on_retry(self):
+        watch = (REPO / ".github/workflows/lock-watch.yml").read_text()
+        resolve = watch.split("\n  propose:\n", 1)[0]
+        retry = watch.split("\n  retry:\n", 1)[1]
+        self.assertNotIn("secrets.", retry)
+        self.assertNotIn("environment:", retry)
+        self.assertIn("if: needs.resolve.outputs.action == 'retry'", retry)
+        self.assertIn("actions: write", retry)
+        self.assertNotIn("actions: write", resolve, "resolve runs what upstream hands it")
+        self.assertIn("action=retry", resolve)
 
     def test_the_weekly_schedule_is_the_one_the_class_step_reads(self):
         watch = (REPO / ".github/workflows/lock-watch.yml").read_text()
