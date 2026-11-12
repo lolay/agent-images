@@ -513,6 +513,39 @@ class ProfileTests(unittest.TestCase):
         self.assert_front(path)
         self.assertNotIn(shim, path)
 
+    def test_a_child_bash_keeps_the_callers_path(self):
+        # A test puts a fake gh first and runs a bash script, which re-sources the
+        # profile through BASH_ENV: the fake has to win over the shim and Homebrew.
+        config, shim = self.gh_shim()
+        fake = self.toolsets / "fake"
+        fake.mkdir()
+        (fake / "gh").write_text("#!/bin/sh\n")
+        (fake / "gh").chmod(0o755)
+        then = f'export PATH="{fake}:$PATH"; bash -c \'printf %s "$PATH"\''
+        for start in ("/usr/bin:/bin", f"{self.BREW}/bin:{shim}:/usr/bin:/bin"):
+            path = self.path_after(start, bash_env=True, then=then, CLAUDE_CONFIG_DIR=config)
+            self.assertEqual(path[:2], [str(fake), shim])
+            self.assert_front(path[2:])
+        # Sourced by hand, too.
+        path = self.path_after("/usr/bin:/bin", then=f'export PATH="{fake}:$PATH"; . "$PROFILE"; printf %s "$PATH"',
+                               CLAUDE_CONFIG_DIR=config)
+        self.assertEqual(path[:2], [str(fake), shim])
+
+    def test_login_and_interactive_shells_set_path_up_again(self):
+        # They start from an environment that has been set up (a tmux pane in a
+        # session, `bash -l`), and still get the shim and Homebrew in front.
+        config, shim = self.gh_shim()
+        start = "/opt/caller/bin:/usr/bin:/bin"
+        for flags in ("--noprofile -l", "--norc -i"):
+            path = self.path_after(start, then=f'bash {flags} -c \'. "$PROFILE"; printf %s "$PATH"\'',
+                                   CLAUDE_CONFIG_DIR=config, AGENT_PROFILE_PATH_DONE="1")
+            self.assertEqual(path[0], shim, flags)
+            self.assert_front(path[1:])
+        # A caller can ask for it by unsetting the marker (the session-profile hook).
+        path = self.path_after(start, then='unset AGENT_PROFILE_PATH_DONE; . "$PROFILE"; printf %s "$PATH"',
+                               CLAUDE_CONFIG_DIR=config, AGENT_PROFILE_PATH_DONE="1")
+        self.assertEqual(path[0], shim)
+
     def test_toolset_profiles_are_sourced(self):
         (self.toolsets / "gis.profile.sh").write_text("export GIS_ENV=/opt/gis\n")
         out = self.path_after("/usr/bin:/bin", then='printf %s "$GIS_ENV"')

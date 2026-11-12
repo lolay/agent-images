@@ -14,6 +14,7 @@ from support import REPO, write_executable
 
 GH_SHIM_PROFILE = REPO / "images/shared/profile-gh-shim.sh"
 ANDROID_PROFILE = REPO / "images/android/files/profile.sh"
+CLOUD_PROFILE = REPO / "images/cloud/runner/profile.sh"
 HOOK = REPO / "images/shared/claude/hooks/session-profile.sh"
 SHARED_SETTINGS = REPO / "images/shared/claude/settings.json"
 CLOUD_SETTINGS = REPO / "images/cloud/runner/claude/settings.json"
@@ -130,6 +131,34 @@ class AndroidProfileTests(ShimCase):
         self.assertEqual(out, ["shim", "shim"])
 
 
+class CloudBashToolTests(ShimCase):
+    """A Bash tool command on the cloud image, where BASH_ENV re-sources the
+    profile in every bash (images/cloud/runner/profile.sh)."""
+
+    def test_bash_tool_command_finds_the_shim_and_a_childs_fake(self):
+        # Claude Code's process has the entrypoint's PATH and marker. Its Bash tool
+        # puts the shim first, BASH_ENV leaves that alone, the snapshot's `export
+        # PATH=` drops the shim, and the env file's line puts it back. A command
+        # that then puts a fake gh first reaches the fake in a child bash.
+        self.write_shim()
+        write_executable(self.home / "bin/gh", "echo signed-out\n")
+        fake = self.tmp / "fake"
+        write_executable(fake / "gh", "echo fake\n")
+        env_file = self.tmp / "claude-env"
+        env_file.touch()
+        run_hook(self.tmp, CLAUDE_ENV_FILE=str(env_file), AGENT_PROFILE=str(CLOUD_PROFILE))
+        cloud = {"HOMEBREW_PREFIX": str(self.tmp / "brew"), "AGENT_SCRATCH": str(self.tmp),
+                 "AGENT_TOOLSETS_DIR": str(self.tmp / "toolsets")}
+        entry = self.env("/usr/bin:/bin", CLAUDE_CONFIG_DIR="", **cloud)
+        entry_path = run_sh(f'. "{CLOUD_PROFILE}"; printf %s "$PATH"', entry)
+        command = (f'export PATH={entry_path}; . "$CLAUDE_ENV_FILE"; gh; bash -c gh; '
+                   f'PATH="{fake}:$PATH" bash -c gh')
+        env = self.env(f"{self.shim}:{entry_path}", CLAUDE_ENV_FILE=str(env_file),
+                       BASH_ENV=str(CLOUD_PROFILE), AGENT_PROFILE_PATH_DONE="1", **cloud)
+        out = run_sh(command, env, shell="bash").split()
+        self.assertEqual(out, ["shim", "shim", "fake"])
+
+
 def run_hook(tmp, payload='{"source": "startup"}', **env):
     result = subprocess.run(
         ["bash", str(HOOK)], input=payload, capture_output=True, text=True, timeout=30,
@@ -159,7 +188,7 @@ class SessionProfileHookTests(unittest.TestCase):
                                       AGENT_PROFILE=str(self.profile)), "")
         lines = self.env_file.read_text().splitlines()
         self.assertEqual(lines[0], "export AGENT_OUTPUTS=/mnt/outputs/x")
-        self.assertEqual(lines[1:], [f". {str(self.profile).replace(' ', chr(92) + ' ')}"])
+        self.assertEqual(lines[1:], [f"unset AGENT_PROFILE_PATH_DONE; . {str(self.profile).replace(' ', chr(92) + ' ')}"])
         # The line sources the profile, space in the path and all.
         out = run_sh(f'. "{self.env_file}"; echo ok', {"PATH": "/usr/bin:/bin"}, shell="bash")
         self.assertEqual(out, "ok\n")
