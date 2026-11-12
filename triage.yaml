@@ -9,6 +9,8 @@
 #   build   — build host: builds the image (make build) and runs make ci
 #   linux   — Linux host: builds and runs the Linux runner image (make doctor
 #             on Linux)
+#   session — a cloud runner session (AGENT_TYPE set): what make cloud-lint
+#             and make cloud-test need
 #
 # The Makefile passes --var image_ref=$(IMAGE_REF).
 #
@@ -154,3 +156,20 @@ linux:
         label: lingering (the orchestrator starts at boot)
         contains: "yes"
         hint: make host-setup
+
+# Inside a cloud runner session the host checks don't apply; this checks what
+# make cloud-lint and make cloud-test need. The linux image has shellcheck, Go
+# and Python, but not shfmt or Packer.
+session:
+  - group: Cloud lint and tests
+    items:
+      - tool: shellcheck
+        hint: brew install shellcheck
+      - tool: shfmt
+        hint: brew install shfmt
+      - tool: go
+        hint: "brew install go   # make cloud-lint runs actionlint with go run"
+      - tool: packer
+        hint: brew install hashicorp/tap/packer
+      - tool: python3
+        hint: brew install python
