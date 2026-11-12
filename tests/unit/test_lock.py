@@ -30,7 +30,18 @@ if args[:3] == ["buildx", "bake", "-f"] and args[4:5] == ["--print"]:
 if args[:3] == ["buildx", "imagetools", "inspect"] and args[4:] == ["--format", "{{json .Manifest}}"]:
     ref = args[3]
     if ref in json.loads(os.environ.get("FAKE_MISSING_IMAGES", "[]")):
+        log("missing " + ref)
         sys.exit("ERROR: " + ref + ": not found")
+    # The first FAKE_RATE_LIMITED reads fail as mirror.gcr.io's did in lock-watch
+    # run 43141207783.
+    limited = sum(line.startswith("rate-limited ") for line in open(os.environ["FAKE_LOG"]).read().splitlines()) \
+        if os.path.exists(os.environ["FAKE_LOG"]) else 0
+    if limited < int(os.environ.get("FAKE_RATE_LIMITED", "0")):
+        log("rate-limited " + ref)
+        sys.exit("ERROR: failed to copy: httpReadSeeker: failed open: unexpected status from GET request to "
+                 "https://mirror.gcr.io/v2/library/ubuntu/manifests/sha256:d6a959d9: 429 Too Many Requests\n"
+                 "toomanyrequests: Quota exceeded for quota metric 'Read requests to external upstream hosts "
+                 "per organization per host in the US multi-region'")
     log("digest " + ref)
     digest = hashlib.sha256((ref + os.environ.get("FAKE_DIGEST_SALT", "")).encode()).hexdigest()
     print(json.dumps({"mediaType": "application/vnd.oci.image.index.v1+json", "digest": "sha256:" + digest}))
@@ -220,6 +231,7 @@ class ResolveTests(unittest.TestCase):
             "FAKE_BREW_DATA": str(self.tmp / "brew.json"),
             "LOCK_DIR": str(self.locks),
             "LOCK_NOW": "20261106T220000Z",
+            "LOCK_REGISTRY_WAITS": "0 0 0",
         }
         settings.update(env)
         return subprocess.run(
@@ -386,6 +398,30 @@ class ResolveTests(unittest.TestCase):
                 self.urls = saved
                 self.assertNotEqual(result.returncode, 0, name)
                 self.assertEqual(result.stdout, "", f"{name}: printed a partial lock")
+
+    def log_lines(self, prefix):
+        return [line for line in self.log.read_text().splitlines() if line.startswith(prefix)]
+
+    def test_a_rate_limited_registry_is_retried(self):
+        lock = self.resolve(FAKE_RATE_LIMITED="2")
+        ubuntu = "mirror.gcr.io/library/ubuntu:24.04"
+        self.assertIn(f"base - {ubuntu}@{digest_of(ubuntu)}", self.entries(lock))
+        self.assertEqual(len(self.log_lines("rate-limited ")), 2)
+
+    def test_a_registry_still_rate_limited_after_every_wait_fails(self):
+        result = self.run_lock("resolve", "linux", FAKE_RATE_LIMITED="99", LOCK_REGISTRY_WAITS="0 0")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(len(self.log_lines("rate-limited ")), 3, "one read, then one after each wait")
+        self.assertIn("429 Too Many Requests", result.stderr)
+        self.assertIn("lock: couldn't read mirror.gcr.io/library/ubuntu:24.04's digest", result.stderr)
+
+    def test_other_registry_failures_are_not_retried(self):
+        result = self.run_lock("resolve", "linux",
+                               FAKE_MISSING_IMAGES=json.dumps(["mirror.gcr.io/library/ubuntu:24.04"]))
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(len(self.log_lines("missing ")), 1)
+        self.assertIn("lock: couldn't read mirror.gcr.io/library/ubuntu:24.04's digest", result.stderr)
 
     def test_an_unknown_formula_fails(self):
         del self.brew["go"]
