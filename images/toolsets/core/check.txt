@@ -9,5 +9,6 @@ age: age --version
 sops: sops --version
 actionlint: actionlint -version
 shellcheck: shellcheck --version
+shfmt: shfmt --version
 mandoc: command -v mandoc
 cc: cc --version
