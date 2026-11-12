@@ -324,7 +324,7 @@ brew merve 1.2.2_4
 brew mpdecimal 4.0.1
 brew nbytes 0.1.4
 brew ncurses 6.6
-brew node 26.13.0_2
+brew node 26.13.1
 brew openldap 2.7.2
 brew openssl@4 4.1.0
 brew pcre2 10.49
