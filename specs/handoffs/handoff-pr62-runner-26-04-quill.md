@@ -5,11 +5,18 @@ Subject: lolay/agent-images#62 (Renovate, head 3743b22). Nothing changed on the 
 
 ## Status
 
-The Owner chose the fix. Done on this branch: `.github/actionlint.yaml`, the android-image-smoke comment, and
-the Renovate rule. Verified: actionlint v1.7.12 passes on PR 62's edit with the config and fails without it;
-Renovate 44.235.1's local dry run skips android-image-smoke (`disabled`) and still proposes 26.04 for the other 13.
-Pending: the Owner's go to open the PR (this handoff is removed in the PR's last commit), then tick PR 62's
-rebase box after it merges.
+Decision changed: pin, not fix. The Owner asked what 26.04 runners buy; the answer was close to nothing
+(builds run in Docker, 24.04 runners are supported into 2028+, the shellcheck match doesn't close r1.f17),
+against an actionlint workaround, a Renovate exception and a runner/image OS split (r1.f18).
+
+Done on this branch: `.github/renovate.json` holds every `ubuntu` runner (github-runners datasource), with the
+reason and what lifts it; the android-image-smoke comment ties that runner to the Android image base. The
+earlier `.github/actionlint.yaml` is removed. Verified with Renovate 44.235.1's local dry run: all 14 runners
+`disabled` with the rule, all 14 proposing 26.04 without it. Config validator passes.
+
+Pending, each on the Owner's go: open the PR (this handoff removed as its last commit); close PR 62.
+Lifting the pin: when Cloud Run's driver supports CUDA 13.3 or later (the first with ubuntu26.04 images),
+move every image and runner to 26.04 together and delete the rule.
 
 ## Findings
 
@@ -30,16 +37,6 @@ rebase box after it merges.
   On 26.04 it would test a different OS than the image ships. This is where r1.f18 touches the runner.
 - Unexercised by PR checks: cloud-deploy (auth, setup-gcloud, vm-images) and lock-watch run only from main.
   The nightly deploy (04:07 PT, Tue to Sat) is their first 26.04 run.
-
-## The fix
-
-A separate PR from this branch, then let Renovate rebase PR 62:
-
-1. `.github/actionlint.yaml`: declare `ubuntu-26.04` under `self-hosted-runner.labels`, with a comment to drop it
-   once an actionlint release lists the label.
-2. Keep `android-image-smoke.yml` on `ubuntu-24.04`, with a comment tying it to the Android image base (r1.f18),
-   and a Renovate packageRule (`matchFileNames` that workflow, `matchDepNames: ["ubuntu"]`, `enabled: false`).
-3. After it merges, tick PR 62's rebase box; Renovate regenerates it without the android file.
 
 ## Gotchas
 

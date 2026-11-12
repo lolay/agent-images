@@ -1,7 +1,0 @@
-# Runner labels GitHub hosts that actionlint's built-in list doesn't know yet.
-# actionlint v1.7.12 (ACTIONLINT_VERSION in the Makefile) predates ubuntu-26.04,
-# which went GA in November 2026. Drop each label once an actionlint release
-# lists it, so a typo in it is caught again.
-self-hosted-runner:
-  labels:
-    - ubuntu-26.04

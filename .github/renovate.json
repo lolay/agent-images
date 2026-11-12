@@ -23,11 +23,10 @@
       "automerge": false
     },
     {
-      "description": "android-image-smoke's runner stands in for the Android image's Ubuntu VM, so it moves with that base (images/android/gce/build.pkr.hcl, r1.f18), not with Renovate.",
+      "description": "Ubuntu runners stay on the images' Ubuntu (r1.f18): every image moves to 26.04 together once Cloud Run's driver supports a CUDA with an ubuntu26.04 image (13.3 or later; it is 13.0), and the runners move with them. Until then 26.04 runners buy nothing, since builds run in Docker.",
       "matchManagers": ["github-actions"],
       "matchDatasources": ["github-runners"],
       "matchDepNames": ["ubuntu"],
-      "matchFileNames": [".github/workflows/android-image-smoke.yml"],
       "enabled": false
     }
   ]
