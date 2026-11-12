@@ -337,6 +337,7 @@ brew ripgrep 15.2.0
 brew ruff 0.17.4
 brew rustup 1.29.3
 brew shellcheck 0.11.0
+brew shfmt 3.14.1
 brew simdjson 5.1.1
 brew simdutf 9.3.3
 brew sops 3.13.3
