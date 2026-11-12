@@ -158,8 +158,8 @@ linux:
         hint: make host-setup
 
 # Inside a cloud runner session the host checks don't apply; this checks what
-# make cloud-lint and make cloud-test need. The linux image has shellcheck, Go
-# and Python, but not shfmt or Packer.
+# make cloud-lint and make cloud-test need. The linux image has all but Packer
+# (shfmt from images built after it joined the core Brewfile).
 session:
   - group: Cloud lint and tests
     items:

@@ -59,7 +59,7 @@ images/toolsets/
 
 | Toolset | Contents | Why it's a unit |
 | --- | --- | --- |
-| `core` | Homebrew itself; apt: build-essential, curl, ca-certificates, file, procps, zip, unzip, mandoc; Brewfile: gh, git, jq, ripgrep, tmux, age, sops, shellcheck, actionlint, nowline, triage | Every session on every platform. The Brewfile is the Mac's session tools too, so they're defined once |
+| `core` | Homebrew itself; apt: build-essential, curl, ca-certificates, file, procps, zip, unzip, mandoc; Brewfile: gh, git, jq, ripgrep, tmux, age, sops, shellcheck, shfmt, actionlint, nowline, triage | Every session on every platform. The Brewfile is the Mac's session tools too, so they're defined once |
 | `native` | apt: pkg-config, cmake, ninja-build, and the headers native builds look for (libssl-dev, zlib1g-dev, libffi-dev, libsqlite3-dev, libpq-dev, libbz2-dev, liblzma-dev, libreadline-dev), sqlite3, postgresql-client | The gap a no-sudo session can't fill: `cargo build` of anything on `openssl-sys`, or a Python package with a C extension and no wheel, fails without these |
 | `node` | node, pnpm | |
 | `python` | Homebrew's python, uv, ruff, pre-commit | Latest CPython for general work. Not for `gis` or `3d-gpu` (below) |
@@ -109,7 +109,7 @@ and `3d-gpu` are planned (m3).
 | --- | --- | --- | --- | --- | --- | --- |
 | Base | `ubuntu:24.04` | `ubuntu:24.04` | Ubuntu 24.04 VM | Cirrus macOS with Xcode | CUDA 13 devel | CUDA 13 devel |
 | sudo in a session | no | no | yes | yes | no | no |
-| Session tools (gh, git, jq, ripgrep, tmux, age, sops, shellcheck, actionlint, nowline, triage) | yes | yes | yes | yes | yes | yes |
+| Session tools (gh, git, jq, ripgrep, tmux, age, sops, shellcheck, shfmt, actionlint, nowline, triage) | yes | yes | yes | yes | yes | yes |
 | Claude Code | yes | yes | yes | yes | yes | yes |
 | C toolchain, cmake, ninja, pkg-config | yes | yes | yes | clang and make from Xcode (base) | yes | yes |
 | Native headers (OpenSSL, zlib, libffi, SQLite, libpq, and more) | yes | yes | yes | Xcode's SDK (base) | yes | yes |

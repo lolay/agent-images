@@ -21,6 +21,7 @@ brew "jq" if OS.mac?
 # Lint.
 brew "actionlint"
 brew "shellcheck"
+brew "shfmt"
 
 brew "lolay/tap/nowline"
 brew "lolay/tap/triage"

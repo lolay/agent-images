@@ -16,7 +16,7 @@ PROFILE = REPO / "images/cloud/runner/profile.sh"
 GH_SHIM_PROFILE = REPO / "images/shared/profile-gh-shim.sh"
 TOOLCHAINS = (
     "node", "pnpm", "python3", "uv", "go", "cargo", "rustc", "protoc", "buf",
-    "grpcurl", "terraform", "tflint", "actionlint", "shellcheck", "mandoc", "java",
+    "grpcurl", "terraform", "tflint", "actionlint", "shellcheck", "shfmt", "mandoc", "java",
     "cmake", "pkg-config", "gh", "sops", "age", "rg", "tmux",
 )
 
