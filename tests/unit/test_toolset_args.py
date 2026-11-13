@@ -64,9 +64,9 @@ class ToolsetArgsTests(unittest.TestCase):
         # An empty map would pass the test above vacuously.
         variables = locked_variables()
         self.assertEqual(
-            {toolset: fed_by(toolset, variables) for toolset in ("rust", "terraform", "gpu")},
+            {toolset: fed_by(toolset, variables) for toolset in ("rust", "terraform", "gpu", "3d")},
             {"rust": {"RUST_TOOLCHAIN"}, "terraform": {"TERRAFORM_VERSION", "TFLINT_VERSION"},
-             "gpu": {"VIRTUALGL_VERSION"}},
+             "gpu": {"VIRTUALGL_VERSION"}, "3d": {"BLENDER_VERSION"}},
         )
 
     def test_a_missing_arg_is_reported(self):

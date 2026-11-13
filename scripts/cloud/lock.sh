@@ -24,8 +24,9 @@
 #   claude - <version>               Claude Code
 #   rust - <version>                 the Rust toolchain, if the type has rust
 #   terraform - <version>            Terraform, if the type has terraform
-#   release <name> <tag>             a tool from a GitHub release (tflint,
-#                                    virtualgl)
+#   release <name> <tag>             a tool from an upstream release (tflint,
+#                                    virtualgl, colmap from GitHub; blender
+#                                    from blender.org)
 #   brew <formula> <version>         Homebrew, dependencies included: a record
 #                                    and a build trigger, never a pin (owner,
 #                                    2026-11-06)
@@ -34,8 +35,9 @@
 #
 # Each value is resolved within the constraint declared where the dependency
 # lives: BASE_IMAGE and CLAUDE_VERSION in docker-bake.hcl, packages.txt lines
-# (name=version pins one), RUST_TOOLCHAIN, TERRAFORM_VERSION, TFLINT_VERSION and
-# VIRTUALGL_VERSION in their toolsets' install.sh. The apt snapshot moves only
+# (name=version pins one), RUST_TOOLCHAIN, TERRAFORM_VERSION, TFLINT_VERSION,
+# VIRTUALGL_VERSION and BLENDER_VERSION in their toolsets' install.sh, and
+# COLMAP_VERSION in the 3d toolset's build-colmap.sh. The apt snapshot moves only
 # when what apt resolves today differs from what the lock recorded.
 #
 #   LOCK_NOW       the snapshot id to use if apt moved (default: now, UTC)
@@ -57,6 +59,7 @@ readonly lock_dir="${LOCK_DIR:-images/cloud}"
 readonly claude_releases=https://downloads.claude.ai/claude-code-releases
 readonly rust_dist=https://static.rust-lang.org/dist
 readonly terraform_index=https://releases.hashicorp.com/terraform/index.json
+readonly blender_releases=https://download.blender.org/release
 readonly registry_waits="${LOCK_REGISTRY_WAITS:-30 60 120}"
 
 die() {
@@ -215,18 +218,39 @@ release_repo() {
 	case "$1" in
 	tflint) printf 'terraform-linters/tflint' ;;
 	virtualgl) printf 'VirtualGL/virtualgl' ;;
+	colmap) printf 'colmap/colmap' ;;
 	*) die "no GitHub repository known for release '$1'" ;;
+	esac
+}
+
+# blender_latest: the newest release in blender.org's index: the newest
+# BlenderX.Y/ series, then the newest x.y.z Linux build in it.
+blender_latest() {
+	local index series version
+	index="$(fetch "$blender_releases/")"
+	series="$(sed -n -E 's/.*href="Blender([0-9]+\.[0-9]+)\/".*/\1/p' <<<"$index" | sort -V | tail -n 1)"
+	[[ -n "$series" ]] || die "no Blender series in $blender_releases/"
+	index="$(fetch "$blender_releases/Blender$series/")"
+	version="$(sed -n -E 's/.*href="blender-([0-9]+\.[0-9]+\.[0-9]+)-linux-x64\.tar\.xz".*/\1/p' <<<"$index" | sort -V | tail -n 1)"
+	[[ -n "$version" ]] || die "no Linux build in $blender_releases/Blender$series/"
+	printf '%s' "$version"
+}
+
+# release_latest <name>: upstream's newest release of a `release` line's tool.
+release_latest() {
+	case "$1" in
+	blender) blender_latest ;;
+	*) github_latest "$(release_repo "$1")" ;;
 	esac
 }
 
 # resolve_release <name> <file> <NAME>: a tool from a GitHub release.
 resolve_release() {
-	local name="$1" file="$2" var="$3" constraint tag repo
+	local name="$1" file="$2" var="$3" constraint tag
 	constraint="$(declared "$file" "$var")"
 	if [[ "$constraint" == latest ]]; then
 		# Assigned first: a failed substitution in printf's arguments wouldn't fail.
-		repo="$(release_repo "$name")"
-		tag="$(github_latest "$repo")"
+		tag="$(release_latest "$name")"
 		printf 'release %s %s\n' "$name" "$tag"
 	else
 		printf 'release %s %s\npinned %s %s\n' "$name" "$constraint" "$name" "$(pin_note "$file" "$var:-")"
@@ -345,6 +369,10 @@ cmd_resolve() {
 		if [[ " ${toolsets[*]} " == *" gpu "* ]]; then
 			resolve_release virtualgl images/toolsets/gpu/install.sh VIRTUALGL_VERSION
 		fi
+		if [[ " ${toolsets[*]} " == *" 3d "* ]]; then
+			resolve_release colmap images/toolsets/3d/build-colmap.sh COLMAP_VERSION
+			resolve_release blender images/toolsets/3d/install.sh BLENDER_VERSION
+		fi
 		resolve_brew "$type"
 	)"
 	printf '# %s: what agent-%s is built from (specs/gcp.md, "The lock").\n' "$(lock_file "$type")" "$type"
@@ -419,7 +447,7 @@ cmd_summary() {
 pinned_value() {
 	case "$2" in
 	apt/*) lock_value "$1" apt "${2#apt/}" ;;
-	tflint | virtualgl) lock_value "$1" release "$2" ;;
+	tflint | virtualgl | colmap | blender) lock_value "$1" release "$2" ;;
 	*) lock_value "$1" "$2" ;;
 	esac
 }
@@ -432,7 +460,7 @@ upstream_newest() {
 	claude) claude_channel latest ;;
 	rust) rust_channel stable ;;
 	terraform) terraform_newest ;;
-	tflint | virtualgl) github_latest "$(release_repo "$1")" ;;
+	tflint | virtualgl | colmap | blender) release_latest "$1" ;;
 	base)
 		digest="$(image_digest "${2%@*}")"
 		printf '%s@%s' "${2%@*}" "$digest"

@@ -75,7 +75,7 @@ images/toolsets/
 | `gis` | uv, and a pixi environment from conda-forge: GDAL, PDAL with python-pdal, QGIS with PyQGIS, rasterio, geopandas, shapely, pyproj, pystac-client, rioxarray, DuckDB with its spatial extension | Below |
 | `gpu` | GLVND's EGL and GLES, Vulkan's loader and vulkaninfo with Mesa's lavapipe, nvtop, ffmpeg (Ubuntu's, with NVENC), VirtualGL (its own release), vendor files pointing EGL and Vulkan at the driver Cloud Run mounts (`/usr/local/nvidia/lib64`), and `agent-cuda-probe`; CUDA's `PATH` and `CUDA_HOME` | The GPU types' last tools layer (m3): the CUDA toolkit comes with the base, the driver from the host, and this routes to it. Last rather than in the base while GPU rendering on Cloud Run is being worked out, so a change to it rebuilds only itself |
 | `display` | Xvfb (the entrypoint, or `agent-xvfb.service` on the VM types, starts it at `:99`, 1920x1080), Mesa's software OpenGL (llvmpipe), x11-utils, mesa-utils, ImageMagick for screenshots | A virtual display: headed browsers and desktop apps (QGIS) run and can be screenshotted without a GPU. apt-only, so baked in. GPU types add GPU rendering (VirtualGL, Vulkan) on top in m3 |
-| `3d` | Blender (blender.org's build), COLMAP built for compute capability 12.0, uv, and a uv project with PyTorch's CUDA build, gsplat, Open3D | Below |
+| `3d` | COLMAP from source (a builder stage, CUDA for 8.9 and 12.0, headless), Blender (blender.org's build), exiftool, uv, and `/opt/3d`: a locked uv environment (`uv.lock`, Python 3.14) with PyTorch's CUDA 13.0 build, gsplat compiled for 8.9 and 12.0, Open3D, OpenCV, kornia, laspy | Below |
 
 ## Types
 
@@ -237,9 +237,12 @@ Same lesson. PyTorch, Open3D and gsplat lag CPython releases (Open3D's wheels ha
 stopped a version or two behind), and gsplat compiles a CUDA extension against
 PyTorch. So the `3d` toolset is a uv project at `/opt/3d` with `requires-python`
 set to the newest version all three publish for, PyTorch from its CUDA index, and
-gsplat built with `TORCH_CUDA_ARCH_LIST=12.0` at image build so no session compiles
-it. COLMAP is built from source in a builder stage (`CMAKE_CUDA_ARCHITECTURES=120`)
-and only its install tree is copied in. Blender ships its own Python and its own
+gsplat built with `TORCH_CUDA_ARCH_LIST="8.9;12.0+PTX"` at image build so no session
+compiles it. COLMAP is built from source in a builder stage
+(`CMAKE_CUDA_ARCHITECTURES="89;120"`) and only its install tree is copied in, with
+the Ubuntu packages its binary links. 8.9 is the L4, kept for the day its quota
+comes through. The environment is locked in `images/toolsets/3d/uv.lock`, which
+the lock watch doesn't move: `uv lock --upgrade` there, in a pull request. Blender ships its own Python and its own
 Cycles kernels; take blender.org's Linux build, not Ubuntu's.
 
 ### `gis` stays CPU; capture and reconstruction go to `3d-gpu`

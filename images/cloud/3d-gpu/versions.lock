@@ -1,0 +1,12 @@
+# images/cloud/3d-gpu/versions.lock: what agent-3d-gpu is built from (specs/gcp.md, "The lock").
+# Written by scripts/cloud/lock.sh resolve; edit the constraint where it is
+# declared, never this file.
+# Seeded by hand with only the lines the build reads (the session that added
+# the type had no Docker for lock.sh resolve); the lock watch resolves the rest.
+apt-snapshot - 20261106T222007Z
+base - mirror.gcr.io/nvidia/cuda:13.0.3-devel-ubuntu24.04@sha256:b7ae301dea2c162444795462ce17a05f6a516e5a75944b57af5b88540a1a2266
+brew uv 0.13.7
+claude - 2.1.319
+release blender 5.3.0
+release colmap 4.2.1
+release virtualgl 3.1.5
