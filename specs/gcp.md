@@ -6,9 +6,10 @@ Status: **m1 (`linux`) done, 2026-11-05**: sessions run on Cloud Run, tested twi
 ([m2 `gis` results](#m2-gis-results)) and `android`, a Compute Engine VM per
 session ([m2 `android` results](#m2-android-results)). m3, the GPU types, is under
 way ([handoffs/handoff-m3-gpu-types.md](handoffs/handoff-m3-gpu-types.md)): the
-`gpu` toolset and `linux-gpu` are built; `linux-gpu` goes straight to the RTX PRO 6000
-(Google denied the L4 quota and granted 2 RTX PRO 6000, 2026-11-13), waiting for
-its first deploy.
+`gpu` toolset and `linux-gpu` are built; `linux-gpu` went straight to the RTX PRO 6000
+(Google denied the L4 quota and granted 2 RTX PRO 6000, 2026-11-13), is deployed, and
+passed its session test ([m3 `linux-gpu` results](#m3-linux-gpu-results)): Cloud Run
+renders on the GPU. `3d-gpu` is next.
 Recheck anything marked preview before building on it.
 
 The same model as the Mac and Linux runners, with Google running the hardware: Claude's
@@ -1125,10 +1126,47 @@ What the deploys found:
   quota, 2026-11-13). Done when
   [tests/sessions/linux-gpu.md](../tests/sessions/linux-gpu.md) passes, which settles
   the open graphics question: if OpenGL and Vulkan don't run on the GPU in Cloud Run,
-  GPU types move to the Compute Engine path (G4).
+  GPU types move to the Compute Engine path (G4). Done 2026-11-13: they do
+  ([m3 `linux-gpu` results](#m3-linux-gpu-results)), so the GPU types stay on Cloud Run.
 - `3d-gpu`: COLMAP, Blender and the splatting library built for compute capability
   12.0. Done when [tests/sessions/3d-gpu.md](../tests/sessions/3d-gpu.md) passes.
 - Handoff: [handoffs/handoff-m3-gpu-types.md](handoffs/handoff-m3-gpu-types.md).
+
+#### m3 `linux-gpu` results
+
+Deployed 2026-11-13 by [run 43391162400](https://github.com/lolay/agent-images/actions/runs/43391162400)
+after #92 (the RTX PRO 6000) and #94 (`LAUNCH_STAGE=BETA`: a GPU job whose task
+timeout is over an hour is the Preview feature "Long running GPU jobs", and Cloud
+Run refuses it without the annotation). [tests/sessions/linux-gpu.md](../tests/sessions/linux-gpu.md)
+passed every check on an "Agent: Linux (GPU)" session (2026-11-13T17:01Z; report on
+`claude/runner-test-linux-gpu-xuyqhw`).
+
+**Cloud Run renders on the GPU**, so the GPU types stay on Cloud Run (plan s7). EGL on
+the device and surfaceless platforms, Vulkan and `vglrun` all report the RTX PRO 6000,
+and the host mounts every driver library group `agent-gpu-libs` looks for (compute,
+EGL, GLX, Vulkan, NVENC, NVDEC, OptiX).
+
+| Check | Result |
+| --- | --- |
+| Container | RTX PRO 6000 Blackwell Server Edition (97,887 MiB, compute capability 12.0), driver 580.126.20; CUDA 13.0.88; 21 vCPU, 78 GiB |
+| Deploy | Job about 22 min: build about 17 min, then the smoke execution 4 min 22 s (1 min 53 s provisioning, 1 min 37 s starting, 52 s running) |
+| CUDA | Built for `sm_120`, results match the CPU; an `sm_80`-only build fails with "no kernel image"; plain tiled matmul 7.6 TFLOPS fp32 |
+| PyTorch | 2.14.1+cu130: 8192 matmul 416 TFLOPS bf16, 78 TFLOPS fp32 (76x the CPU); a CIFAR-10 epoch in 0.87 s |
+| OpenGL through EGL | 300 frames of a 3.36M-triangle mesh at 1920x1080, 4x MSAA: 3,101 fps on the GPU, 1.8 fps on llvmpipe (1,720x) |
+| Path tracer (CUDA) | 1920x1080 at 256 spp in 0.061 s, 20 G rays/s, 133x a 21-thread OpenMP run |
+| Session notice | Idle and end time lines shown; no cost line (`AGENT_COST_USD_PER_HOUR` unset) |
+
+What it found:
+
+| Finding | Result |
+| --- | --- |
+| ffmpeg | Missing; the gpu toolset installs Ubuntu's now, with NVENC |
+| EGL on Xvfb | EGL's X11 platform and plain GLX on `:99` are llvmpipe (no DRI3); `vglrun` and the device or surfaceless platforms reach the GPU. In the session's `CLAUDE.md` |
+| `libcuda` | Not in the `ldconfig` cache (the mount arrives after the build); it resolves through `LD_LIBRARY_PATH`, which the CUDA base image sets and Cloud Run appends `/usr/local/nvidia/lib64` to again. Harmless; in the session's `CLAUDE.md` |
+| `XDG_RUNTIME_DIR` | Unset, so `eglinfo` and `vulkaninfo` warn; both still find the GPU |
+| The test | 1 Hz GPU sampling missed sub-second work, and CIFAR-10 took 868 s from cs.toronto.edu; the test now samples at 100 ms, loops short work, and downloads from Hugging Face |
+
+Not measured yet: a session's cold start, so `EXPECTED_SPAWN_SECONDS` stays 300.
 
 ### m4 - Functional smoke and versions report
 

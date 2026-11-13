@@ -6,6 +6,9 @@ lolay/agent-images#37. s6 was blocked on the Cloud Run GPU quota (run 25 failed
 on it). 2026-11-13: Google granted 2 RTX PRO 6000 and denied the L4, so s6 and s8
 merge: `linux-gpu` moves to the RTX PRO 6000 and `DEPLOY=false` goes (branch
 `claude/quota-approval-confirmation-maxyq5`); s6 now deploys on that GPU.
+s6 done 2026-11-13 except `EXPECTED_SPAWN_SECONDS` (no cold start measured yet):
+deployed, and the session test passed ([gcp.md, "m3 `linux-gpu` results"](../gcp.md#m3-linux-gpu-results)).
+s7 done: Cloud Run renders on the GPU, so the plan carries on at s9.
 Branch `claude/vigilant-tesla-m2ipbw` (assigned by the harness), from `main` at
 `154787f`.
 
@@ -167,7 +170,7 @@ about 10.8 GB unpacked (CUDA devel 7.1 GB). The Actions cache was the real limit
 about 12 to 15 minutes from scratch, and the CPU types' cache settings are
 unchanged.
 
-#### s6 - First deploy and the session test on the RTX PRO 6000 [deep]
+#### s6 - First deploy and the session test on the RTX PRO 6000 [deep] (done except the spawn time)
 
 No L4 (quota denied 2026-11-13): s6 runs on the RTX PRO 6000, which also covers s8.
 
@@ -175,7 +178,10 @@ Watch the deploy (build time, image size, GPU smoke). Set `EXPECTED_SPAWN_SECOND
 from the cold start. Run the linux-gpu session test in "Agent: Linux (GPU)";
 record the results in gcp.md as "m3 `linux-gpu` results".
 
-#### s7 - Cloud Run or Compute Engine for GPU types [deep]
+#### s7 - Cloud Run or Compute Engine for GPU types [deep] (done)
+
+Done 2026-11-13: EGL (device and surfaceless), Vulkan and `vglrun` all run on the RTX
+PRO 6000 in Cloud Run, so the GPU types stay there, with no G4 plan.
 
 From s6's step 4 (EGL, Vulkan, VirtualGL on the GPU): write the decision for
 Gary. If Cloud Run renders on the GPU, carry on. If not, stop: the GPU types move
@@ -194,7 +200,8 @@ scratch) since 2026-11-13, after the L4 quota was denied.
 - Blender from blender.org's Linux build (its own Python and Cycles kernels).
 - `/opt/3d`: a uv project with `requires-python` at the newest version PyTorch,
   Open3D and gsplat all publish for; PyTorch from its CUDA 13.0 index; gsplat
-  built with `TORCH_CUDA_ARCH_LIST="8.9;12.0+PTX"`; ffmpeg.
+  built with `TORCH_CUDA_ARCH_LIST="8.9;12.0+PTX"`. ffmpeg comes from the gpu
+  toolset now (2026-11-13).
 - `CLAUDE.md` and `check.txt` (including `cuobjdump --list-elf` showing `sm_120`).
 
 #### s10 - `3d-gpu` type, deploy and session test [deep]

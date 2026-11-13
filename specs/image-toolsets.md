@@ -73,9 +73,9 @@ images/toolsets/
 | `android-rust` | Rust's Android targets (aarch64, armv7, x86_64) and cargo-ndk | Rust libraries for an Android app, against the `android` toolset's NDK. Needs `rust` and `android` |
 | `android-go` | gomobile and gobind | Go libraries for an Android app (`.aar`), against the same NDK. Needs `go` and `android` |
 | `gis` | uv, and a pixi environment from conda-forge: GDAL, PDAL with python-pdal, QGIS with PyQGIS, rasterio, geopandas, shapely, pyproj, pystac-client, rioxarray, DuckDB with its spatial extension | Below |
-| `gpu` | GLVND's EGL and GLES, Vulkan's loader and vulkaninfo with Mesa's lavapipe, nvtop, VirtualGL (its own release), vendor files pointing EGL and Vulkan at the driver Cloud Run mounts (`/usr/local/nvidia/lib64`), and `agent-cuda-probe`; CUDA's `PATH` and `CUDA_HOME` | The GPU types' last tools layer (m3): the CUDA toolkit comes with the base, the driver from the host, and this routes to it. Last rather than in the base while GPU rendering on Cloud Run is being worked out, so a change to it rebuilds only itself |
+| `gpu` | GLVND's EGL and GLES, Vulkan's loader and vulkaninfo with Mesa's lavapipe, nvtop, ffmpeg (Ubuntu's, with NVENC), VirtualGL (its own release), vendor files pointing EGL and Vulkan at the driver Cloud Run mounts (`/usr/local/nvidia/lib64`), and `agent-cuda-probe`; CUDA's `PATH` and `CUDA_HOME` | The GPU types' last tools layer (m3): the CUDA toolkit comes with the base, the driver from the host, and this routes to it. Last rather than in the base while GPU rendering on Cloud Run is being worked out, so a change to it rebuilds only itself |
 | `display` | Xvfb (the entrypoint, or `agent-xvfb.service` on the VM types, starts it at `:99`, 1920x1080), Mesa's software OpenGL (llvmpipe), x11-utils, mesa-utils, ImageMagick for screenshots | A virtual display: headed browsers and desktop apps (QGIS) run and can be screenshotted without a GPU. apt-only, so baked in. GPU types add GPU rendering (VirtualGL, Vulkan) on top in m3 |
-| `3d` | Blender (blender.org's build), COLMAP built for compute capability 12.0, ffmpeg, uv, and a uv project with PyTorch's CUDA build, gsplat, Open3D | Below |
+| `3d` | Blender (blender.org's build), COLMAP built for compute capability 12.0, uv, and a uv project with PyTorch's CUDA build, gsplat, Open3D | Below |
 
 ## Types
 
@@ -129,7 +129,7 @@ and `3d-gpu` are planned (m3).
 | Display | Xvfb, llvmpipe | Xvfb, llvmpipe | Xvfb, llvmpipe | the VM's (base) | Xvfb, then GPU rendering (m3) | Xvfb, then GPU rendering (m3) |
 | GIS: QGIS, GDAL, PDAL, rasterio, geopandas, DuckDB spatial, STAC | no | yes | no | no | no | no |
 | CUDA toolkit | no | no | no | no | base | base |
-| 3D: Blender, COLMAP, PyTorch, gsplat, Open3D, ffmpeg | no | no | no | no | no | yes |
+| 3D: Blender, COLMAP, PyTorch, gsplat, Open3D | no | no | no | no | no | yes |
 | Xcode, swiftformat, swiftlint, xcbeautify, xcodegen, asc | no | no | no | yes | no | no |
 
 A type without something can still get it: on `android` and `mac` with sudo or
@@ -254,7 +254,7 @@ pipelines run:
   Python EXIF libraries miss vendor maker-notes.
 - OpenCV (headless) for imagery; kornia for the same on the GPU.
 - laspy with lazrs, for NumPy access to LAS, LAZ and COPC alongside PDAL.
-- ffmpeg, for frames from capture video.
+- ffmpeg, for frames from capture video (from the `gpu` toolset, with NVENC).
 - Spirula Studio, proposed: a Gaussian splat trainer whose Linux release is one
   Vulkan binary, so nothing has to be compiled for compute capability 12.0 (gsplat
   does). It needs the Vulkan loader, libOpenGL and an NVIDIA ICD manifest when the
@@ -341,9 +341,12 @@ tooling as PyO3 extensions, or Rust splatting like Brush). If that becomes true,
 - **Docker in a session** (Testcontainers, `docker build`) can't work on Cloud Run.
   Repos that need it go to a Compute Engine type, as gcp.md already says for the
   GPU fallback. Worth saying in the cloud `CLAUDE.md`.
-- **Unconfirmed on Cloud Run's GPU driver mount:** whether it includes OptiX
-  (`libnvoptix`) for Blender and NVENC (`libnvidia-encode`) for ffmpeg. The
-  `3d-gpu` test falls back to CUDA and libx264 if not, and records which.
+- **Cloud Run's GPU driver mount has OptiX and NVENC:** the first `linux-gpu`
+  session test (2026-11-13) found `libnvoptix` and `libnvidia-encode` mounted,
+  with compute, EGL, GLX, Vulkan and NVDEC (`agent-gpu-libs`). Whether Blender's
+  OptiX and ffmpeg's NVENC run on them is still for a session to show: the gpu
+  smoke reports an NVENC encode, and the `3d-gpu` test falls back to CUDA and
+  libx264 and records which.
 
 ## Build wiring
 

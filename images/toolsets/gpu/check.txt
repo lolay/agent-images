@@ -7,3 +7,5 @@ driver-libs: command -v agent-gpu-libs
 eglinfo: command -v eglinfo
 vulkaninfo: command -v vulkaninfo
 virtualgl: vglrun -h 2>&1 | grep -m1 -i virtualgl || ls /opt/VirtualGL/bin/vglrun
+ffmpeg: ffmpeg -hide_banner -version | head -n 1
+nvenc: ffmpeg -hide_banner -encoders | grep -m1 -o 'h264_nvenc.*'

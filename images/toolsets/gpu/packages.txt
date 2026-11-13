@@ -19,3 +19,9 @@ mesa-vulkan-drivers
 
 # Watching the GPU from a session.
 nvtop
+
+# Video: Ubuntu's ffmpeg is built with NVIDIA's codec headers (ffnvcodec), so
+# h264_nvenc and hevc_nvenc load NVENC from the driver mount (libnvidia-encode),
+# with libx264 for the CPU. The linux-gpu test needed one and had to borrow a
+# pip wheel's (2026-11-13).
+ffmpeg
