@@ -50,7 +50,8 @@ filed 2026-11-04 and both ephemeral disk only. All four Cloud Run GPU quotas in
 `us-central1` (L4 and RTX PRO 6000, with and without zonal redundancy) read 0, so
 `linux-gpu` stays `DEPLOY=false`. The reply drafted below was never sent. To do: file
 a new request from the Quotas & System Limits tab (select the two "without zonal
-redundancy" rows, Edit quotas): 3 for L4, 3000 for RTX PRO 6000. The console's
+redundancy" rows, Edit quotas): 2 for L4, 2000 for RTX PRO 6000 (Gary's call,
+2026-11-13; Cloud Run attaches whole GPUs only, so milli is just the unit). The console's
 display names say "without zonal redundancy", so filter on "GPU", not "no zonal
 redundancy".
 
