@@ -44,13 +44,23 @@ cloud_toolsets() {
 	done < <(cloud_chain "$1" | tac)
 }
 
+# A parent's pattern below uses !(...), which needs extglob when it is matched.
+shopt -s extglob
+
 # cloud_image_paths <type>: glob patterns for every path the type's image is
 # built from: its directory and each build parent's, and the toolsets each of
-# them installs.
+# them installs. A type builds from its own versions.lock (lock.sh bake-args)
+# and no Dockerfile copies one, so a parent's lock is not an input: a linux
+# lock bump must not rebuild linux-gpu.
 cloud_image_paths() {
-	local dir toolset
+	local dir toolset first=true
 	while read -r dir; do
-		printf 'images/cloud/%s/*\n' "$dir"
+		if $first; then
+			printf 'images/cloud/%s/*\n' "$dir"
+			first=false
+		else
+			printf 'images/cloud/%s/!(versions.lock)\n' "$dir"
+		fi
 		while read -r toolset; do
 			printf 'images/toolsets/%s/*\n' "$toolset"
 		done < <(cloud_toolsets_of "$dir")

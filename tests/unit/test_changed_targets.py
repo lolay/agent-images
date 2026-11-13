@@ -105,6 +105,21 @@ class ChangedTargetsTests(unittest.TestCase):
         )
         self.assertFalse(result["orchestrator"])
 
+    def test_a_parent_types_lock_does_not_rebuild_its_child(self):
+        # linux-gpu is built FROM linux but builds from its own lock.
+        self.assertEqual(
+            self.change("images/cloud/linux/versions.lock")["types"], [{"type": "linux", "build": True}]
+        )
+
+    def test_a_child_types_lock_redeploys_that_type_alone(self):
+        self.assertEqual(
+            self.change("images/cloud/linux-gpu/versions.lock")["types"], [{"type": "linux-gpu", "build": True}]
+        )
+
+    def test_a_parents_dockerfile_still_rebuilds_its_children(self):
+        both = [{"type": "linux", "build": True}, {"type": "linux-gpu", "build": True}]
+        self.assertEqual(self.change("images/cloud/linux/Dockerfile")["types"], both)
+
     def test_a_toolset_rebuilds_the_types_that_install_it(self):
         both = [{"type": "linux", "build": True}, {"type": "linux-gpu", "build": True}]
         # base's, and linux's, which linux-gpu is built on.
