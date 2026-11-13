@@ -17,6 +17,28 @@ and `cloud-test`, what a session can run of the pull request check. A change to
 `make pre-commit MODE=android`, which adds Packer (the linux image doesn't ship it)
 and the template's Packer checks.
 
+## No Docker in a session
+
+A cloud session can't run Docker and can't install it: Cloud Run sets
+no-new-privileges, so there's no root, and rootless Docker or Podman can't map user
+namespaces without their setuid helpers. Don't try. What needs it is CI's:
+
+- Building and smoking an image: `cloud-build.yml` does it on the pull request for each
+  type the change touches, and its `gate` check is the result.
+- `versions.lock`: don't regenerate or hand-edit it. `lock-watch.yml` re-locks every
+  type from `main` and opens its own pull request when one moved (specs/gcp.md, "The
+  lock"). Until then the pull request's build reads the old lock: a new apt package
+  installs from the locked snapshot, and a toolchain with no lock line takes its
+  `install.sh` default.
+
+The exception is a new runner type: it has no lock, so cloud-build fails until one is
+seeded with `make cloud-lock TYPE=<type> WRITE=1` on a host with Docker. Say so in the
+pull request.
+
+In your report, don't list the build or the lock as something you couldn't do. Say the
+image build runs in cloud-build on the pull request, and if one is open, give its gate
+result (`gh pr checks`).
+
 ## Docker images
 
 Pull Docker Hub images through Google's mirror, `mirror.gcr.io`, never from Docker
