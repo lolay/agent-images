@@ -343,10 +343,11 @@ tooling as PyO3 extensions, or Rust splatting like Brush). If that becomes true,
   GPU fallback. Worth saying in the cloud `CLAUDE.md`.
 - **Cloud Run's GPU driver mount has OptiX and NVENC:** the first `linux-gpu`
   session test (2026-11-13) found `libnvoptix` and `libnvidia-encode` mounted,
-  with compute, EGL, GLX, Vulkan and NVDEC (`agent-gpu-libs`). Whether Blender's
-  OptiX and ffmpeg's NVENC run on them is still for a session to show: the gpu
-  smoke reports an NVENC encode, and the `3d-gpu` test falls back to CUDA and
-  libx264 and records which.
+  with compute, EGL, GLX, Vulkan and NVDEC (`agent-gpu-libs`). ffmpeg's NVENC
+  encodes on it: the gpu smoke's `h264_nvenc` encode passed in Cloud Run
+  (execution `agent-linux-gpu-next-hn5j4`, 2026-11-13). Whether Blender's OptiX
+  runs is still for a session to show: the `3d-gpu` test falls back to CUDA and
+  records which.
 
 ## Build wiring
 
