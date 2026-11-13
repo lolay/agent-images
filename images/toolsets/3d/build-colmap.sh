@@ -24,16 +24,19 @@ if [[ "$version" == latest ]]; then
 fi
 [[ "$version" =~ ^[0-9]+(\.[0-9]+)+$ ]] || die "unexpected COLMAP release '$version'"
 
-# COLMAP's install guide's Ubuntu list, less the GUI's (Qt, GLEW) and the tests'.
-# openimageio-tools stays: Ubuntu's OpenImageIO CMake config imports its
-# binaries, and configure fails without them.
+# COLMAP's install guide's Ubuntu list, less the GUI's (Qt) and the tests'.
+# Configure requires more than the guide's list says: OpenGL and GLEW even with
+# the GUI and OpenGL off (cmake/FindDependencies.cmake finds them REQUIRED),
+# gflags, and openimageio-tools, whose binaries Ubuntu's OpenImageIO CMake
+# config imports.
 sudo apt-get update -q
 sudo env DEBIAN_FRONTEND=noninteractive apt-get install -q -y --no-install-recommends \
 	cmake ninja-build build-essential git \
 	libboost-program-options-dev libboost-graph-dev libboost-system-dev \
 	libeigen3-dev libopenimageio-dev openimageio-tools libmetis-dev libgoogle-glog-dev \
 	libsqlite3-dev libcgal-dev libceres-dev libsuitesparse-dev \
-	libcurl4-openssl-dev libssl-dev libopenblas-dev
+	libcurl4-openssl-dev libssl-dev libopenblas-dev libgflags-dev \
+	libgl-dev libopengl-dev libglx-dev libglew-dev
 # Ubuntu's OpenImageIO CMake config wants OpenCV's include directory to exist,
 # though COLMAP uses none of it (the install guide's workaround).
 sudo mkdir -p /usr/include/opencv4
