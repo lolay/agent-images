@@ -1160,7 +1160,7 @@ What it found:
 
 | Finding | Result |
 | --- | --- |
-| ffmpeg | Missing; the gpu toolset installs Ubuntu's now, with NVENC |
+| ffmpeg | Missing; the gpu toolset installs Ubuntu's now, and its NVENC encode passed in the next deploy's smoke (execution `agent-linux-gpu-next-hn5j4`) |
 | EGL on Xvfb | EGL's X11 platform and plain GLX on `:99` are llvmpipe (no DRI3); `vglrun` and the device or surfaceless platforms reach the GPU. In the session's `CLAUDE.md` |
 | `libcuda` | Not in the `ldconfig` cache (the mount arrives after the build); it resolves through `LD_LIBRARY_PATH`, which the CUDA base image sets and Cloud Run appends `/usr/local/nvidia/lib64` to again. Harmless; in the session's `CLAUDE.md` |
 | `XDG_RUNTIME_DIR` | Unset, so `eglinfo` and `vulkaninfo` warn; both still find the GPU |
