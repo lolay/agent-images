@@ -50,7 +50,7 @@ debugging. Dotted arrows are independent gates.
 | `HOST_RUNNER_HEALTH_PORT` | `8081` | The host runner's `/healthz` |
 | `HOST_CLAUDE_CONFIG_DIR` | `CLAUDE_CONFIG_DIR`, else `~/.claude` | The host runner's Claude config directory (session config, lock account); `~/` or an absolute path. Read at `host-runner-run`/`-install` time from the command line or `.env` |
 | `HOST_RUNNER_SHELL` | your login shell | The shell that sets up the host runner's environment |
-| `MODE` | `run` | `doctor`: `run` or `build` |
+| `MODE` | `run` | `doctor`: `run` or `build`; in a cloud session, `run` or `android` |
 | `NAME` | none | `secret-set`: `claude-environment-secret` |
 | `LOG_LINES` | `100` | `vm-logs` |
 | `REGISTRY` | from `.env` | `publish` |
@@ -154,7 +154,8 @@ step. It passes `--var image_ref=$(IMAGE_REF)` so the image check follows `.env`
 | `host` | Apple Silicon, `make`, `tart` ≥ 2.38, `security`, `.env` |
 | `default` (run host) | `claude` (and, as a warning, that Homebrew's quarantine is off it), `vms/runner.env`, the Keychain environment secret, a login keychain this session can read (it stays locked over SSH), the `IMAGE_REF` image; FileVault state (info only) |
 | `build` | `packer` ≥ 1.16.1, the Packer Tart plugin, `python3`, `shellcheck`, `shfmt`, `plutil` |
-| `session` (a cloud runner session, where `AGENT_TYPE` is set) | `shellcheck`, `shfmt`, `go`, `packer`, `python3`: what `cloud-lint` and `cloud-test` need |
+| `session` (a cloud runner session, where `AGENT_TYPE` is set) | `shellcheck`, `shfmt`, `go`, `python3`: what the session gate, `cloud-lint` and `cloud-test`, needs, and nothing more, so it passes on the linux image |
+| `session-android` (a session, `MODE=android`) | `session` plus `packer`, for `cloud-lint-android` |
 | `linux` (Linux host) | x86_64, VT-x/AMD-V, nested KVM, `make`, `.env`, `lxc`, a ZFS storage pool, the `IMAGE_REF` image, `claude`, `vms/runner.env`, the environment secret file, lingering |
 
 ## Linux host
@@ -195,9 +196,10 @@ or deploys: only a push to `main` does, through `.github/workflows/cloud-deploy.
 | --- | --- |
 | `cloud-build` | Builds through `scripts/cloud/bake.sh`, one target at a time: a runner type from its lock (`images/cloud/<TYPE>/versions.lock`, the base digest, apt snapshot, Claude and toolchain versions as `lock.sh bake-args`), loaded as `agent-<TYPE>:local`, with the versions report the pull request check shows in `out/versions/<TYPE>/versions.md` (it names `COMMIT`, the checked-out commit by default); the orchestrator at `CLAUDE_VERSION`. A type with no lock fails. `TYPE=linux` (default), any type, `orchestrator`, or `all` (`cloud-targets`). `agent-base` comes along as the type's build context and isn't loaded on its own |
 | `cloud-smoke` | Checks the image's toolset record against the Dockerfiles and toolsets (`scripts/cloud/record-check.sh`: every toolset recorded in order, with its binary checks and smoke test, so an empty record can't pass), then runs `agent-<TYPE>:local smoke $(SMOKE)` (the entrypoint's checks: Claude, every toolset's binary checks and smoke tests, the mounts; what the deploy runs on `agent-<type>-next`) with anonymous volumes standing in for scratch and outputs and an empty read-only tmpfs for the datasets. What the pull request check runs on each loaded runner type |
-| `cloud-lint` | `shellcheck` and `shfmt -d` on the cloud scripts (the android VM's guest scripts included), `actionlint` on the cloud workflows and `lock-watch.yml` (`go run` at `ACTIONLINT_VERSION`, so it needs Go), the cloud settings JSON, and `packer fmt -check` and `packer validate` on the android Compute Engine image's template (`images/android/gce`) |
+| `cloud-lint` | `shellcheck` and `shfmt -d` on the cloud scripts (the android VM's guest scripts included), `actionlint` on the cloud workflows and `lock-watch.yml` (`go run` at `ACTIONLINT_VERSION`, so it needs Go), and the cloud settings JSON |
+| `cloud-lint-android` | `packer init`, `packer fmt -check` and `packer validate` on the android Compute Engine image's template (`images/android/gce`). Apart from `cloud-lint` so a session that doesn't touch the template doesn't need Packer, which the linux image doesn't ship |
 | `cloud-test` | `python3 -m unittest discover -s tests/unit`: the entrypoint, the toolset checks runner, SessionStart hook, spawn hook (both backends), supervisor and its reaper, the android VM's order script, job spec, path map and deploy script, against fakes (`tests/unit/fake_gcp.py` for the GCP APIs and the metadata server), and that the bake file has every type's targets (needs `docker buildx`). Linux only |
-| `cloud-ci` | `cloud-lint`, `cloud-test`, then a build of every cloud image with no output, each through `scripts/cloud/bake.sh` as in `cloud-build`. The pull request check (`cloud-build.yml`) runs the same, split across runners, and also loads each runner type and runs `cloud-smoke` on it |
+| `cloud-ci` | `cloud-lint`, `cloud-lint-android`, `cloud-test`, then a build of every cloud image with no output, each through `scripts/cloud/bake.sh` as in `cloud-build`. The pull request check (`cloud-build.yml`) runs the same, split across runners, and also loads each runner type and runs `cloud-smoke` on it |
 | `cloud-lock` | `scripts/cloud/lock.sh resolve <TYPE>`: the type's lock resolved from upstream now (base digest, apt, Claude, Rust, Terraform, the GitHub releases, Homebrew with dependencies), shown as a diff against `images/cloud/<TYPE>/versions.lock`, or whole when there's none. `WRITE=1` writes it. Needs Linux, Docker and Homebrew (Homebrew resolves dependencies for the OS it runs on); the watch (m5) is what normally writes locks, through pull requests |
 | `cloud-targets` | Prints every Cloud Run type (the `BACKEND=run` files in `infra/gcp`, from `changed-targets.sh --all`) and `orchestrator`, one a line: what `cloud-build TYPE=all` and `cloud-ci` build, and the pull request check's build matrix |
 | `cloud-status` | `scripts/cloud/deploy.sh status`, with your gcloud login: each job's image, deployed commit and last execution, and the orchestrator VM's `orchestrator-image` |
@@ -227,7 +229,7 @@ Where things live:
 | --- | --- |
 | `.github/workflows/ci.yml` | `make init`, `make ci` on `macos-latest` |
 | `.github/workflows/android-image-smoke.yml` | Manual only: runs `images/android/scripts` on `ubuntu-24.04` (which has KVM) and boots the emulator |
-| `.github/workflows/cloud-build.yml` | `make cloud-lint cloud-test`, then each cloud image (`make cloud-targets`) built on its own `ubuntu-24.04` runner (they don't fit on one), when a pull request touches the cloud paths (its `changes` job decides); no GCP credentials. Runs on every pull request so `gate`, the check `main`'s ruleset requires, always reports |
+| `.github/workflows/cloud-build.yml` | `make cloud-lint cloud-lint-android cloud-test`, then each cloud image (`make cloud-targets`) built on its own `ubuntu-24.04` runner (they don't fit on one), when a pull request touches the cloud paths (its `changes` job decides); no GCP credentials. Runs on every pull request so `gate`, the check `main`'s ruleset requires, always reports |
 | `.github/workflows/lock-watch.yml` | Hourly (08:00 to 22:00 Pacific, `nightly` types) and weekly (Sunday 04:47, every type), or dispatch: `scripts/cloud/lock.sh resolve` per type, then `scripts/cloud/lock-watch.sh` proposes what moved as one auto-merging pull request from `lock/watch`, as the lock bot (environment `lock-bot`). `make cloud-lock` is the same resolve, locally |
 | `.github/workflows/cloud-deploy.yml` | Push to `main` or dispatch: builds, pushes, smoke-tests and promotes what changed, in environment `production` |
 
