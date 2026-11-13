@@ -497,6 +497,27 @@ class ProposeTests(FakeGitHubBase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("refusing to push", result.stderr)
 
+    def refused_without_a_call(self, result):
+        self.assertEqual(self.load().get("log", []), [], "nothing reached GitHub")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("link or device", result.stderr)
+
+    def test_a_lock_that_links_out_of_the_tree_is_refused(self):
+        # The resolve job runs upstream code; a link named like a lock would
+        # commit what it points at, here a token.
+        secret = self.tmp / "secret"
+        secret.write_text("GH_TOKEN=ghs_leak\n")
+        lock = self.candidate / "images/cloud/linux/versions.lock"
+        lock.unlink()
+        lock.symlink_to(secret)
+        self.refused_without_a_call(self.propose())
+
+    def test_a_lock_that_is_a_fifo_is_refused(self):
+        lock = self.candidate / "images/cloud/linux/versions.lock"
+        lock.unlink()
+        os.mkfifo(lock)
+        self.refused_without_a_call(self.propose())
+
     def test_close(self):
         self.assertEqual(self.propose().returncode, 0)
         result = self.run_watch("close", env={"FAKE_GH_STATE": str(self.state_path), "FAKE_REPO": "lolay/agent-images"})
