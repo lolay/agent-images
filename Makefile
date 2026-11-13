@@ -34,7 +34,7 @@ export
         image-pull image-prune vm-create vm-start vm-configure vm-up vm-stop vm-status vm-logs \
         vm-versions vm-list vm-delete secret-set \
         gh-runs-list gh-runs-watch gh-runs-status bump publish \
-        cloud-build cloud-smoke cloud-lint cloud-lint-android cloud-test cloud-ci cloud-targets cloud-status
+        cloud-build cloud-smoke cloud-lint cloud-test cloud-ci cloud-targets cloud-status
 
 MODE ?= run
 HOST_OS := $(shell uname -s)
@@ -147,12 +147,12 @@ init: ## Install Packer plugins (build hosts) and create .env if missing
 	@if command -v packer >/dev/null 2>&1; then packer init $(MACOS_DIR); \
 	else printf 'packer not found; skipping plugin install (fine on a run host).\n'; fi
 
-doctor: ## Check this host with triage (read-only). MODE=run|build (macOS); a session: MODE=android adds cloud-lint-android's Packer; Linux has one profile
+doctor: ## Check this host with triage (read-only). MODE=run|build (macOS); a session: MODE=android adds Packer; Linux has one profile
 ifneq ($(AGENT_TYPE),)
 	@# A Cloud Run runner session (AGENT_TYPE is set) isn't a host: the Linux
 	@# profile's checks (VT-x, LXD, vms/runner.env) would all fail there, so it
 	@# checks what make cloud-lint and make cloud-test need instead (MODE's
-	@# default, run), plus Packer for make cloud-lint-android with MODE=android.
+	@# default, run), plus Packer for make cloud-lint MODE=android.
 	@command -v triage >/dev/null 2>&1 || { printf 'triage not found; see https://github.com/lolay/triage\n' >&2; exit 1; }
 	@case "$(MODE)" in run) profile=session;; android) profile=session-android;; \
 	  *) printf 'MODE must be run or android in a session\n' >&2; exit 1;; esac; \
@@ -202,7 +202,19 @@ format: ## Auto-fix Packer and shell formatting
 test: ## Validate the Packer build and run helper unit tests
 	packer validate $(MACOS_DIR)
 
-ci: lint test ## Run the full pre-push gate (what CI runs)
+# The gate is lint + test, what ci.yml runs on macOS. A cloud session (AGENT_TYPE
+# set) can't run those (plutil, the macOS template) or cloud-ci's image builds (no
+# Docker), so there it's the cloud half of cloud-build.yml: cloud-lint and
+# cloud-test, with MODE passed through (MODE=android adds the android template).
+# It matches make doctor's profile for the same MODE, so a passing doctor means
+# the gate can run.
+ifneq ($(AGENT_TYPE),)
+CI_GATE := cloud-lint cloud-test
+else
+CI_GATE := lint test
+endif
+
+ci: $(CI_GATE) ## Run the pre-push gate (what CI runs; in a cloud session cloud-lint cloud-test, MODE=android adds the android template)
 
 pre-commit: ci ## Run the local gate before committing or pushing (alias of ci)
 
@@ -333,25 +345,32 @@ cloud-smoke: ## Check a built image's toolset record, then run its binary checks
 	docker run --rm -v /scratch -v /mnt/outputs --tmpfs /mnt/datasets:ro \
 	  agent-$(TYPE):local smoke $(SMOKE)
 
-cloud-lint: ## Lint the cloud scripts, workflows and settings (no writes; needs Go for actionlint)
+# cloud-lint's MODE=android steps: the android Compute Engine template's Packer
+# checks. Behind MODE so a session that doesn't touch the template doesn't need
+# Packer, which the linux image doesn't ship: make doctor's session profile leaves
+# it out, and MODE=android (session-android) adds it.
+define CLOUD_LINT_ANDROID
+packer init $(ANDROID_GCE_DIR) >/dev/null
+packer fmt -check -recursive $(ANDROID_GCE_DIR)
+packer validate -var project_id=check -var zone=check -var network=check -var subnetwork=check -var image_name=agent-android-check -var commit=check $(ANDROID_GCE_DIR)
+endef
+
+cloud-lint: ## Lint the cloud scripts, workflows and settings; MODE=android adds the android Packer template (no writes; needs Go, and Packer for android)
+	@case "$(MODE)" in run|android) ;; *) printf 'MODE must be run or android for cloud-lint\n' >&2; exit 1;; esac
 	shellcheck -x $(CLOUD_SCRIPTS)
 	shfmt -d $(CLOUD_SCRIPTS)
 	go run github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION) $(CLOUD_WORKFLOWS)
 	@jq empty images/cloud/runner/claude/settings.json && printf '%s: OK\n' images/cloud/runner/claude/settings.json
-
-# Apart from cloud-lint so a session that doesn't touch the template doesn't need
-# Packer: make doctor's session profile leaves it out, session-android adds it.
-cloud-lint-android: ## Check the android Compute Engine Packer template's format and validate it (no writes; needs Packer)
-	packer init $(ANDROID_GCE_DIR) >/dev/null
-	packer fmt -check -recursive $(ANDROID_GCE_DIR)
-	packer validate -var project_id=check -var zone=check -var network=check -var subnetwork=check \
-	  -var image_name=agent-android-check -var commit=check $(ANDROID_GCE_DIR)
+	$(if $(filter android,$(MODE)),$(CLOUD_LINT_ANDROID))
 
 cloud-test: ## Run the cloud unit tests (Linux: they use /proc and GNU tools)
 	@[ "$(HOST_OS)" = "Linux" ] || { printf 'make cloud-test needs Linux (/proc, GNU date); CI runs it\n' >&2; exit 1; }
 	python3 -m unittest discover -s tests/unit
 
-cloud-ci: cloud-lint cloud-lint-android cloud-test ## Lint, unit tests and a build of every cloud image, no push (the pull request check)
+# cloud-ci is the whole pull request check, so its cloud-lint always takes in
+# the android template.
+cloud-ci: override MODE := android
+cloud-ci: cloud-lint cloud-test ## Lint, unit tests and a build of every cloud image, no push (the pull request check)
 	@for target in $(CLOUD_TARGETS); do \
 	  CLAUDE_VERSION=$(CLAUDE_VERSION) scripts/cloud/bake.sh "$$target" || exit 1; \
 	done

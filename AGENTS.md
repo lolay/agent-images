@@ -11,9 +11,11 @@ you're touching doesn't seem to need the missing tool; its profiles check only w
 their targets need, so a failure means a target you'll run fails too. If a fix
 command fails, stop and report it.
 
-In a cloud session the gate is `make cloud-lint cloud-test`. A change to
-`images/android/gce` also needs `make doctor MODE=android` (it adds Packer, which the
-linux image doesn't ship) and `make cloud-lint-android`. CI runs all three.
+Then run `make pre-commit` before you push. In a cloud session it runs `cloud-lint`
+and `cloud-test`, what a session can run of the pull request check. A change to
+`images/android/gce` takes `MODE=android` on both, `make doctor MODE=android` and
+`make pre-commit MODE=android`, which adds Packer (the linux image doesn't ship it)
+and the template's Packer checks.
 
 ## Docker images
 

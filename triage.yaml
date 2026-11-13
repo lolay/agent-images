@@ -11,7 +11,7 @@
 #             on Linux)
 #   session — a cloud runner session (AGENT_TYPE set): what make cloud-lint
 #             and make cloud-test need
-#   session-android — session plus Packer, for make cloud-lint-android
+#   session-android — session plus Packer, for make cloud-lint MODE=android
 #             (make doctor MODE=android in a session)
 #
 # The Makefile passes --var image_ref=$(IMAGE_REF).
@@ -160,12 +160,12 @@ linux:
         hint: make host-setup
 
 # Inside a cloud runner session the host checks don't apply; this checks what
-# the session gate, make cloud-lint and make cloud-test, needs, and nothing more:
-# a check the gate doesn't need fails every session and teaches agents to ignore
-# doctor (AGENTS.md). The linux image has all of it (shfmt from images built
-# after it joined the core Brewfile).
+# the session gate, make pre-commit (cloud-lint and cloud-test there), needs, and
+# nothing more: a check the gate doesn't need fails every session and teaches
+# agents to ignore doctor (AGENTS.md). The linux image has all of it (shfmt from
+# images built after it joined the core Brewfile).
 session:
-  - group: Session gate (make cloud-lint cloud-test)
+  - group: "Session gate (make pre-commit: cloud-lint cloud-test)"
     items:
       - tool: shellcheck
         hint: brew install shellcheck
@@ -176,12 +176,12 @@ session:
       - tool: python3
         hint: brew install python
 
-# A session changing images/android/gce also runs make cloud-lint-android, which
-# needs Packer; the linux image doesn't ship it.
+# A session changing images/android/gce runs make pre-commit MODE=android, whose
+# cloud-lint checks the template with Packer; the linux image doesn't ship it.
 session-android:
   extends: [session]
   add:
-    - group: Android template (make cloud-lint-android)
+    - group: "Android template (make pre-commit MODE=android)"
       items:
         - tool: packer
           hint: brew install hashicorp/tap/packer
