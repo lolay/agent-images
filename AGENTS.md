@@ -3,6 +3,20 @@
 Instructions for coding agents working in this repo. The design is in `specs/`, the
 make targets in `Makefile.md`.
 
+## make doctor must pass
+
+Run `make doctor` before any build, lint or test, and get it passing: run the commands
+it prints under "To fix, run:". Don't work around a failing doctor because the part
+you're touching doesn't seem to need the missing tool; its profiles check only what
+their targets need, so a failure means a target you'll run fails too. If a fix
+command fails, stop and report it.
+
+Then run `make pre-commit` before you push. In a cloud session it runs `cloud-lint`
+and `cloud-test`, what a session can run of the pull request check. A change to
+`images/android/gce` takes `MODE=android` on both, `make doctor MODE=android` and
+`make pre-commit MODE=android`, which adds Packer (the linux image doesn't ship it)
+and the template's Packer checks.
+
 ## Docker images
 
 Pull Docker Hub images through Google's mirror, `mirror.gcr.io`, never from Docker
