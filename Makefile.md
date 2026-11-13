@@ -228,7 +228,7 @@ Where things live:
 | --- | --- |
 | `.github/workflows/ci.yml` | `make init`, `make ci` on `macos-latest` |
 | `.github/workflows/android-image-smoke.yml` | Manual only: runs `images/android/scripts` on `ubuntu-24.04` (which has KVM) and boots the emulator |
-| `.github/workflows/cloud-build.yml` | `make cloud-lint cloud-test MODE=android`, then each cloud image (`make cloud-targets`) built on its own `ubuntu-24.04` runner (they don't fit on one), when a pull request touches the cloud paths (its `changes` job decides); no GCP credentials. Runs on every pull request so `gate`, the check `main`'s ruleset requires, always reports |
+| `.github/workflows/cloud-build.yml` | triage's `session-android` profile (`lolay/triage-action`, so a `triage.yaml` triage can't load fails the check), `make cloud-lint cloud-test MODE=android`, then each cloud image (`make cloud-targets`) built on its own `ubuntu-24.04` runner (they don't fit on one), when a pull request touches the cloud paths (its `changes` job decides); no GCP credentials. Runs on every pull request so `gate`, the check `main`'s ruleset requires, always reports |
 | `.github/workflows/lock-watch.yml` | Hourly (08:00 to 22:00 Pacific, `nightly` types) and weekly (Sunday 04:47, every type), or dispatch: `scripts/cloud/lock.sh resolve` per type, then `scripts/cloud/lock-watch.sh` proposes what moved as one auto-merging pull request from `lock/watch`, as the lock bot (environment `lock-bot`). `make cloud-lock` is the same resolve, locally |
 | `.github/workflows/cloud-deploy.yml` | Push to `main` or dispatch: builds, pushes, smoke-tests and promotes what changed, in environment `production` |
 

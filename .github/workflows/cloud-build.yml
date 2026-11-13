@@ -41,7 +41,7 @@ jobs:
           changed="$(git diff --name-only "$BASE...$HEAD")"
           printf '%s\n' "$changed"
           relevant=false
-          if grep -qE '^(images/(cloud|android|shared|toolsets)/|hooks/gcp/|infra/gcp/|scripts/cloud/|tests/unit/|\.dockerignore$|Makefile$|\.github/workflows/(cloud-[^/]*|lock-watch)\.yml$)' <<<"$changed"; then
+          if grep -qE '^(images/(cloud|android|shared|toolsets)/|hooks/gcp/|infra/gcp/|scripts/cloud/|tests/unit/|\.dockerignore$|Makefile$|triage\.yaml$|\.github/workflows/(cloud-[^/]*|lock-watch)\.yml$)' <<<"$changed"; then
             relevant=true
           fi
           echo "relevant=$relevant" | tee -a "$GITHUB_OUTPUT"
@@ -61,6 +61,12 @@ jobs:
       - uses: hashicorp/setup-packer@ce93c3c08a6c2ff2275bf4b54ff0d9a75f6c9789 # v3.4.0
         with:
           version: "1.16.2"
+      # make doctor's session-android profile against this job, which has the
+      # tools the session gate needs: fails on a triage.yaml triage can't load,
+      # or a profile asking for a tool the gate's runner lacks.
+      - uses: lolay/triage-action@6cc19c4d9830fa1ca7aaab6201af92afdf6209bb # v0.5.0
+        with:
+          profile: session-android
       - name: Lint and unit tests
         # packer init looks the plugin up through GitHub's API; the job's token
         # gets the repository's own rate limit (see ci.yml).
