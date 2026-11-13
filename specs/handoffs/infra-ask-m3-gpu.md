@@ -42,18 +42,19 @@ Run's GPU docs on 2026-11-06
 | --- | --- | --- |
 | 77257018 | `EphemeralDiskAllocPerProjectRegion` | Granted 500 GiB, 2026-11-08 |
 | 77257019 | `MaxPerInstanceEphemeralDiskSizePerProjectRegion` | Granted 200 GiB, 2026-11-10 |
-| None | `NvidiaL4GpuAllocNoZonalRedundancyPerProjectRegion`, `NvidiaRtxPro6000GpuAllocNoZonalRedundancyPerProjectRegion` | Never requested |
+| fad92fe0-b754-417c-aa73-f6a3f17d3e0c | `NvidiaL4GpuAllocNoZonalRedundancyPerProjectRegion` 0 to 2, `NvidiaRtxPro6000GpuAllocNoZonalRedundancyPerProjectRegion` 0 to 2000 | Filed 2026-11-13, pending |
 
-**GPU: never requested.** Confirmed 2026-11-13 in the console (Quotas & System
-Limits, Increase Requests tab): the only requests are 77257018 and 77257019, both
-filed 2026-11-04 and both ephemeral disk only. All four Cloud Run GPU quotas in
-`us-central1` (L4 and RTX PRO 6000, with and without zonal redundancy) read 0, so
-`linux-gpu` stays `DEPLOY=false`. The reply drafted below was never sent. To do: file
-a new request from the Quotas & System Limits tab (select the two "without zonal
-redundancy" rows, Edit quotas): 2 for L4, 2000 for RTX PRO 6000 (Gary's call,
-2026-11-13; Cloud Run attaches whole GPUs only, so milli is just the unit). The console's
-display names say "without zonal redundancy", so filter on "GPU", not "no zonal
-redundancy".
+**GPU: filed 2026-11-13, pending.** Until then, nothing had asked for it: the
+console's Increase Requests tab held only 77257018 and 77257019 (filed 2026-11-04,
+ephemeral disk only), and all four Cloud Run GPU quotas in `us-central1` read 0. The
+reply drafted below was never sent. The eligibility check (`gcloud beta quotas info
+describe ... --format="yaml(quotaIncreaseEligibility)"`) said `isEligible: true`
+first. The request asks for 2 L4 and 2000 milli RTX PRO 6000 (Gary's call; Cloud Run
+attaches whole GPUs only, so milli is just the unit), us-central1 only, peak 2 and
+median 1. The console gave a case ID, not a number; the Increase Requests tab should
+show numeric request numbers. Until it lands, `linux-gpu` stays `DEPLOY=false`. In
+the console, filter on "GPU": the display names say "without zonal redundancy", so
+"no zonal redundancy" matches nothing.
 
 The RTX PRO 6000 quota counts milli GPUs (its display name says "in milli GPU",
 though `metricUnit` is `1`): 3 GPUs is 3000. The L4 quota counts whole GPUs. A
