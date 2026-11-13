@@ -10,24 +10,33 @@ rendering. If a check fails, record it and carry on. Time every step. Work in
 
 ## 0. Watch the GPU the whole time
 
-Before anything else, start logging in the background and keep it running to the end:
+Before anything else, start logging in the background, every 100 ms, and keep it
+running to the end:
 
 ```
 nvidia-smi --query-gpu=timestamp,utilization.gpu,memory.used,power.draw,clocks.sm \
-  --format=csv -l 1 > gpu.csv &
+  --format=csv -lms 100 > gpu.csv &
 ```
 
 For each step below, record the peak utilization and memory from `gpu.csv` during
 that step's time window. A GPU step whose peak utilization stays under 20% fails,
 whatever its own output says.
 
+Much of this GPU work finishes in well under a second, too short to read in the
+log. Where a measured run takes under 2 s on the GPU, run it again in a loop for at
+least 5 s, synchronizing every iteration (`torch.cuda.synchronize()`,
+`cudaDeviceSynchronize()`, `glFinish()`) so work doesn't queue up and outlive the
+loop, and take the peak from that loop. Report times and rates from the measured
+run, not the loop.
+
 ## 1. Facts
 
 The shared facts (see [linux.md](linux.md), step 1), plus: `nvidia-smi` (GPU name,
 memory, driver version, CUDA version the driver supports),
 `nvidia-smi --query-gpu=compute_cap --format=csv`, `nvcc --version`, and where the
-driver libraries come from (`ldconfig -p | grep libcuda`; on Cloud Run they're
-mounted under `/usr/local/nvidia/lib64`). Pass if the GPU is an RTX PRO 6000 with
+driver libraries come from (`agent-gpu-libs`, and `libcuda` under
+`/usr/local/nvidia/lib64`, which Cloud Run mounts: it resolves through
+`LD_LIBRARY_PATH`, not the `ldconfig` cache). Pass if the GPU is an RTX PRO 6000 with
 compute capability 12.0 and the CUDA toolkit isn't newer than the driver supports.
 
 ## 2. CUDA compiled for this GPU
@@ -54,17 +63,23 @@ toolkit (look up the right index URL; don't take the CPU wheel).
   synchronize, average 20 runs) against fp32 on the CPU, and report TFLOPS and the
   speedup.
 - Train a small convolutional network on CIFAR-10 for one epoch on the GPU and
-  record the time and final accuracy.
+  record the time and final accuracy. Download it from Hugging Face's copy
+  (`https://huggingface.co/api/datasets/uoft-cs/cifar10/parquet` lists its Parquet
+  files), not cs.toronto.edu, which took 868 s at about 190 KB/s on 2026-11-13.
+  Time the download separately from the step.
 
 ## 4. Graphics on the GPU, not in software
 
-- `eglinfo -B` (or a minimal EGL program): the vendor and renderer must be NVIDIA,
-  not Mesa or llvmpipe.
+- `eglinfo -B` (or a minimal EGL program): on the device and surfaceless platforms
+  the vendor and renderer must be NVIDIA, not Mesa or llvmpipe. The X11 platform
+  on Xvfb is llvmpipe by design (no DRI3); record it, but it doesn't fail the check.
 - `vulkaninfo --summary`: the device must be the RTX PRO 6000.
 - Render offscreen with OpenGL through EGL (for example `moderngl` with
   `backend="egl"`): a lit, textured, spinning mesh, 300 frames at 1920 by 1080, saved
   as `spin.mp4` and one frame as `frame.png`. Record frames per second and the
-  `GL_RENDERER` string. Then force software rendering
+  `GL_RENDERER` string. Encode `spin.mp4` with the image's `ffmpeg` on NVENC
+  (`-c:v h264_nvenc`); if that fails, record the error, encode with `libx264`, and
+  carry on. Record the encode time for each encoder you ran. Then force software rendering
   (`__EGL_VENDOR_LIBRARY_FILENAMES` pointing at Mesa, or `LIBGL_ALWAYS_SOFTWARE=1`)
   and render the same 300 frames for comparison.
 - If `$DISPLAY` is set (Xvfb), run `vglrun glxinfo -B` and check the renderer is

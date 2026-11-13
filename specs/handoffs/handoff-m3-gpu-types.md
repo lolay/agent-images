@@ -5,6 +5,11 @@ Written 2026-11-06. The spec is [specs/gcp.md](../gcp.md) (m3 under
 
 ## Where we are
 
+Update 2026-11-13: `linux-gpu` runs on the RTX PRO 6000 (the L4 quota was denied),
+is deployed, and passed its session test; Cloud Run renders on the GPU, so the
+Compute Engine fallback isn't needed ([gcp.md, "m3 `linux-gpu` results"](../gcp.md#m3-linux-gpu-results)).
+`3d-gpu` is next ([plan-gpu-types-ember.md](plan-gpu-types-ember.md), s9).
+
 m1 (`linux`) and m2 (`gis`, `android`) are done and tested; m2 closed in
 lolay/agent-images#35, which kept `android` on GCP (warm emulator boot 6 s, 27 s
 from a disk still restoring, against the Linux host's 9 s). So the Compute Engine
