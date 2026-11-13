@@ -190,6 +190,37 @@ class ChangedTargetsTests(unittest.TestCase):
             result, {"types": [{"type": "linux", "build": False}], "vms": [], "orchestrator": True, "prune": False}
         )
 
+    def test_removing_deploy_false_builds_the_type(self):
+        # Its first deploy: base had no job, so there's no live image to reuse
+        # (lolay/agent-images#92 died in deploy.sh's live_image with HTTP 404).
+        self.write("infra/gcp/linux-gpu.env", "CPU=20\nDEPLOY=false\n")
+        self.commit("linux-gpu waits for its quota")
+        self.base = self.head()
+        self.write("infra/gcp/linux-gpu.env", "CPU=20\n")
+        self.commit("linux-gpu has its quota")
+        self.assertEqual(
+            self.targets(),
+            {"types": [{"type": "linux-gpu", "build": True}], "vms": [], "orchestrator": True, "prune": False},
+        )
+
+    def test_a_new_env_file_alone_builds_its_type(self):
+        self.write("images/cloud/3d-gpu/Dockerfile", "FROM agent-base-gpu\nRUN bash /t/install-toolset.sh gpu\n")
+        self.commit("3d-gpu's image, no env file yet")
+        self.base = self.head()
+        self.assertEqual(self.change("infra/gcp/3d-gpu.env")["types"], [{"type": "3d-gpu", "build": True}])
+
+    def test_an_env_file_still_at_deploy_false_builds_nothing(self):
+        # No job either side: deploy.sh writes none, so a rebuild would be waste.
+        self.write("infra/gcp/linux-gpu.env", "CPU=20\nDEPLOY=false\n")
+        self.commit("linux-gpu waits for its quota")
+        self.base = self.head()
+        self.assertEqual(self.change("infra/gcp/linux-gpu.env")["types"], [{"type": "linux-gpu", "build": False}])
+
+    def test_setting_deploy_false_builds_nothing(self):
+        self.write("infra/gcp/linux-gpu.env", "CPU=20\nDEPLOY=false\n")
+        self.commit("pause linux-gpu")
+        self.assertEqual(self.targets()["types"], [{"type": "linux-gpu", "build": False}])
+
     def test_project_env_redeploys_everything(self):
         result = self.change("infra/gcp/project.env")
         self.assertEqual(len(result["types"]), 2)

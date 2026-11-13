@@ -99,7 +99,7 @@ live_image() {
 	local token
 	token="$(access_token)"
 	gcp_call "$token" GET "$run_api/jobs/agent-$1"
-	[[ "$GCP_STATUS" == 200 ]] || die "no live agent-$1 to reuse (HTTP $GCP_STATUS); deploy it with a build first"
+	[[ "$GCP_STATUS" == 200 ]] || die "no live agent-$1 to reuse (HTTP $GCP_STATUS); deploy it with a build first (dispatch cloud-deploy with targets $1)"
 	jq -er '.template.template.containers[0].image' <<<"$GCP_BODY"
 }
 
