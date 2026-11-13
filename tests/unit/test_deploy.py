@@ -152,7 +152,10 @@ class DeployTests(unittest.TestCase):
         result = self.deploy("type", "linux-gpu", IMAGE, "abc123")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.job_patches(), ["agent-linux-gpu-next", "agent-linux-gpu"])
-        task = self.gcp.state.jobs[f"{JOBS}/agent-linux-gpu"]["template"]["template"]
+        job = self.gcp.state.jobs[f"{JOBS}/agent-linux-gpu"]
+        # Its 9.5 hour timeout makes it a long running GPU job, Preview only.
+        self.assertEqual(job["launchStage"], "BETA")
+        task = job["template"]["template"]
         self.assertEqual(task["nodeSelector"], {"accelerator": "nvidia-rtx-pro-6000"})
         self.assertEqual(
             task["containers"][0]["resources"]["limits"],
