@@ -140,8 +140,13 @@ In the guest:
 
 Alongside, LaunchAgent `com.agent-images.watchdog` runs `~/bin/agent-runner-watchdog`
 every 30 s. It reads each session's git proxy port from
-`~/workspace/_sessions/<id>.gitconfig`; two refused connections in a row mean the relay
-is gone. It logs to `~/Library/Logs/agent-runner-watchdog.{out,err}`, and with
+`~/workspace/_sessions/<id>.gitconfig`. When that port refuses, it asks every loopback
+listener for `/__agentproxy/status` and, if one is a live relay signing with the
+session's `sslCAInfo`, writes that relay's port back into the gitconfig, the README and
+the `gh` shim: a nested `claude` (`claude plugin validate`, `claude mcp list`) rewrites
+them to its own short-lived relay (anthropics/claude-code#96856) while the session's
+relay stays up. With no live relay, two refusals in a row mean the session's relay is
+gone. It logs to `~/Library/Logs/agent-runner-watchdog.{out,err}`, and with
 `WATCHDOG_ACTION=terminate` sends the runner SIGTERM so the session requeues.
 
 | File in the guest | Written by | Mode |
