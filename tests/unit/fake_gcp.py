@@ -323,6 +323,18 @@ def route_jobs(state: State, request: Request):
         job = request.json()
         if job.get("name") not in (None, path):
             return 400, {"error": {"message": "name in the body doesn't match the URL"}}
+        # A GPU task over 1 hour is Preview: the real API refuses it at GA.
+        task = job.get("template", {}).get("template", {})
+        if (
+            task.get("nodeSelector", {}).get("accelerator")
+            and int(task.get("timeout", "0s").removesuffix("s")) > 3600
+            and job.get("launchStage") not in ("ALPHA", "BETA")
+        ):
+            return 400, {"error": {"message": (
+                "The feature 'Long running GPU jobs' is not supported in the declared launch stage "
+                f"on resource {path.rsplit('/', 1)[1]}. The launch stage annotation should be "
+                "specified at least as BETA."
+            )}}
         state.jobs[path] = {**job, "name": path}
         return 200, operation()
     if request.method == "GET":
