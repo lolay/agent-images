@@ -42,16 +42,17 @@ Run's GPU docs on 2026-11-06
 | --- | --- | --- |
 | 77257018 | `EphemeralDiskAllocPerProjectRegion` | Granted 500 GiB, 2026-11-08 |
 | 77257019 | `MaxPerInstanceEphemeralDiskSizePerProjectRegion` | Granted 200 GiB, 2026-11-10 |
-| None | `NvidiaL4GpuAllocNoZonalRedundancyPerProjectRegion`, `NvidiaRtxPro6000GpuAllocNoZonalRedundancyPerProjectRegion` | Not granted, no case found |
+| None | `NvidiaL4GpuAllocNoZonalRedundancyPerProjectRegion`, `NvidiaRtxPro6000GpuAllocNoZonalRedundancyPerProjectRegion` | Never requested |
 
-**GPU: still open.** Checked 2026-11-08 with `gcloud beta quotas info list
---project=lolay-agents --service=run.googleapis.com
---filter="metric~no_zonal_redundancy"`: `us-central1` sits in the default group with
-no value for both, so neither is granted and `linux-gpu` stays `DEPLOY=false`. Gary
-sees only the two disk cases, so the GPU reply below either went on 77257018 (whose
-approval named only the disk) or was never sent. To do: check 77257018's original
-request in the console's quota request history; if the GPU quotas are on it, reply
-there, otherwise file a new request.
+**GPU: never requested.** Confirmed 2026-11-13 in the console (Quotas & System
+Limits, Increase Requests tab): the only requests are 77257018 and 77257019, both
+filed 2026-11-04 and both ephemeral disk only. All four Cloud Run GPU quotas in
+`us-central1` (L4 and RTX PRO 6000, with and without zonal redundancy) read 0, so
+`linux-gpu` stays `DEPLOY=false`. The reply drafted below was never sent. To do: file
+a new request from the Quotas & System Limits tab (select the two "without zonal
+redundancy" rows, Edit quotas): 3 for L4, 3000 for RTX PRO 6000. The console's
+display names say "without zonal redundancy", so filter on "GPU", not "no zonal
+redundancy".
 
 The RTX PRO 6000 quota counts milli GPUs (its display name says "in milli GPU",
 though `metricUnit` is `1`): 3 GPUs is 3000. The L4 quota counts whole GPUs. A
