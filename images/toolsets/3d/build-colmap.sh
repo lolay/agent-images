@@ -24,11 +24,10 @@ if [[ "$version" == latest ]]; then
 fi
 [[ "$version" =~ ^[0-9]+(\.[0-9]+)+$ ]] || die "unexpected COLMAP release '$version'"
 
-# COLMAP's install guide's Ubuntu list, less the GUI's (Qt) and the tests'.
-# Configure requires more than the guide's list says: OpenGL and GLEW even with
-# the GUI and OpenGL off (cmake/FindDependencies.cmake finds them REQUIRED),
-# gflags, and openimageio-tools, whose binaries Ubuntu's OpenImageIO CMake
-# config imports.
+# COLMAP's install guide's Ubuntu list, less Qt and the tests'. Keep the rest:
+# configure finds OpenGL and GLEW as REQUIRED even with the GUI and OpenGL off
+# (cmake/FindDependencies.cmake), and Ubuntu's OpenImageIO CMake config imports
+# openimageio-tools' binaries. gflags and the GL headers aren't in the guide.
 sudo apt-get update -q
 sudo env DEBIAN_FRONTEND=noninteractive apt-get install -q -y --no-install-recommends \
 	cmake ninja-build build-essential git \

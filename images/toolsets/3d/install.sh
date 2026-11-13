@@ -69,7 +69,7 @@ cd "$root"
 uv sync --frozen --no-install-package gsplat 2>&1
 log "compiling gsplat for compute capability 8.9 and 12.0"
 CUDA_HOME=/usr/local/cuda PATH="/usr/local/cuda/bin:$PATH" TORCH_CUDA_ARCH_LIST="8.9;12.0+PTX" \
-	MAX_JOBS="$(nproc)" uv sync --frozen 2>&1
+	MAX_JOBS="$(nproc)" uv sync --frozen --no-binary-package gsplat 2>&1
 uv cache clean 2>&1
 # The extension has to be in the environment, built, not left for a session's
 # first import to compile (gsplat falls back to JIT when it's missing).

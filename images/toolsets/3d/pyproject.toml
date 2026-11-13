@@ -32,7 +32,10 @@ dependencies = [
 package = false
 # Only where it runs: the Cloud Run images are Linux on x86-64.
 environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
-# gsplat's setup.py imports torch; install.sh syncs everything else first.
+# gsplat from its sdist, never PyPI's py3-none-any wheel, which has no compiled
+# extension and compiles one at a session's first import (JIT). Its setup.py
+# imports torch, so it builds in the environment; install.sh syncs the rest first.
+no-binary-package = ["gsplat"]
 no-build-isolation-package = ["gsplat"]
 
 [[tool.uv.index]]
