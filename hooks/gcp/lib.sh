@@ -50,6 +50,20 @@ gcp_rebuild_class() { gcp_type_setting "$1" REBUILD nightly; }
 # that builds but isn't deployed, waiting for its quota).
 gcp_deploys() { [[ "$(gcp_type_setting "$1" DEPLOY true)" != false ]]; }
 
+# gcp_check_type <type>: fail, with the one reason on stderr, when the type's env
+# file is a combination the pipeline can't serve. Today: DEPLOY=false on a
+# BACKEND=compute type, which deploy.sh would build and promote with no
+# orchestrator to serve it. Every reader of the rule calls this: deploy.sh
+# refuses the type, the supervisor skips it, and `make cloud-test` runs it over
+# the real infra/gcp/*.env, so a bad file fails its pull request rather than
+# reaching the host (an env-file-only change plans no type deploy, r3.f2).
+gcp_check_type() {
+	if [[ "$(gcp_backend "$1")" == compute ]] && ! gcp_deploys "$1"; then
+		printf '%s: DEPLOY=false is for Cloud Run types only, not BACKEND=compute (a Compute Engine type would be built and promoted with no orchestrator to serve it); remove it from infra/gcp/%s.env\n' "$1" "$1" >&2
+		return 1
+	fi
+}
+
 # gcp_runner_settings <type>: the runner.env settings
 # (images/shared/runners/claude.sh) for the loaded type, one KEY=value line
 # each, for both backends: the Cloud Run job's env (scripts/cloud/job-spec.sh)

@@ -95,5 +95,66 @@ class TypeSettingTests(unittest.TestCase):
         self.assertEqual(self.value('gcp_rebuild_class weekly >/dev/null; echo "${REBUILD:-unset}"').strip(), "unset")
 
 
+class CheckTypeTests(unittest.TestCase):
+    """gcp_check_type: the one reader of the DEPLOY=false-on-compute rule."""
+
+    def check(self, env_dir: Path, type_: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", "-c", f'set -euo pipefail; source "{REPO}/hooks/gcp/lib.sh"; gcp_check_type {type_}'],
+            capture_output=True, text=True, env={"PATH": "/usr/bin:/bin", "AGENT_GCP_ENV_DIR": str(env_dir)},
+        )
+
+    def fixture(self, **files: str) -> Path:
+        env_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, env_dir)
+        (env_dir / "project.env").write_text("PROJECT_ID=p\n")
+        for name, text in files.items():
+            (env_dir / f"{name}.env").write_text(text)
+        return env_dir
+
+    def test_refuses_deploy_false_on_a_compute_type_with_one_message(self):
+        env_dir = self.fixture(vm="BACKEND=compute\nDEPLOY=false\n")
+        result = self.check(env_dir, "vm")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr.count("\n"), 1)
+        self.assertIn("vm: DEPLOY=false is for Cloud Run types only", result.stderr)
+        self.assertIn("remove it from infra/gcp/vm.env", result.stderr)
+
+    def test_accepts_the_other_combinations(self):
+        env_dir = self.fixture(
+            run_false="DEPLOY=false\n", run_true="DEPLOY=true\n", vm="BACKEND=compute\n", vm_true="BACKEND=compute\nDEPLOY=true\n"
+        )
+        for type_ in ("run_false", "run_true", "vm", "vm_true"):
+            with self.subTest(type=type_):
+                result = self.check(env_dir, type_)
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+
+    def refused_types(self, env_dir: Path) -> dict[str, str]:
+        """Every type in env_dir that gcp_check_type refuses, with its message."""
+        listed = subprocess.run(
+            ["bash", "-c", f'source "{REPO}/hooks/gcp/lib.sh"; gcp_types'],
+            capture_output=True, text=True, env={"PATH": "/usr/bin:/bin", "AGENT_GCP_ENV_DIR": str(env_dir)},
+        )
+        types = listed.stdout.split()
+        self.assertTrue(types, "no runner types found")
+        results = {type_: self.check(env_dir, type_) for type_ in types}
+        return {type_: result.stderr for type_, result in results.items() if result.returncode != 0}
+
+    def test_the_real_env_files_pass(self):
+        """A bad infra/gcp/*.env fails its pull request here, not on the host (r3.f2)."""
+        self.assertEqual(self.refused_types(REPO / "infra/gcp"), {})
+
+    def test_the_real_env_files_check_goes_red_on_a_bad_compute_file(self):
+        env_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, env_dir)
+        shutil.copytree(REPO / "infra/gcp", env_dir, dirs_exist_ok=True)
+        with (env_dir / "android.env").open("a") as file:
+            file.write("DEPLOY=false\n")
+        refused = self.refused_types(env_dir)
+        self.assertEqual(list(refused), ["android"])
+        self.assertIn("DEPLOY=false is for Cloud Run types only", refused["android"])
+
+
 if __name__ == "__main__":
     unittest.main()
