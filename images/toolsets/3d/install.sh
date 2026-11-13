@@ -67,9 +67,27 @@ export UV_PYTHON_INSTALL_DIR="$root/python" UV_PROJECT_ENVIRONMENT="$root/.venv"
 cd "$root"
 # Everything but gsplat first: its build imports torch (no-build-isolation-package).
 uv sync --frozen --no-install-package gsplat 2>&1
+
+# gsplat from the sdist uv.lock names, checked against the lock's hash, with one
+# change: gsplat 1.5.3 compiles its CUDA code as C++17, and PyTorch 2.14's
+# headers need C++20 (std::strong_ordering; cloud-build run 43526979224).
+read -r url hash < <(
+	"$root/.venv/bin/python" - "$root/uv.lock" <<'PY'
+import sys, tomllib
+lock = tomllib.load(open(sys.argv[1], "rb"))
+sdist = next(p["sdist"] for p in lock["package"] if p["name"] == "gsplat")
+print(sdist["url"], sdist["hash"].removeprefix("sha256:"))
+PY
+)
+curl -fsSL --retry 3 -o "$work/gsplat.tar.gz" "$url"
+printf '%s  %s\n' "$hash" "$work/gsplat.tar.gz" | sha256sum -c --quiet -
+mkdir "$work/gsplat"
+tar -xzf "$work/gsplat.tar.gz" -C "$work/gsplat" --strip-components=1
+grep -q '"-std=c++17"' "$work/gsplat/setup.py" || die "gsplat's setup.py no longer sets -std=c++17: drop the patch"
+sed -i 's/"-std=c++17"/"-std=c++20"/' "$work/gsplat/setup.py"
 log "compiling gsplat for compute capability 8.9 and 12.0"
 CUDA_HOME=/usr/local/cuda PATH="/usr/local/cuda/bin:$PATH" TORCH_CUDA_ARCH_LIST="8.9;12.0+PTX" \
-	MAX_JOBS="$(nproc)" uv sync --frozen --no-binary-package gsplat 2>&1
+	MAX_JOBS="$(nproc)" uv pip install --python "$root/.venv" --no-build-isolation --no-deps "$work/gsplat" 2>&1
 uv cache clean 2>&1
 # The extension has to be in the environment, built, not left for a session's
 # first import to compile (gsplat falls back to JIT when it's missing).

@@ -34,7 +34,8 @@ package = false
 environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 # gsplat from its sdist, never PyPI's py3-none-any wheel, which has no compiled
 # extension and compiles one at a session's first import (JIT). Its setup.py
-# imports torch, so it builds in the environment; install.sh syncs the rest first.
+# imports torch, so it builds in the environment. install.sh syncs the rest,
+# then builds the locked sdist itself, patched for C++20 (PyTorch's headers).
 no-binary-package = ["gsplat"]
 no-build-isolation-package = ["gsplat"]
 
