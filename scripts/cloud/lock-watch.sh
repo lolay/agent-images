@@ -10,7 +10,8 @@
 #                                             copy into <candidate> the locks the
 #                                             open pull request's branch changed for
 #                                             types this run didn't resolve, so one
-#                                             run never drops another's candidate
+#                                             run never drops another's candidate,
+#                                             unless main changed that lock since
 #   lock-watch.sh proposed <candidate> <main ref> <branch ref>
 #                                             succeed when the branch is already
 #                                             <main ref> plus exactly <candidate>
@@ -98,8 +99,9 @@ cmd_changed() {
 }
 
 cmd_carry() {
-	local class="$1" candidate="$2" main="$3" from="$4" path type resolved moved
+	local class="$1" candidate="$2" main="$3" from="$4" path type resolved moved base
 	resolved=" $(cmd_types "$class" | tr '\n' ' ')"
+	base="$(git merge-base "$main" "$from")" || die "$from and $main share no history"
 	# Three dots: what the branch changed since it left main, not what main
 	# changed since.
 	moved="$(git diff --name-only "$main...$from")"
@@ -108,6 +110,13 @@ cmd_carry() {
 		type="${path#images/cloud/}"
 		type="${type%%/*}"
 		[[ "$resolved" != *" $type "* ]] || continue
+		# A lock main changed since the branch left it (a constraint change, a
+		# rollback) is newer than the branch's: carrying the branch's copy would
+		# propose reverting main's. Drop it; the type's next resolve proposes afresh.
+		if ! git diff --quiet "$base" "$main" -- "$path"; then
+			printf 'dropped %s from %s: %s changed it since\n' "$path" "$from" "$main" >&2
+			continue
+		fi
 		mkdir -p "$candidate/${path%/*}"
 		git show "$from:$path" >"$candidate/$path"
 		printf 'carried %s from %s\n' "$path" "$from" >&2
