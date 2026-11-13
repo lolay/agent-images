@@ -95,17 +95,14 @@ prefix_lines() { sed -u "s/^/[$1] /"; }
 
 # A type whose env file says DEPLOY=false has no job (deploy.sh builds its image
 # but doesn't deploy it), so it gets no orchestrator: one would take sessions
-# and fail to spawn every runner.
+# and fail to spawn every runner. A type whose env file gcp_check_type refuses is
+# logged and skipped the same way: exiting here would put every type's
+# orchestrator in a restart loop over one type's mistake (r3.f2).
 deployed=()
 for type in "${types[@]}"; do
-	if ! gcp_deploys "$type"; then
-		# DEPLOY=false is for Cloud Run types: deploy.sh builds and promotes a
-		# compute type's image regardless, so dropping its orchestrator would
-		# leave a VM image nothing serves. Refuse it rather than skip it.
-		if [[ "$(gcp_backend "$type")" == compute ]]; then
-			log "$type: DEPLOY=false is for Cloud Run types only, not BACKEND=compute; remove it from its env file"
-			exit 1
-		fi
+	if ! reason="$(gcp_check_type "$type" 2>&1)"; then
+		log "$reason; not starting its orchestrator"
+	elif ! gcp_deploys "$type"; then
 		log "$type: DEPLOY=false in its env file; not starting its orchestrator"
 	else
 		deployed+=("$type")
@@ -113,7 +110,7 @@ for type in "${types[@]}"; do
 done
 types=("${deployed[@]}")
 if ((${#types[@]} == 0)); then
-	log "every runner type has DEPLOY=false"
+	log "no runner type left to start: each has DEPLOY=false or a refused env file"
 	exit 1
 fi
 

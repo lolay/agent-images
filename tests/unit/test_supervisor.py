@@ -188,22 +188,31 @@ class StartTests(SupervisorCase):
         self.assertIn("--health-port 18080", self.start_record("gis")["args"])
         self.assertIn("--health-port 18081", self.start_record("linux")["args"])
 
-    def test_deploy_false_on_a_compute_type_is_refused(self):
+    def test_deploy_false_on_a_compute_type_is_skipped_not_fatal(self):
+        # r3.f2: an env-file-only change reaches the host without deploy.sh's
+        # refusal; exiting would restart-loop every type's orchestrator.
         (self.env_dir / "android.env").write_text("BACKEND=compute\nDEPLOY=false\n")
+        self.gcp.state.secrets["claude-env-android"] = "android-key"
         self.start()
-        self.assertEqual(self.process.wait(timeout=10), 1)
-        self.wait_for(
-            lambda: any("android: DEPLOY=false is for Cloud Run types only" in line for line in self.lines),
-            what="the refusal",
+        self.wait_for(lambda: self.starts("linux") and self.starts("gis"), what="the other types")
+        self.assertIsNone(self.process.poll())
+        self.assertEqual(self.starts("android"), [])
+        self.assertTrue(
+            any(
+                line.startswith("supervisor: android: DEPLOY=false is for Cloud Run types only")
+                and line.endswith("; not starting its orchestrator")
+                for line in self.lines
+            ),
+            self.lines,
         )
-        self.assertEqual(self.starts("linux"), [])
+        self.stop()
 
     def test_only_deploy_false_types_is_an_error(self):
         for name in ("linux", "gis"):
             (self.env_dir / f"{name}.env").write_text("DEPLOY=false\n")
         self.start()
         self.assertEqual(self.process.wait(timeout=10), 1)
-        self.wait_for(lambda: "supervisor: every runner type has DEPLOY=false" in self.lines, what="the error")
+        self.wait_for(lambda: any(line.startswith("supervisor: no runner type left to start") for line in self.lines), what="the error")
 
 
 class SupervisionTests(SupervisorCase):

@@ -155,7 +155,8 @@ cmd_type() {
 load_compute_type() {
 	[[ -f "$AGENT_GCP_ENV_DIR/$1.env" ]] || die "no infra/gcp/$1.env"
 	[[ "$(gcp_backend "$1")" == compute ]] || die "$1 isn't a Compute Engine type (BACKEND=compute)"
-	gcp_deploys "$1" || die "$1: DEPLOY=false is for Cloud Run types only; a Compute Engine type would be built and promoted with no orchestrator to serve it. Remove it from infra/gcp/$1.env"
+	local reason
+	reason="$(gcp_check_type "$1" 2>&1)" || die "$reason"
 	gcp_load_env "$1"
 	: "${IMAGE_FAMILY:?}" "${MACHINE_TYPE:?}" "${DISK_GB:?}" "${DISK_TYPE:?}" "${ZONE:?}" "${NETWORK:?}" "${SUBNET:?}"
 }
