@@ -146,11 +146,18 @@ class DeployTests(unittest.TestCase):
                 self.assertEqual(self.job_patches(), [])
                 self.assertEqual(self.gcloud_calls(), [])
 
-    def test_linux_gpu_waits_for_its_quota(self):
-        # Until the L4 quota lands; remove this test with the DEPLOY=false line.
+    def test_linux_gpu_deploys_on_an_rtx_pro_6000(self):
+        # The quota Google granted (specs/handoffs/infra-ask-m3-gpu.md): RTX PRO 6000
+        # only, so the real env file must deploy, and on that GPU at its minimums.
         result = self.deploy("type", "linux-gpu", IMAGE, "abc123")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.job_patches(), [])
+        self.assertEqual(self.job_patches(), ["agent-linux-gpu-next", "agent-linux-gpu"])
+        task = self.gcp.state.jobs[f"{JOBS}/agent-linux-gpu"]["template"]["template"]
+        self.assertEqual(task["nodeSelector"], {"accelerator": "nvidia-rtx-pro-6000"})
+        self.assertEqual(
+            task["containers"][0]["resources"]["limits"],
+            {"cpu": "20", "memory": "80Gi", "nvidia.com/gpu": "1"},
+        )
 
     def test_live_reuses_the_current_image(self):
         self.assertEqual(self.deploy("type", "linux", IMAGE, "first").returncode, 0)

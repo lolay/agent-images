@@ -6,7 +6,9 @@ Status: **m1 (`linux`) done, 2026-11-05**: sessions run on Cloud Run, tested twi
 ([m2 `gis` results](#m2-gis-results)) and `android`, a Compute Engine VM per
 session ([m2 `android` results](#m2-android-results)). m3, the GPU types, is under
 way ([handoffs/handoff-m3-gpu-types.md](handoffs/handoff-m3-gpu-types.md)): the
-`gpu` toolset and `linux-gpu` on an L4 are built, waiting for their first deploy.
+`gpu` toolset and `linux-gpu` are built; `linux-gpu` goes straight to the RTX PRO 6000
+(Google denied the L4 quota and granted 2 RTX PRO 6000, 2026-11-13), waiting for
+its first deploy.
 Recheck anything marked preview before building on it.
 
 The same model as the Mac and Linux runners, with Google running the hardware: Claude's
@@ -63,7 +65,7 @@ Each type is four things, declared in `infra/gcp/<type>.env`:
 | Type | Image | Backend and resources | Scratch disk | Standby |
 | --- | --- | --- | --- | --- |
 | `linux` | `agent-linux` (`agent-base` as is) | Cloud Run job, 4 vCPU, 16 GiB | 10 GiB | 0: a standby holds 4 vCPU and 16 GiB, about $270 a month; 1 later if cold starts hurt |
-| `linux-gpu` | `agent-linux-gpu` (`linux`'s toolsets on CUDA's devel image, then `gpu`) | Cloud Run job, RTX PRO 6000, 20 vCPU, 80 GiB (that GPU's minimum); an L4 (4 vCPU, 16 GiB) while m3 tests it | 10 GiB while m3 tests the L4, 100 GiB with the RTX PRO 6000 | 0: a standby GPU bills the whole time |
+| `linux-gpu` | `agent-linux-gpu` (`linux`'s toolsets on CUDA's devel image, then `gpu`) | Cloud Run job, RTX PRO 6000, 20 vCPU, 80 GiB (that GPU's minimum) | 100 GiB | 0: a standby GPU bills the whole time |
 | `gis` | `agent-gis` (toolsets core, native, node, gis: GDAL, PDAL, QGIS from conda-forge) | Cloud Run job, 8 vCPU, 32 GiB (Cloud Run's most memory; gis is bound by memory, not CPU) | 100 GiB | 0: a standby is about $550 a month |
 | `3d-gpu` | `agent-3d-gpu` (from `agent-base-gpu`: COLMAP built for Blackwell, Blender) | Cloud Run job, RTX PRO 6000 | 200 GiB (two volumes) | 0 |
 | `android` | Compute Engine image | Compute Engine VM per session with nested virtualization ([below](#compute-engine-vm-per-session-android-and-the-gpu-fallback)); Cloud Run has no KVM | 100 GB boot disk | 0 |
@@ -1115,7 +1117,8 @@ What the deploys found:
 - Both GPU types install the `display` toolset ([image-toolsets.md](image-toolsets.md)
   s7), which already gives `linux` and `gis` a virtual display with software OpenGL;
   m3 adds GPU rendering on top of it.
-- `linux-gpu` on an L4 first (cheaper), then RTX PRO 6000. Done when
+- `linux-gpu` on the RTX PRO 6000 (the L4 test pass was dropped: Google denied its
+  quota, 2026-11-13). Done when
   [tests/sessions/linux-gpu.md](../tests/sessions/linux-gpu.md) passes, which settles
   the open graphics question: if OpenGL and Vulkan don't run on the GPU in Cloud Run,
   GPU types move to the Compute Engine path (G4).
@@ -1330,8 +1333,8 @@ Pull request lolay/agent-images#48, 2026-11-06.
     arm64), then booted the emulator in 27.3 s cold and 6.2 s warm (API 37,
     x86_64).
   - Each Cloud Run type's report is in the deploy summary and kept as an artifact.
-  - Not yet shown: gpu's live smoke test, which waits on `linux-gpu`'s quota
-    (`DEPLOY=false`) or a session on an L4.
+  - Not yet shown: gpu's live smoke test, which waits on `linux-gpu`'s first
+    deploy on the RTX PRO 6000.
 
 ### m5 - Dependency watch
 

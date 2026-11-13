@@ -24,9 +24,10 @@ Run's GPU docs on 2026-11-06
    - `run.googleapis.com/nvidia_rtx_pro_6000_gpu_allocation_no_zonal_redundancy`:
      1 to 3, for s8 and `3d-gpu`. This one counts milli GPUs, so 3 GPUs is 3000
      (below).
-   Until it lands, `linux-gpu.env` has `DEPLOY=false`: the image builds and
-   pushes, and nothing else deploys. Remove that line, then run `cloud-deploy`
-   with targets `linux-gpu orchestrator`.
+   Outcome (2026-11-13): RTX PRO 6000 granted (2000), L4 denied. `linux-gpu.env`
+   moved to the RTX PRO 6000 and dropped `DEPLOY=false` on branch
+   `claude/quota-approval-confirmation-maxyq5`; its merge deploys it. Gary retries
+   the L4 after 48 hours.
 
 3. **Ephemeral disk: done.** Google granted 200 GiB per instance (77257019,
    2026-11-10) and 500 GiB across `us-central1` (77257018, 2026-11-08), which
@@ -42,16 +43,25 @@ Run's GPU docs on 2026-11-06
 | --- | --- | --- |
 | 77257018 | `EphemeralDiskAllocPerProjectRegion` | Granted 500 GiB, 2026-11-08 |
 | 77257019 | `MaxPerInstanceEphemeralDiskSizePerProjectRegion` | Granted 200 GiB, 2026-11-10 |
-| None | `NvidiaL4GpuAllocNoZonalRedundancyPerProjectRegion`, `NvidiaRtxPro6000GpuAllocNoZonalRedundancyPerProjectRegion` | Not granted, no case found |
+| fad92fe0-b754-417c-aa73-f6a3f17d3e0c | `NvidiaRtxPro6000GpuAllocNoZonalRedundancyPerProjectRegion` 0 to 2000 | Granted 2000 (2 GPUs), 2026-11-13 |
+| fad92fe0-b754-417c-aa73-f6a3f17d3e0c | `NvidiaL4GpuAllocNoZonalRedundancyPerProjectRegion` 0 to 2 | Denied, 2026-11-13 |
 
-**GPU: still open.** Checked 2026-11-08 with `gcloud beta quotas info list
---project=lolay-agents --service=run.googleapis.com
---filter="metric~no_zonal_redundancy"`: `us-central1` sits in the default group with
-no value for both, so neither is granted and `linux-gpu` stays `DEPLOY=false`. Gary
-sees only the two disk cases, so the GPU reply below either went on 77257018 (whose
-approval named only the disk) or was never sent. To do: check 77257018's original
-request in the console's quota request history; if the GPU quotas are on it, reply
-there, otherwise file a new request.
+**GPU: RTX PRO 6000 granted, L4 denied (2026-11-13, same day as filed).** Google
+partially approved the request: 2000 milli RTX PRO 6000, no L4. The denial gave the
+stock reasons (wait 48 hours on a new project, more billing history, another region
+or resource). The L4 was only m3's cheaper test GPU, so the plan is to skip it and
+move `linux-gpu` to the RTX PRO 6000 (m3 s8) rather than ask again. Until the
+request was filed, nothing had asked for GPU quota: the
+console's Increase Requests tab held only 77257018 and 77257019 (filed 2026-11-04,
+ephemeral disk only), and all four Cloud Run GPU quotas in `us-central1` read 0. The
+reply drafted below was never sent. The eligibility check (`gcloud beta quotas info
+describe ... --format="yaml(quotaIncreaseEligibility)"`) said `isEligible: true`
+first. The request asks for 2 L4 and 2000 milli RTX PRO 6000 (Gary's call; Cloud Run
+attaches whole GPUs only, so milli is just the unit), us-central1 only, peak 2 and
+median 1. The console gave a case ID, not a number; the Increase Requests tab should
+show numeric request numbers. `linux-gpu` moves to the RTX PRO 6000 instead (see item 2). In
+the console, filter on "GPU": the display names say "without zonal redundancy", so
+"no zonal redundancy" matches nothing.
 
 The RTX PRO 6000 quota counts milli GPUs (its display name says "in milli GPU",
 though `metricUnit` is `1`): 3 GPUs is 3000. The L4 quota counts whole GPUs. A
