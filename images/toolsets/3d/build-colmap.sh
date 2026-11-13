@@ -25,11 +25,13 @@ fi
 [[ "$version" =~ ^[0-9]+(\.[0-9]+)+$ ]] || die "unexpected COLMAP release '$version'"
 
 # COLMAP's install guide's Ubuntu list, less the GUI's (Qt, GLEW) and the tests'.
+# openimageio-tools stays: Ubuntu's OpenImageIO CMake config imports its
+# binaries, and configure fails without them.
 sudo apt-get update -q
 sudo env DEBIAN_FRONTEND=noninteractive apt-get install -q -y --no-install-recommends \
 	cmake ninja-build build-essential git \
 	libboost-program-options-dev libboost-graph-dev libboost-system-dev \
-	libeigen3-dev libopenimageio-dev libmetis-dev libgoogle-glog-dev \
+	libeigen3-dev libopenimageio-dev openimageio-tools libmetis-dev libgoogle-glog-dev \
 	libsqlite3-dev libcgal-dev libceres-dev libsuitesparse-dev \
 	libcurl4-openssl-dev libssl-dev libopenblas-dev
 # Ubuntu's OpenImageIO CMake config wants OpenCV's include directory to exist,
