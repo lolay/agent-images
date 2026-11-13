@@ -407,6 +407,29 @@ class GitTests(Base):
         self.run_git_watch("carry", "nightly", str(candidate), "main", "lock/watch")
         self.assertFalse((candidate / "images/cloud/linux-gpu").exists())
 
+    def test_carry_drops_a_lock_main_changed_while_the_branch_was_open(self):
+        # r3.f1: lock/watch holds gis at claude 9.9.1; main then moves gis to 2.0.0
+        # (a constraint change re-locked, or a rollback). Carrying the branch's copy
+        # would propose 2.0.0 -> 9.9.1 on the next hourly run.
+        self.git("checkout", "-q", "lock/watch")
+        self.write("gis", LOCK.replace("2.1.318", "9.9.1"))
+        self.git("commit", "-qam", "gis candidate")
+        self.git("checkout", "-q", "main")
+        main_gis = LOCK.replace("2.1.318", "2.0.0")
+        self.write("gis", main_gis)
+        self.git("commit", "-qam", "main moves gis")
+        # The workflow's candidate starts as main's locks; the nightly run resolves linux.
+        candidate = self.tree("candidate", {"linux": LOCK.replace("2.1.318", "2.1.321"), "gis": main_gis, "linux-gpu": LOCK})
+        result = self.run_git_watch("carry", "nightly", str(candidate), "main", "lock/watch")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((candidate / "images/cloud/gis/versions.lock").read_text(), main_gis,
+                         "main's gis lock stands; the branch's older candidate is dropped")
+        self.assertIn("dropped images/cloud/gis/versions.lock", result.stderr)
+        self.assertNotIn("carried images/cloud/gis", result.stderr)
+        changed = self.run_git_watch("changed", str(self.repo), str(candidate))
+        self.assertEqual(changed.stdout.split(), ["images/cloud/linux/versions.lock"],
+                         "nothing proposes reverting gis")
+
     def test_proposed_when_the_branch_is_main_plus_the_candidate(self):
         branch = {"linux": LOCK.replace("2.1.318", "2.1.319"), "gis": LOCK.replace("2.1.318", "2.1.320"), "linux-gpu": LOCK}
         self.assertEqual(self.run_git_watch("proposed", str(self.tree("same", branch)), "main", "lock/watch").returncode, 0)

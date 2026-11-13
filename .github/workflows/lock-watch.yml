@@ -98,7 +98,8 @@ jobs:
           if ((open > 0)); then
             git fetch --no-tags origin lock/watch
             # Keep the open pull request's candidates for the types this run
-            # didn't resolve (the weekly run's, in an hourly run).
+            # didn't resolve (the weekly run's, in an hourly run), except a lock
+            # main changed since the branch left it.
             scripts/cloud/lock-watch.sh carry "$CLASS" out/candidate origin/main origin/lock/watch
           fi
           changed="$(scripts/cloud/lock-watch.sh changed . out/candidate)"

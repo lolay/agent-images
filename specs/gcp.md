@@ -393,9 +393,13 @@ deploys; it only proposes a pull request:
    with `lock.sh resolve` into a candidate tree that starts as `main`'s locks.
 2. If a lock pull request is open, the locks its branch changed for types this run
    didn't resolve are carried into the candidate (`lock-watch.sh carry`), so the
-   hourly run never drops the weekly run's `gis` candidate.
+   hourly run never drops the weekly run's `gis` candidate. A lock `main` changed
+   since the branch left it (a constraint change re-locked, or a rollback) is
+   dropped, not carried, since the branch's copy is older than `main`'s and would
+   revert it; that type's next resolve proposes afresh.
 3. Nothing moved: done, green, nothing pushed (an open lock pull request is closed,
-   since `main` already matches upstream). The open pull request already proposes
+   since the candidate matches `main`: upstream hasn't moved, or step 2 dropped the
+   only lock the pull request held). The open pull request already proposes
    exactly this on `main`'s head (`lock-watch.sh proposed`): nothing is pushed, so
    nothing new reruns its checks. A third job, `retry` (`GITHUB_TOKEN` with Actions
    write, no key), reruns the failed jobs of its `cloud-build` run
