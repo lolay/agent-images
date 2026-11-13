@@ -1,6 +1,6 @@
 """The shared runner scripts every platform runs, with fake commands: claude.sh
 (the upgrade and the runner.env -> CLI flag mapping), agent-runner.sh (EPHEMERAL
-power-off) and the watchdog (its second-failure rule). Then the two GCP chains
+power-off) and the watchdog (its repair and second-failure rule). Then the two GCP chains
 end to end: job spec -> entrypoint -> claude.sh, and the compute hook -> instance
 metadata -> agent-gce-order -> claude.sh."""
 
@@ -16,7 +16,7 @@ import unittest
 from pathlib import Path
 
 from fake_gcp import FakeGcp
-from support import REPO, base_env, read_env_file, write_executable
+from support import REPO, base_env, git_env, read_env_file, write_executable
 from test_entrypoint import EntrypointCase
 
 CLAUDE_SH = REPO / "images/shared/runners/claude.sh"
@@ -41,6 +41,30 @@ self-hosted-runner)
 	env >"$FAKE_OUT/runner.env"
 	;;
 esac
+"""
+
+
+# A fake curl for the watchdog: takes only the flags it uses (-s, -o FILE,
+# --max-time N, one URL), as curl rejects what it doesn't know (exit 2). A port
+# with a file in $FAKE_OUT/relays answers with that file's status JSON; any other
+# exits $FAKE_CURL_STATUS (7, "couldn't connect", by default).
+FAKE_CURL = r"""
+echo "$*" >>"$FAKE_OUT/curl.calls"
+out=- url=
+while (($#)); do
+	case "$1" in
+	-s) ;;
+	-o) out="$2"; shift ;;
+	--max-time) [[ "$2" =~ ^[0-9]+$ ]] || exit 2; shift ;;
+	-*) echo "curl: unknown option $1" >&2; exit 2 ;;
+	*) [[ -z "$url" ]] || exit 2; url="$1" ;;
+	esac
+	shift
+done
+[[ "$url" =~ ^http://127\.0\.0\.1:([0-9]+)/__agentproxy/status$ ]] || exit 3
+relay="$FAKE_OUT/relays/${BASH_REMATCH[1]}"
+[[ -f "$relay" ]] || exit "${FAKE_CURL_STATUS:-7}"
+if [[ "$out" == - ]]; then cat "$relay"; else cat "$relay" >"$out"; fi
 """
 
 
@@ -342,11 +366,11 @@ class WatchdogTests(unittest.TestCase):
         self.runner_env.parent.mkdir(parents=True)
         self.configure("terminate")
         self.add_session("sess1", 41234)
-        # curl exits $FAKE_CURL_STATUS: 7 is "couldn't connect", the relay is gone.
-        write_executable(
-            self.fake_bin / "curl",
-            'echo "$*" >>"$FAKE_OUT/curl.calls"\nexit "${FAKE_CURL_STATUS:-7}"\n',
-        )
+        self.relays = self.out / "relays"
+        self.relays.mkdir()
+        self.proc_net_tcp = self.tmp / "proc-net-tcp"
+        self.listen()
+        write_executable(self.fake_bin / "curl", FAKE_CURL)
         write_executable(self.fake_bin / "pkill", 'echo "$*" >>"$FAKE_OUT/pkill.calls"\n')
 
     def tearDown(self):
@@ -360,13 +384,58 @@ class WatchdogTests(unittest.TestCase):
     def add_session(self, session, port):
         (self.sessions / f"{session}.gitconfig").write_text(
             f'[http "https://github.com/"]\n\tproxy = http://127.0.0.1:{port}\n'
+            f"\tsslCAInfo = {self.ccr(session) / 'ca-bundle.crt'}\n"
         )
+
+    def ccr(self, session):
+        return self.sessions / f"{session}.claude-config/ccr"
+
+    def add_relay(self, port, session, compact=False, **fields):
+        """A live relay on port signing for session, as its status endpoint says."""
+        status = {
+            "enabled": True,
+            "port": port,
+            "caBundlePath": str(self.ccr(session) / "ca-bundle.crt"),
+            "ghShimDir": str(self.ccr(session) / "bin"),
+            "readmePath": str(self.ccr(session) / "README.md"),
+            "gitConfigInjection": False,
+            **fields,
+        }
+        text = json.dumps(status, separators=(",", ":")) if compact else json.dumps(status, indent=2)
+        (self.relays / str(port)).write_text(text + "\n")
+
+    def listen(self, *ports):
+        """/proc/net/tcp with these ports listening on 127.0.0.1, plus 8080 on every
+        address (Cloud Run's) and an established loopback connection."""
+        lines = ["  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid"]
+        rows = [(f"0100007F:{port:04X}", "0A") for port in ports]
+        rows += [("00000000:1F90", "0A"), ("0100007F:A1B2", "01")]
+        for index, (local, state) in enumerate(rows):
+            lines.append(f"   {index}: {local} 00000000:0000 {state} 00000000:00000000 00:00000000 00000000  1000")
+        self.proc_net_tcp.write_text("\n".join(lines) + "\n")
+
+    def write_session_files(self, session, port):
+        """The README and gh shim the runner writes, both naming the relay port."""
+        ccr = self.ccr(session)
+        (ccr / "bin").mkdir(parents=True)
+        readme = ccr / "README.md"
+        readme.write_text(f"Proxy at http://127.0.0.1:{port} (set via HTTPS_PROXY).\nNot 127.0.0.1:{port}9.\n")
+        shim = write_executable(ccr / "bin/gh", f'export HTTPS_PROXY="http://127.0.0.1:{port}"\n')
+        return readme, shim
+
+    def proxy(self, session="sess1"):
+        return subprocess.run(
+            ["git", "config", "-f", str(self.sessions / f"{session}.gitconfig"),
+             "--get", "http.https://github.com/.proxy"],
+            capture_output=True, text=True, check=True, env=git_env(),
+        ).stdout.strip()
 
     def run_watchdog(self, **extra):
         return subprocess.run(
             ["bash", str(WATCHDOG)],
             env=base_env(self.home, self.fake_bin, FAKE_OUT=str(self.out),
-                         XDG_CACHE_HOME=str(self.cache), **extra),
+                         XDG_CACHE_HOME=str(self.cache),
+                         AGENT_WATCHDOG_PROC_NET_TCP=str(self.proc_net_tcp), **extra),
             capture_output=True, text=True, timeout=30,
         )
 
@@ -380,7 +449,7 @@ class WatchdogTests(unittest.TestCase):
     def test_acts_on_the_second_failure_only(self):
         first = self.run_watchdog()
         self.assertEqual(first.returncode, 0, first.stderr)
-        self.assertIn("port 41234 refused (1/2)", first.stdout)
+        self.assertIn("port 41234 refused, no live relay found (1/2)", first.stdout)
         self.assertEqual(self.pkill_calls(), [])
         self.assertIn("127.0.0.1:41234/__agentproxy/status", (self.out / "curl.calls").read_text())
 
@@ -426,6 +495,73 @@ class WatchdogTests(unittest.TestCase):
         self.run_watchdog()
         self.assertFalse((self.out / "curl.calls").exists())
         self.assertEqual(self.pkill_calls(), [])
+
+    def test_repairs_to_the_sessions_live_relay(self):
+        readme, shim = self.write_session_files("sess1", 41234)
+        # Another session's relay listens first; only the one signing for sess1 counts.
+        self.add_session("sess2", 40000)
+        self.add_relay(40000, "sess2")
+        self.add_relay(39971, "sess1")
+        self.listen(40000, 39971)
+
+        result = self.run_watchdog()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("port 41234 refused; repaired to the session's live relay on 39971", result.stderr)
+        self.assertEqual(self.proxy(), "http://127.0.0.1:39971")
+        self.assertEqual(self.proxy("sess2"), "http://127.0.0.1:40000")
+        self.assertEqual(
+            readme.read_text(), "Proxy at http://127.0.0.1:39971 (set via HTTPS_PROXY).\nNot 127.0.0.1:412349.\n"
+        )
+        self.assertIn("127.0.0.1:39971", shim.read_text())
+        self.assertTrue(os.access(shim, os.X_OK), "the shim stays executable")
+        self.assertFalse(self.counter().exists())
+        self.assertEqual(self.pkill_calls(), [])
+
+        # Repaired, the next run finds the port answering and does nothing.
+        again = self.run_watchdog()
+        self.assertEqual((again.stdout, again.stderr), ("", ""))
+
+    def test_counts_when_no_relay_signs_for_the_session(self):
+        self.add_relay(40000, "sess2")
+        self.add_relay(39971, "sess1", enabled=False)
+        self.listen(40000, 39971)
+        first = self.run_watchdog()
+        self.assertIn("no live relay found (1/2)", first.stdout)
+        self.assertEqual(self.proxy(), "http://127.0.0.1:41234")
+        self.run_watchdog()
+        self.assertEqual(len(self.pkill_calls()), 1)
+
+    def test_ignores_a_relay_that_reports_another_port(self):
+        (self.relays / "39971").write_text(json.dumps({
+            "enabled": True, "port": 399710, "caBundlePath": str(self.ccr("sess1") / "ca-bundle.crt"),
+        }))
+        self.listen(39971)
+        self.run_watchdog()
+        self.assertEqual(self.proxy(), "http://127.0.0.1:41234")
+
+    def test_edits_only_the_sessions_own_files(self):
+        outside = self.tmp / "elsewhere/README.md"
+        outside.parent.mkdir()
+        outside.write_text("http://127.0.0.1:41234\n")
+        self.add_relay(39971, "sess1", readmePath=str(outside), ghShimDir=str(outside.parent))
+        self.listen(39971)
+        result = self.run_watchdog()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.proxy(), "http://127.0.0.1:39971")
+        self.assertEqual(outside.read_text(), "http://127.0.0.1:41234\n")
+
+    def test_finds_relays_with_lsof_on_macos(self):
+        write_executable(self.fake_bin / "uname", '[[ "$*" == "-s" ]] || exit 1\necho Darwin\n')
+        write_executable(
+            self.fake_bin / "lsof",
+            '[[ "$*" == "-nP -iTCP@127.0.0.1 -sTCP:LISTEN -Fn" ]] || { echo "lsof: bad args: $*" >&2; exit 1; }\n'
+            'printf "p501\\nf12\\nn127.0.0.1:39971\\np502\\nf3\\nn127.0.0.1:5000\\n"\n',
+        )
+        self.add_relay(39971, "sess1", compact=True)
+        self.listen()  # /proc says nothing listens: the port has to come from lsof.
+        result = self.run_watchdog()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.proxy(), "http://127.0.0.1:39971")
 
     def test_nothing_to_do_before_the_vm_is_configured(self):
         self.runner_env.unlink()
