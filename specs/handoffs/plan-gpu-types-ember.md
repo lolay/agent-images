@@ -2,8 +2,10 @@
 
 Status: s1 done 2026-11-06 ([infra-ask-m3-gpu.md](infra-ask-m3-gpu.md)). Layout
 decided (owner, 2026-11-06). s2 to s5 done 2026-11-06, in
-lolay/agent-images#37. s6 is blocked on the Cloud Run GPU quota (run 25 failed
-on it); `linux-gpu` is build-only (`DEPLOY=false`) until it lands.
+lolay/agent-images#37. s6 was blocked on the Cloud Run GPU quota (run 25 failed
+on it). 2026-11-13: Google granted 2 RTX PRO 6000 and denied the L4, so s6 and s8
+merge: `linux-gpu` moves to the RTX PRO 6000 and `DEPLOY=false` goes (branch
+`claude/quota-approval-confirmation-maxyq5`); s6 now deploys on that GPU.
 Branch `claude/vigilant-tesla-m2ipbw` (assigned by the harness), from `main` at
 `154787f`.
 
@@ -165,7 +167,9 @@ about 10.8 GB unpacked (CUDA devel 7.1 GB). The Actions cache was the real limit
 about 12 to 15 minutes from scratch, and the CPU types' cache settings are
 unchanged.
 
-#### s6 - First deploy and the session test on an L4 [deep]
+#### s6 - First deploy and the session test on the RTX PRO 6000 [deep]
+
+No L4 (quota denied 2026-11-13): s6 runs on the RTX PRO 6000, which also covers s8.
 
 Watch the deploy (build time, image size, GPU smoke). Set `EXPECTED_SPAWN_SECONDS`
 from the cold start. Run the linux-gpu session test in "Agent: Linux (GPU)";
@@ -178,10 +182,10 @@ Gary. If Cloud Run renders on the GPU, carry on. If not, stop: the GPU types mov
 to the Compute Engine path (G4), which is a new plan built on the `android` VM
 path, and s8 to s10 change.
 
-#### s8 - `linux-gpu` on RTX PRO 6000 [exec]
+#### s8 - `linux-gpu` on RTX PRO 6000 [exec] (folded into s6)
 
-Switch the env file to RTX PRO 6000 (20 vCPU, 80 GiB), deploy, rerun the session
-test; add the numbers to the results table.
+Done with s6: the env file is on the RTX PRO 6000 (20 vCPU, 80 GiB, 100 GiB
+scratch) since 2026-11-13, after the L4 quota was denied.
 
 #### s9 - The `3d` toolset [deep]
 

@@ -24,9 +24,10 @@ Run's GPU docs on 2026-11-06
    - `run.googleapis.com/nvidia_rtx_pro_6000_gpu_allocation_no_zonal_redundancy`:
      1 to 3, for s8 and `3d-gpu`. This one counts milli GPUs, so 3 GPUs is 3000
      (below).
-   Until it lands, `linux-gpu.env` has `DEPLOY=false`: the image builds and
-   pushes, and nothing else deploys. Remove that line, then run `cloud-deploy`
-   with targets `linux-gpu orchestrator`.
+   Outcome (2026-11-13): RTX PRO 6000 granted (2000), L4 denied. `linux-gpu.env`
+   moved to the RTX PRO 6000 and dropped `DEPLOY=false` on branch
+   `claude/quota-approval-confirmation-maxyq5`; its merge deploys it. Gary retries
+   the L4 after 48 hours.
 
 3. **Ephemeral disk: done.** Google granted 200 GiB per instance (77257019,
    2026-11-10) and 500 GiB across `us-central1` (77257018, 2026-11-08), which
@@ -58,7 +59,7 @@ describe ... --format="yaml(quotaIncreaseEligibility)"`) said `isEligible: true`
 first. The request asks for 2 L4 and 2000 milli RTX PRO 6000 (Gary's call; Cloud Run
 attaches whole GPUs only, so milli is just the unit), us-central1 only, peak 2 and
 median 1. The console gave a case ID, not a number; the Increase Requests tab should
-show numeric request numbers. `linux-gpu` stays `DEPLOY=false` until it moves to the RTX PRO 6000. In
+show numeric request numbers. `linux-gpu` moves to the RTX PRO 6000 instead (see item 2). In
 the console, filter on "GPU": the display names say "without zonal redundancy", so
 "no zonal redundancy" matches nothing.
 
