@@ -319,7 +319,7 @@ brew libuv 1.53.0
 brew libxcrypt 4.5.2
 brew libyaml 0.2.5
 brew llhttp 9.4.3
-brew lolay/tap/nowline 0.12.1
+brew lolay/tap/nowline 0.13.0
 brew lolay/tap/triage 0.5.0
 brew lz4 1.11.1
 brew merve 1.2.2_4
