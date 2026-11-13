@@ -11,10 +11,20 @@ import unittest
 from support import REPO
 
 
+# What would leak the caller's settings into the make under test: AGENT_TYPE and
+# MODE themselves, and the variables a parent make passes to its children, since
+# the tests run inside make cloud-test, which CI calls with MODE=android.
+CALLER_MAKE_ENV = ("AGENT_TYPE", "MODE", "MAKEFLAGS", "MFLAGS", "MAKELEVEL", "MAKEOVERRIDES")
+
+
+def clean_env():
+    return {k: v for k, v in os.environ.items() if k not in CALLER_MAKE_ENV}
+
+
 def make_dry_run(*args, agent_type=None):
     """make -n: the commands make would run, without running them. agent_type set
     is a cloud session; None a host."""
-    env = {k: v for k, v in os.environ.items() if k not in ("AGENT_TYPE", "MODE")}
+    env = clean_env()
     if agent_type is not None:
         env["AGENT_TYPE"] = agent_type
     return subprocess.run(
@@ -57,6 +67,7 @@ class SessionGateTests(unittest.TestCase):
         result = subprocess.run(
             ["make", "--no-print-directory", "cloud-lint", "MODE=androd"],
             cwd=REPO,
+            env=clean_env(),
             capture_output=True,
             text=True,
             check=False,
