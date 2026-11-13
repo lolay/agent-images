@@ -11,7 +11,8 @@
 # Prints {"types": [{"type": "linux", "build": true}, ...], "vms": [{"type":
 # "android"}, ...], "orchestrator": bool, "prune": bool}. types are the Cloud
 # Run types (BACKEND=run, the default): build is false when only the type's env
-# file changed, so the deploy rewrites the job and reuses the live image. vms
+# file changed, so the deploy rewrites the job and reuses the live image, unless
+# base had no job to reuse (deployed_at_base). vms
 # are the Compute Engine types (BACKEND=compute) whose image needs a Packer
 # build; their env file alone rebuilds nothing, since the hook reads it from
 # the orchestrator image. prune is true when a type's env file was deleted, so
@@ -102,6 +103,22 @@ if [[ -n "$schedule" ]]; then
 	exit 0
 fi
 
+# deployed_at_base <type>: whether <type> had a job at base, the last successful
+# push deploy: its env file was there without DEPLOY=false. An env-only change to
+# a type that didn't (a new env file, or DEPLOY=false just removed) has no live
+# image for deploy.sh's --live to reuse, so it builds. Reads base's files with
+# the same parser as everything else (gcp_deploys).
+base_env=""
+deployed_at_base() {
+	if [[ -z "$base_env" ]]; then
+		base_env="$(mktemp -d)"
+		trap 'rm -rf "$base_env"' EXIT
+	fi
+	git show "$base:infra/gcp/project.env" >"$base_env/project.env" 2>/dev/null &&
+		git show "$base:infra/gcp/$1.env" >"$base_env/$1.env" 2>/dev/null &&
+		AGENT_GCP_ENV_DIR="$base_env" gcp_deploys "$1"
+}
+
 entries=()
 vms=()
 for type in "${types[@]}"; do
@@ -113,7 +130,8 @@ for type in "${types[@]}"; do
 		continue
 	fi
 	mapfile -t own < <(cloud_image_paths "$type")
-	if $all || touched "${every_type[@]}" "${own[@]}"; then
+	if $all || touched "${every_type[@]}" "${own[@]}" ||
+		{ touched "infra/gcp/$type.env" && gcp_deploys "$type" && ! deployed_at_base "$type"; }; then
 		entries+=("$(jq -cn --arg type "$type" '{type: $type, build: true}')")
 	elif touched "infra/gcp/$type.env" "scripts/cloud/job-spec.sh"; then
 		entries+=("$(jq -cn --arg type "$type" '{type: $type, build: false}')")
