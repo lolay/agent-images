@@ -16,9 +16,14 @@ CLI, or `sdkmanager --list_installed` if that's what's there),
 
 ## 2. Emulator
 
-Run `agent-emulator wait` and time it. Pass if `adb shell getprop sys.boot_completed`
-returns `1`. Record the API level and ABI (`adb shell getprop ro.build.version.sdk`,
-`ro.product.cpu.abi`).
+The runner boots the emulator before the session starts, so `agent-emulator wait`
+usually returns at once and its time says nothing about boot. Record its time and
+whether `agent-emulator status` already showed it booted in step 1, then measure a
+boot: `agent-emulator stop`, `agent-emulator start`, and time `agent-emulator wait`
+from the start (the boot a session gets after restarting the emulator, from the
+image's quickboot snapshot). Pass if `adb shell getprop sys.boot_completed` returns
+`1` after that boot. Record the API level and ABI (`adb shell getprop
+ro.build.version.sdk`, `ro.product.cpu.abi`).
 
 ## 3. App
 
@@ -28,13 +33,19 @@ Plugin, Kotlin and Compose BOM (look them up, don't guess), the Gradle wrapper, 
 compile and target SDK set to the installed platform. Keep the counting logic in a
 small class so it can be unit-tested.
 
+Run these in this order, so the first build is the cold one:
+
+- `./gradlew assembleDebug`: the cold build, the first Gradle build in the session
+  (it downloads dependencies and starts the daemon). Time the wrapper's generation
+  separately. Record the APK size.
+- Change one line of code in a source file without changing what the tests check
+  (not just a comment, which Kotlin's incremental compile can skip), then
+  `./gradlew assembleDebug` again: the warm build.
 - `./gradlew testDebugUnitTest`: a unit test of the counter class.
-- `./gradlew assembleDebug`: record the APK size.
 - `./gradlew connectedDebugAndroidTest`: a Compose UI test that taps the button three
   times and asserts the text shows 3.
 
-Record cold build time (first `assembleDebug`) and warm (a second run after touching
-one source file).
+Record cold and warm build times, and how many tasks each ran.
 
 ## 4. On the device
 
