@@ -1,0 +1,15 @@
+# Binary checks (toolset-checks.sh): label: command, which must exit 0; its first
+# line of output is the reported version. None needs a GPU; the sm_120 lines show
+# the CUDA code in COLMAP and gsplat was built for Blackwell. smoke.sh runs them
+# on the GPU.
+blender: blender --version | head -n 1
+colmap: colmap -h | grep -m1 COLMAP
+colmap cuda: colmap -h | grep -m1 -o 'with CUDA'
+colmap sm_120: cuobjdump --list-elf /opt/colmap/bin/colmap | grep -m1 -o 'sm_120'
+python3: python3 --version
+torch: python3 -c 'import torch; print(torch.__version__, "cuda", torch.version.cuda)'
+gsplat: python3 -c 'import importlib.metadata as m; print(m.version("gsplat"))'
+gsplat sm_120: cuobjdump --list-elf "$(python3 -c 'import gsplat, pathlib; print(next(pathlib.Path(gsplat.__file__).parent.glob("csrc*.so")))')" | grep -m1 -o 'sm_120'
+open3d: python3 -c 'import open3d; print(open3d.__version__)'
+exiftool: exiftool -ver
+uv: uv --version

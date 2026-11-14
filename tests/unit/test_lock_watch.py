@@ -230,7 +230,8 @@ class Base(unittest.TestCase):
 
 class TypesTests(Base):
     def test_classes(self):
-        expected = {"nightly": "linux\n", "weekly": "gis\nlinux-gpu\n", "all": "gis\nlinux\nlinux-gpu\n"}
+        expected = {"nightly": "linux\n", "weekly": "3d-gpu\ngis\nlinux-gpu\n",
+                    "all": "3d-gpu\ngis\nlinux\nlinux-gpu\n"}
         for class_, types in expected.items():
             with self.subTest(class_):
                 result = self.run_watch("types", class_)

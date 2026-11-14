@@ -1,0 +1,3 @@
+# uv installs /opt/3d's Python and its locked environment (pyproject.toml,
+# uv.lock), and a session's own projects on top.
+brew "uv"

@@ -1,0 +1,21 @@
+# The 3d toolset (specs/image-toolsets.md, "3d"). COLMAP's own runtime libraries
+# come with its build (install.sh installs the list the builder stage wrote);
+# these are for Blender, Open3D and the capture tools.
+
+# Blender's official Linux build links these X and GL libraries even in
+# background mode (-b); the display toolset supplies Mesa.
+libxi6
+libxxf86vm1
+libxfixes3
+libxrender1
+libxkbcommon0
+libsm6
+libice6
+libgl1
+libegl1
+
+# Capture metadata: GPS, gimbal and vendor XMP that Python EXIF libraries miss.
+libimage-exiftool-perl
+
+# Unpacking Blender's release.
+xz-utils

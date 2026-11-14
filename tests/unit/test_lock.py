@@ -203,6 +203,15 @@ class ResolveTests(unittest.TestCase):
                 "https://github.com/terraform-linters/tflint/releases/tag/v0.65.0",
             "redirect https://github.com/VirtualGL/virtualgl/releases/latest":
                 "https://github.com/VirtualGL/virtualgl/releases/tag/3.1.5",
+            "redirect https://github.com/colmap/colmap/releases/latest":
+                "https://github.com/colmap/colmap/releases/tag/4.2.1",
+            # blender.org's index pages: the newest series, then its newest Linux build.
+            "https://download.blender.org/release/":
+                '<a href="Blender5.2/">Blender5.2/</a>\n<a href="Blender5.3/">Blender5.3/</a>\n'
+                '<a href="Blender5.10/">Blender5.10/</a>\n',
+            "https://download.blender.org/release/Blender5.10/":
+                '<a href="blender-5.10.0-linux-x64.tar.xz">x</a>\n<a href="blender-5.10.1-linux-x64.tar.xz">x</a>\n'
+                '<a href="blender-5.10.1-windows-x64.zip">x</a>\n<a href="blender-5.10.1.sha256">x</a>\n',
         }
         # Every formula the real Brewfiles name for linux, gis and linux-gpu, plus
         # dependencies; a formula missing here fails the way brew does.
@@ -309,6 +318,13 @@ class ResolveTests(unittest.TestCase):
         cuda = "mirror.gcr.io/nvidia/cuda:13.0.3-devel-ubuntu24.04"
         self.assertIn(f"base - {cuda}@{digest_of(cuda)}", entries)
         self.assertIn("release virtualgl 3.1.5", entries)
+
+    def test_3d_gpu_takes_colmap_and_the_newest_blender(self):
+        # Blender's series sort as versions (5.10 after 5.3), not as text.
+        entries = self.entries(self.resolve("3d-gpu"))
+        for line in ("release colmap 4.2.1", "release blender 5.10.1", "release virtualgl 3.1.5"):
+            self.assertIn(line, entries)
+        self.assertFalse([line for line in entries if line.startswith(("rust ", "terraform "))])
 
     def test_gis_has_no_rust_or_terraform(self):
         lock = self.resolve("gis")

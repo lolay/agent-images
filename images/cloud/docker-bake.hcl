@@ -139,6 +139,34 @@ target "versions-linux-gpu" {
   output   = versions_output("linux-gpu")
 }
 
+# 3d-gpu: reconstruction on the GPU, on base-gpu: COLMAP built in its own stage,
+# then native, display, 3d and gpu (images/cloud/3d-gpu).
+target "3d-gpu-tools" {
+  context    = "."
+  dockerfile = "images/cloud/3d-gpu/Dockerfile"
+  contexts = {
+    agent-base = "target:base-gpu"
+  }
+}
+
+target "3d-gpu" {
+  inherits = ["_runner"]
+  contexts = {
+    agent-tools = "target:3d-gpu-tools"
+  }
+  args = {
+    AGENT_TYPE = "3d-gpu"
+  }
+  tags = tags("3d-gpu")
+}
+
+target "versions-3d-gpu" {
+  inherits = ["3d-gpu"]
+  target   = "versions"
+  tags     = []
+  output   = versions_output("3d-gpu")
+}
+
 target "gis-tools" {
   context    = "."
   dockerfile = "images/cloud/gis/Dockerfile"
