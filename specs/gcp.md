@@ -4,13 +4,11 @@ Status: **m1 (`linux`) done, 2026-11-05**: sessions run on Cloud Run, tested twi
 ([m1 results](#m1-results)). Written 2026-11-04; the foundation is applied
 (`lolay/infrastructure`, `stacks/gcp/agents`). **m2 done, 2026-11-06**: `gis`
 ([m2 `gis` results](#m2-gis-results)) and `android`, a Compute Engine VM per
-session ([m2 `android` results](#m2-android-results)). m3, the GPU types, is under
-way ([handoffs/handoff-m3-gpu-types.md](handoffs/handoff-m3-gpu-types.md)): the
-`gpu` toolset and `linux-gpu` are built; `linux-gpu` went straight to the RTX PRO 6000
-(Google denied the L4 quota and granted 2 RTX PRO 6000, 2026-11-13), is deployed, and
-passed its session test ([m3 `linux-gpu` results](#m3-linux-gpu-results)): Cloud Run
-renders on the GPU. `3d-gpu` is deployed and passed its session test, 2026-11-14
-([m3 `3d-gpu` results](#m3-3d-gpu-results)); closing m3 is next.
+session ([m2 `android` results](#m2-android-results)). **m3 done, 2026-11-14**:
+`linux-gpu` and `3d-gpu` on the RTX PRO 6000 (Google granted 2 and denied the L4,
+2026-11-13), both deployed and passed their session tests
+([m3 `linux-gpu` results](#m3-linux-gpu-results), [m3 `3d-gpu` results](#m3-3d-gpu-results)):
+Cloud Run renders on the GPU, so the GPU types stay on Cloud Run.
 Recheck anything marked preview before building on it.
 
 The same model as the Mac and Linux runners, with Google running the hardware: Claude's
@@ -1119,6 +1117,9 @@ What the deploys found:
 
 ### m3 - GPU types
 
+Done 2026-11-14. What's left is in [Open items](#open-items): the GPU types' spawn
+time, the L4, and `3d-gpu`'s second 100 GiB of scratch.
+
 - Host to `e2-small`.
 - Both GPU types install the `display` toolset ([image-toolsets.md](image-toolsets.md)
   s7), which already gives `linux` and `gis` a virtual display with software OpenGL;
@@ -1132,7 +1133,6 @@ What the deploys found:
 - `3d-gpu`: COLMAP, Blender and the splatting library built for compute capability
   12.0. Done when [tests/sessions/3d-gpu.md](../tests/sessions/3d-gpu.md) passes.
   Done 2026-11-14 ([m3 `3d-gpu` results](#m3-3d-gpu-results)).
-- Handoff: [handoffs/handoff-m3-gpu-types.md](handoffs/handoff-m3-gpu-types.md).
 
 #### m3 `linux-gpu` results
 
@@ -1476,9 +1476,12 @@ self-update at start (`CLAUDE_UPGRADE=false`) on the `nightly` types only
 
 | Item | Why |
 | --- | --- |
-| Graphics libraries on Cloud Run GPUs | Decides whether a virtual head runs on Cloud Run |
-| Cold start of a multi-GB GPU image | Sets `--expected-spawn-seconds` and whether a standby is worth paying for |
-| Cloud Run GPU quota grant | New projects get a default grant; may need a request for RTX PRO 6000 |
+| GPU types' spawn time | Not measured: the deploy's smoke gives provisioning (2 to 3 minutes) and container start (1 to 2), not a queued session to its first prompt. Sets `EXPECTED_SPAWN_SECONDS` (300 now, both types) and whether a standby is worth paying for |
+| Two GPUs for both types | The quota is 2 RTX PRO 6000 across `linux-gpu` and `3d-gpu` ([gcp-infrastructure.md](gcp-infrastructure.md), "GPU quota"); what a third concurrent session does hasn't been seen |
+| L4 | Denied 2026-11-13; Gary retries. The images already carry `sm_89`, so an L4 type is an env file |
+| `3d-gpu` scratch | 100 GiB; the spec wants 200. The per-instance quota allows 200, but a volume holds at most 100 and `job-spec.sh` mounts one |
+| Spirula Studio | Vulkan runs on Cloud Run's GPUs, so it can go in `3d-gpu` once its license allows redistributing the binary |
+| `/opt/3d` and project packages | The 3d toolset's `CLAUDE.md` says to add packages with uv in the project, but a project environment can't see `/opt/3d`'s PyTorch. Say `uv pip install --target` (as tests/sessions/3d-gpu.md does) with the next image change, since editing it rebuilds the image |
 | `android` spawn time | Not measured: the session test starts once the VM is up. Time a queued session to its first prompt, then set `EXPECTED_SPAWN_SECONDS` (240 now) |
 | Session notice on the `android` VMs | The cost and retire-time notice comes from the Cloud Run session hook; the VMs don't run it yet |
 | Outputs and datasets on the `android` VMs | gcsfuse mounts like the Cloud Run types'; left out of m2, since its test doesn't use them |

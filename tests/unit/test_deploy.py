@@ -147,7 +147,7 @@ class DeployTests(unittest.TestCase):
                 self.assertEqual(self.gcloud_calls(), [])
 
     def test_linux_gpu_deploys_on_an_rtx_pro_6000(self):
-        # The quota Google granted (specs/handoffs/infra-ask-m3-gpu.md): RTX PRO 6000
+        # The quota Google granted (specs/gcp-infrastructure.md, "GPU quota"): RTX PRO 6000
         # only, so the real env file must deploy, and on that GPU at its minimums.
         result = self.deploy("type", "linux-gpu", IMAGE, "abc123")
         self.assertEqual(result.returncode, 0, result.stderr)

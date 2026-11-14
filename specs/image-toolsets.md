@@ -102,8 +102,7 @@ Two patterns fall out of this:
 ### What each type has
 
 Built from the lists above; versions are in the README, newest stable at build time.
-"Base" means it comes with the type's base image, not from a toolset. `linux-gpu`
-and `3d-gpu` are planned (m3).
+"Base" means it comes with the type's base image, not from a toolset.
 
 | | `linux` | `gis` | `android` | `mac` | `linux-gpu` | `3d-gpu` |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -269,9 +268,8 @@ Left out, superseded: fiona (pyogrio is geopandas' default), rtree (shapely 2's
 STRtree), entwine's EPT (COPC through untwine). Code that still imports them can
 `pixi add` them.
 
-The Spirula decision waits on the `linux-gpu` test in m3, which checks Vulkan on
-Cloud Run's GPUs (`vulkaninfo` on the RTX PRO 6000). If Vulkan runs there, Spirula
-Studio goes in `3d-gpu`'s toolset; if not, it needs the Compute Engine GPU path.
+Vulkan runs on Cloud Run's GPUs (the `linux-gpu` test, 2026-11-13), so Spirula
+Studio can go in `3d-gpu`'s toolset; it waits only on the license check.
 
 ### `gis` on QGIS 4 or QGIS 3
 
@@ -348,9 +346,11 @@ tooling as PyO3 extensions, or Rust splatting like Brush). If that becomes true,
   session test (2026-11-13) found `libnvoptix` and `libnvidia-encode` mounted,
   with compute, EGL, GLX, Vulkan and NVDEC (`agent-gpu-libs`). ffmpeg's NVENC
   encodes on it: the gpu smoke's `h264_nvenc` encode passed in Cloud Run
-  (execution `agent-linux-gpu-next-hn5j4`, 2026-11-13). Whether Blender's OptiX
-  runs is still for a session to show: the `3d-gpu` test falls back to CUDA and
-  records which.
+  (execution `agent-linux-gpu-next-hn5j4`, 2026-11-13), and Blender's Cycles
+  renders with OptiX (the `3d-gpu` session test, 2026-11-14).
+- **CUDA's image hides the graphics libraries.** It sets
+  `NVIDIA_DRIVER_CAPABILITIES=compute,utility`, which leaves EGL, GLX, Vulkan,
+  NVENC and OptiX out of the driver mount; each GPU type's Dockerfile sets `all`.
 
 ## Build wiring
 
@@ -458,6 +458,7 @@ Steps for [gcp.md](gcp.md) m2, ahead of `gis` and `android`:
   `android-image-smoke`, which now starts the display, takes a screenshot, and
   builds a Rust library (cargo-ndk) and a Go one (gomobile) for arm64 and x86_64.
 
-`linux-gpu` and `3d-gpu` follow in m3 on the same structure, and both install
+`linux-gpu` and `3d-gpu` followed in m3 on the same structure, and both install
 `display` (it's in their lists above): the virtual display comes from s7, and m3
-adds GPU rendering on top of it (VirtualGL, Vulkan) where Cloud Run's driver allows.
+added GPU rendering on top of it (EGL, Vulkan, VirtualGL), which Cloud Run's driver
+mount supports.
