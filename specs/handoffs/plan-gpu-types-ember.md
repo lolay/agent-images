@@ -9,8 +9,9 @@ merge: `linux-gpu` moves to the RTX PRO 6000 and `DEPLOY=false` goes (branch
 s6 done 2026-11-13 except `EXPECTED_SPAWN_SECONDS` (no cold start measured yet):
 deployed, and the session test passed ([gcp.md, "m3 `linux-gpu` results"](../gcp.md#m3-linux-gpu-results)).
 s7 done: Cloud Run renders on the GPU, so the plan carries on at s9.
-s9 and s10 under way 2026-11-13 on `claude/quota-approval-confirmation-maxyq5`:
-the 3d toolset and the `3d-gpu` type are written; the first CI build is next.
+s9 and s10 done 2026-11-14: the 3d toolset and the `3d-gpu` type merged in #103,
+deployed, and the session test passed after its completeness threshold was retuned
+([gcp.md, "m3 `3d-gpu` results"](../gcp.md#m3-3d-gpu-results)). s11 is next.
 COLMAP 4.2.1, Blender 5.3.0, Python 3.14, PyTorch 2.14.1+cu130, gsplat 1.5.3,
 Open3D 0.20. The `3d-gpu` lock is seeded by hand with the build's lines only
 (no Docker in that session); the lock watch fills it in. Spirula Studio is
