@@ -33,18 +33,29 @@ record which one and stop that step rather than letting it fall back to the CPU.
 With a Python script run by `blender -b -P`, build a scene about 30 m by 10 m:
 
 - a ground plane with a high-detail procedural texture (noise and voronoi mixed,
-  with displacement), so it has features to match;
+  with displacement), plus a coarse voronoi and noise layer, so it has features at
+  every range from 4 m to 15 m;
 - a row of seven trees: trunks as tapered cylinders, canopies as several displaced
   icospheres with leafy procedural textures, each tree different in size and color;
 - five rocks or crates with distinct textures, between and around the trees;
 - sun and sky lighting.
 
-Place 120 cameras like a field capture: two passes along each side of the row at
-1.5 m and 3 m height, looking at the trees with about 70% overlap, plus a grid of
-nadir and oblique shots from 15 m above. Render 1920 by 1080 with Cycles on the GPU
-(OptiX if available, else CUDA), 64 samples, denoised. Export:
+Place 120 cameras like a field capture:
 
-- `images/` with the renders;
+- 72 on the ground: two passes along each side of the row, at 1.5 m and 3 m height,
+  18 cameras each, about 70% overlap. The 1.5 m passes look at the trees; the 3 m
+  passes look down at the ground in front of them, so the ground ties both sides to
+  the aerial set.
+- 48 aerial and oblique: a grid of nadir and oblique shots from 15 m, some of the
+  obliques steeper, from about 6.5 m out from the row.
+
+A first run with every ground camera looking at the trees and no coarse ground layer
+split into three models (the aerial set and each side), so keep both. Render 1920 by
+1080 with Cycles on the GPU (OptiX if available, else CUDA), 64 samples, denoised.
+Keep a scene mask for each render (the depth pass works: the sky is at infinity), so
+the scoring below leaves the sky out. Export:
+
+- `images/` with the renders, and `masks/`;
 - `cameras_gt.json`: each camera's intrinsics and pose;
 - `scene_gt.ply`: the scene's geometry, triangulated, in the same world frame.
 
@@ -72,19 +83,34 @@ the position RMSE is under 5 cm.
 
 ## 4. Dense reconstruction (GPU)
 
-`image_undistorter`, then `patch_match_stereo` (CUDA only), then `stereo_fusion` to
-`fused.ply`. Bring it into the ground-truth frame with the transform from step 3 and
+`image_undistorter`, then `patch_match_stereo` (CUDA only) with
+`--PatchMatchStereo.max_image_size 960`, then `stereo_fusion` to `fused.ply`. Run
+patch match in `tmux`: at full resolution it took 57 minutes, longer than a
+background command's time limit, and a lower resolution is enough to check the
+runner. Bring it into the ground-truth frame with the transform from step 3 and
 compare it with points sampled from `scene_gt.ply` (Open3D is fine): report accuracy
-(mean distance from reconstructed points to the truth), completeness (share of truth
-points within 5 cm of the reconstruction), and the point count. Pass if accuracy is
-under 3 cm and completeness over 70%.
+(mean distance from reconstructed points to the truth), completeness, and the point
+count. Completeness is the share of truth points within 5 cm of the reconstruction,
+counting only truth points some capture camera can see (ray-cast from the camera
+centers); report it over all truth points too. Pass if accuracy is under 3 cm and
+completeness over 80%. (The canopies overlap, so about a third of the truth surface
+is hidden from every camera; over all truth, the first run scored 58.5% with the
+visible part at 89.9%.)
 
 ## 5. Gaussian splatting (GPU)
 
-Train a Gaussian splatting model on the COLMAP result with the installed library
-(`gsplat`'s trainer or nerfstudio's `splatfacto`), holding out every eighth image,
-for 7,000 steps. Report training time, steps per second, peak GPU memory, the number
-of Gaussians, and PSNR, SSIM and LPIPS on the held-out images. Render one held-out
+Train a Gaussian splatting model on the COLMAP result with the installed library,
+holding out every eighth image, for 7,000 steps. gsplat's wheel doesn't ship its
+example trainer, so write a small one on `gsplat.rasterization` and its
+`DefaultStrategy`. Report training time, steps per second, peak GPU memory, the
+number of Gaussians, and PSNR, SSIM and LPIPS on the held-out images.
+
+Score the scene, not the sky: no capture camera constrains the sky, so before scoring
+copy the ground truth's sky pixels (from the mask) into the splat render, here and in
+step 7. Metric packages (`lpips`, `torchmetrics`) aren't in `/opt/3d`, which
+sessions can't write to; install them beside it with `uv pip install --target pylib lpips
+torchmetrics` and run with `PYTHONPATH=pylib`. A new virtual environment made with
+`--system-site-packages` doesn't see `/opt/3d`'s packages. Render one held-out
 view next to its ground-truth image as `splat_vs_gt.png`, and a novel view from a
 camera that wasn't in the capture as `splat_novel.png`. Pass if held-out PSNR is
 above 25 dB.
@@ -113,8 +139,9 @@ places no capture camera was, so it shows what the reconstruction really learned
 - **Preview:** a 480-pixel-wide, 10 frames per second `flythrough.gif` of the same
   video, under 8 MB, so the report shows it inline on GitHub.
 
-Pass if both renders ran on the GPU (utilization above 50% during each), the video
-plays (`ffprobe` shows 360 frames), and the mean PSNR over the path is reported.
+Pass if both renders ran on the GPU (peak utilization above 50% in each; Cycles
+averages lower because each frame also denoises and writes a PNG), the video plays
+(`ffprobe` shows 360 frames), and the mean PSNR over the path is reported.
 
 ## 8. Git and report
 
