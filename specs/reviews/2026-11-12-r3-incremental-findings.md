@@ -19,7 +19,8 @@
 - Evidence: for each type the run didn't resolve, `cmd_carry` copies the open pull request's whole lock (`git show "$from:$path"`) into the candidate, without checking whether `main` changed that lock since the branch left it. An hourly run (class nightly) carries the weekly types' candidates; `proposed` then fails because `main` moved, so `propose` commits the carried lock onto `main`'s head with auto-merge on. A lock changed on `main` in the meantime, by a constraint change re-locked with `make cloud-lock WRITE=1` or by gcp.md's rollback ("a pull request reverting the lock on `main`"), is reverted by the next hourly run. The same root keeps a red carried weekly candidate in every hourly proposal until the weekly run.
 - Verified: simulated in a throwaway repo. `lock/watch` = M0 plus gis at claude 9.9.1; `main` moves to M1 with gis at claude 2.0.0. `carry nightly` prints "carried images/cloud/gis/versions.lock", `changed` lists gis, `proposed` fails, and the push's title is "lock(gis): claude 9.9.1" with body `claude/-: 2.0.0 -> 9.9.1`. `test_carry_ignores_what_main_changed_since` covers only a lock the branch didn't touch; nothing in cloud-build checks a lock against its constraints.
 - Recommendation: carry a lock only when `main`'s copy is unchanged since the merge-base (`git diff --quiet "$(git merge-base "$main" "$from")" "$main" -- "$path"`), else drop it and let that type's next resolve propose afresh; test it with the sequence above.
-- Status: open
+- Status: fixed
+- Resolution: lolay/agent-images#89 (855c410): `cmd_carry` takes the merge-base once and drops a lock `main` changed since it; the test goes red with the drop disabled (r4)
 
 ### r3.f2 - r2.f9's supervisor refusal stops every type's orchestrator after an env-file-only change
 
@@ -30,7 +31,8 @@
 - Evidence: #53 made the supervisor exit 1 at start when a compute type has `DEPLOY=false` (before, it skipped that type), relying on "the deploy refuses it first, so a bad env file never reaches the host". A commit that only adds `DEPLOY=false` to `infra/gcp/android.env` plans an orchestrator-only deploy (r1.f20: a compute type's env file isn't a VM input), so `load_compute_type`'s refusal never runs. The orchestrator image copies `infra/gcp/`, the host restarts the container, and the supervisor exits, taking down every type's orchestrator in a restart loop. The rule is also checked in two places with two messages (deploy.sh:158, supervisor.sh:105-107).
 - Verified: `changed-targets.sh` on such a commit gives `{"types":[],"vms":[],"orchestrator":true}`; `deploy.sh orchestrator` only sets metadata (r1.f10, no smoke); nothing at PR time reads the real env files for this rule. Latent: it needs a key gcp.md forbids, but the blast radius is every type.
 - Recommendation: one check in hooks/gcp/lib.sh (`gcp_check_type`), run over the real `infra/gcp/*.env` by `make cloud-test` so the pull request fails; the supervisor logs and skips the bad type instead of exiting.
-- Status: open
+- Status: fixed
+- Resolution: lolay/agent-images#91 (5781d03): `gcp_check_type` is the one check, the supervisor logs and skips a refused type, and cloud-test runs it over the real env files (r4)
 
 ### r3.f3 - bake.sh builds with a partial set of lock arguments
 
@@ -97,6 +99,7 @@
 - Verified: narrowed. No VM image installs terraform, so the consumer of the raw constraint is `scripts/anthropic/setup.sh`: once someone pins `~> x.y`, an Anthropic environment and agent-linux would differ. Latent: the default is `latest`. The unanchored grep matters only from Terraform 11.
 - Recommendation: pick one meaning. Recommended: tenv's (HashiCorp's), so the constraint means what Terraform users expect, with `~> 1.14.0` for a line; fix gcp.md's lock table to match and anchor the grep. Or keep the line meaning and say in the pin table that `~> x.y` holds the x.y line.
 - Status: open
+- Resolution: still open (r4); location correction: the doc lines are `specs/gcp.md:325` (lock table) and `:617` (pin table) at bb8929c, not :210-216,612
 
 ### r3.f9 - Nightly compute types would get `CLAUDE_UPGRADE=false` with no watch locking their Claude
 
@@ -120,7 +123,8 @@
 - Evidence: `cloud_image_paths` emits `images/cloud/<dir>/*` for the type and each build parent, and m5 put each lock in its type's directory, so linux's `versions.lock` counts as a linux-gpu input. linux-gpu builds from its own lock (bake-args) and no Dockerfile copies a lock. gcp.md:277 says a type's `versions.lock` redeploys "That type"; gcp.md:513-520 makes linux-gpu weekly and uncached (12 to 15 min).
 - Verified: `changed-targets.sh 0af2d6e^ 0af2d6e` (linux lock only) plans linux and linux-gpu; deploy run 42432105264 (#58) built linux-gpu from 01:08 to 01:19. Ten linux-lock-only commits in range. test_changed_targets has no lock-only case. Today it costs runner time and a push (linux-gpu is `DEPLOY=false`); once it deploys, each linux lock merge buys a GPU smoke and moves a weekly type daily.
 - Recommendation: count only a type's own `versions.lock` (skip `images/cloud/<parent>/versions.lock`), and test that a lock-only diff plans that type alone.
-- Status: open
+- Status: fixed
+- Resolution: lolay/agent-images#88 (860f97d): a parent's own `versions.lock` is excluded from a child's build inputs; a linux-lock-only commit plans `linux` alone (r4)
 
 ### r3.f11 - The pin table and two docs point at places the locked build doesn't read
 
@@ -132,6 +136,7 @@
 - Verified: confirmed against the files; following either row pins nothing.
 - Recommendation: rewrite the base row as `BASE_IMAGE = "...@sha256:..."  # pinned: <URL>` in docker-bake.hcl, the release row as `TFLINT_VERSION` / `VIRTUALGL_VERSION` in each install.sh, and say in README and image-toolsets.md that Cloud Run types take versions from their lock.
 - Status: open
+- Resolution: still open (r4); location correction: README's Linux toolchains row is :88. r4.f8 adds COLMAP and Blender to the same tables
 
 ### r3.f12 - The pins summary can't track apt, Homebrew or Claude `stable` pins as gcp.md says
 
@@ -155,7 +160,8 @@
 - Evidence: the candidate comes from the resolve job, which runs upstream code (taps' Ruby, base images), to the propose job, which holds the bot's token. `cmd_guard` checks names only; line 322's `find ... -not -type d -not -type f` is all that stops `commit_on` from committing what a link named like a lock points at. `test_guard_runs_before_any_call` plants only badly named regular files.
 - Verified: line 322 replaced with `:` leaves test_lock_watch at 42 OK. With FakeGitHubBase, a lock that's a link to a file holding `GH_TOKEN=ghs_leak` is committed with the mutation and refused ("link or device") without it. A leaked bot token (contents and pull request write; the ruleset needs no approval) could open an auto-merging pull request.
 - Recommendation: add ProposeTests cases with the lock as a symlink out of the tree and as a FIFO; assert exit 1, "link or device", and no call in the fake gh's log.
-- Status: open
+- Status: fixed
+- Resolution: lolay/agent-images#90 (cce82cc): symlink and FIFO cases assert the refusal; the test goes red with the guard removed (r4)
 
 ### r3.f14 - Nothing checks that the lock's toolchain versions reach the build
 
@@ -166,7 +172,8 @@
 - Evidence: bake-args' `RUST_TOOLCHAIN`, `TERRAFORM_VERSION`, `TFLINT_VERSION` and `VIRTUALGL_VERSION` reach install.sh only through `ARG` lines; without one, BuildKit ignores the `--set` and install.sh takes `stable` or `latest`, and the layer's cache key stops following the lock. Tests check the `--set` values; record-check compares toolset names, not versions. Only `APT_SNAPSHOT` is guarded (`:?` in base/Dockerfile:29).
 - Verified: deleting `ARG RUST_TOOLCHAIN` or `ARG VIRTUALGL_VERSION` leaves the full suite at 394 OK each (with buildx). A new type's Dockerfile (3d-gpu is planned) is the likely way in.
 - Recommendation: a test that, for each Dockerfile running `install-toolset.sh <toolset>`, asserts the toolset's lock-fed `ARG`s appear earlier in the same stage; better, have the PR smoke compare the versions report with the type's lock.
-- Status: open
+- Status: fixed
+- Resolution: lolay/agent-images#90 (cce82cc): `test_toolset_args` derives the variables from bake-args and fails on a missing ARG for every `install-toolset.sh` stage (r4). The `colmap` builder stage #103 added is outside what it scans; tracked as r4's own finding
 
 ### r3.f15 - cloud-build's `changes` filter and `gate` verdict are untested
 
@@ -189,6 +196,7 @@
 - Verified: with all 22 ResolveTests running, dropping `pinned claude` (:144), the `~>` pinned terraform line (:207), `pin_note`'s line-above branch (:90) or bake_print's `env -u` (:100) each stays green. A note on the `default` line, or on a comment inside the block, gives `pinned claude -`.
 - Recommendation: assert the `pinned <what> <URL>` line in each pin test, add a case with `CLAUDE_VERSION` set in the environment, and make `pin_note` read the variable's block for the bake file (or document where the note must sit).
 - Status: open
+- Resolution: still open (r4); #103 added two more untested pin arms, r4.f5
 
 ### r3.f17 - The apt resolve's container script never runs in a test
 
@@ -246,6 +254,7 @@
 - Verified: confirmed; partly unavoidable, since the build container and the resolver are different contexts.
 - Recommendation: declare each repository once beside its constraint in install.sh (`TFLINT_REPO=...`, used by its URLs), read it with a `declared`-style reader, and drive lock.sh's lists from one table.
 - Status: open
+- Resolution: still open (r4); #103 added COLMAP and Blender to every list and copied their lookups into the 3d toolset, r4.f12
 
 ### r3.f22 - Claude's `latest` default and release URL are restated outside docker-bake.hcl
 

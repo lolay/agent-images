@@ -72,3 +72,8 @@ pass every test (r1.f10, f11, f14; r2.f4, an unknown subcommand).
 A test for a guard fails when the guard is gone. Before landing one, delete or
 invert the guard and watch the test go red: a test that stays green checks nothing.
 r2 found four that stayed green (r2.f1, f2, f3, f6).
+
+A test of a rule every runner type follows reads every type (`infra/gcp/*.env`,
+`images/cloud/*/Dockerfile`, and every script a Dockerfile runs), never one named
+type, so a new type is covered the day it lands. r3.f14's guard missed the 3d-gpu
+builder stage (r4.f1), and only linux-gpu's env file was deployed in a test (r4.f2).
