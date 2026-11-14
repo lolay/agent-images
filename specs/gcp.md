@@ -1140,8 +1140,7 @@ Deployed 2026-11-13 by [run 43391162400](https://github.com/lolay/agent-images/a
 after #92 (the RTX PRO 6000) and #94 (`LAUNCH_STAGE=BETA`: a GPU job whose task
 timeout is over an hour is the Preview feature "Long running GPU jobs", and Cloud
 Run refuses it without the annotation). [tests/sessions/linux-gpu.md](../tests/sessions/linux-gpu.md)
-passed every check on an "Agent: Linux (GPU)" session (2026-11-13T17:01Z; report on
-`claude/runner-test-linux-gpu-xuyqhw`).
+passed every check on an "Agent: Linux (GPU)" session (2026-11-13T17:01Z).
 
 **Cloud Run renders on the GPU**, so the GPU types stay on Cloud Run (plan s7). EGL on
 the device and surfaceless platforms, Vulkan and `vglrun` all report the RTX PRO 6000,
@@ -1174,10 +1173,8 @@ Not measured yet: a session's cold start, so `EXPECTED_SPAWN_SECONDS` stays 300.
 
 Deployed 2026-11-14 by [run 43541015203](https://github.com/lolay/agent-images/actions/runs/43541015203)
 after #103. [tests/sessions/3d-gpu.md](../tests/sessions/3d-gpu.md) passed on an
-"Agent: 3D (GPU)" session (2026-11-14T08:39Z, 92 minutes;
-[report](https://github.com/lolay/agent-images/blob/claude/runner-test-3d-gpu-6sl759/tests/sessions/results/3d-gpu/20261114T083900Z/report.md) and [flythrough](https://github.com/lolay/agent-images/blob/claude/runner-test-3d-gpu-6sl759/tests/sessions/results/3d-gpu/20261114T083900Z/flythrough.mp4) on
-`claude/runner-test-3d-gpu-6sl759`), after one threshold was retuned (below), as the
-test allows when the output looks right.
+"Agent: 3D (GPU)" session (2026-11-14T08:39Z, 92 minutes), after one threshold was
+retuned (below), as the test allows when the output looks right.
 
 **The whole pipeline runs on the RTX PRO 6000**: Cycles (OptiX), COLMAP's CUDA SIFT,
 matching and patch match, gsplat, and NVENC. COLMAP and gsplat's extension both
