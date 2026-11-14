@@ -99,6 +99,7 @@
 - Verified: narrowed. No VM image installs terraform, so the consumer of the raw constraint is `scripts/anthropic/setup.sh`: once someone pins `~> x.y`, an Anthropic environment and agent-linux would differ. Latent: the default is `latest`. The unanchored grep matters only from Terraform 11.
 - Recommendation: pick one meaning. Recommended: tenv's (HashiCorp's), so the constraint means what Terraform users expect, with `~> 1.14.0` for a line; fix gcp.md's lock table to match and anchor the grep. Or keep the line meaning and say in the pin table that `~> x.y` holds the x.y line.
 - Status: open
+- Resolution: still open (r4); location correction: the doc lines are `specs/gcp.md:325` (lock table) and `:617` (pin table) at bb8929c, not :210-216,612
 
 ### r3.f9 - Nightly compute types would get `CLAUDE_UPGRADE=false` with no watch locking their Claude
 
@@ -135,6 +136,7 @@
 - Verified: confirmed against the files; following either row pins nothing.
 - Recommendation: rewrite the base row as `BASE_IMAGE = "...@sha256:..."  # pinned: <URL>` in docker-bake.hcl, the release row as `TFLINT_VERSION` / `VIRTUALGL_VERSION` in each install.sh, and say in README and image-toolsets.md that Cloud Run types take versions from their lock.
 - Status: open
+- Resolution: still open (r4); location correction: README's Linux toolchains row is :88. r4.f8 adds COLMAP and Blender to the same tables
 
 ### r3.f12 - The pins summary can't track apt, Homebrew or Claude `stable` pins as gcp.md says
 
@@ -194,6 +196,7 @@
 - Verified: with all 22 ResolveTests running, dropping `pinned claude` (:144), the `~>` pinned terraform line (:207), `pin_note`'s line-above branch (:90) or bake_print's `env -u` (:100) each stays green. A note on the `default` line, or on a comment inside the block, gives `pinned claude -`.
 - Recommendation: assert the `pinned <what> <URL>` line in each pin test, add a case with `CLAUDE_VERSION` set in the environment, and make `pin_note` read the variable's block for the bake file (or document where the note must sit).
 - Status: open
+- Resolution: still open (r4); #103 added two more untested pin arms, r4.f5
 
 ### r3.f17 - The apt resolve's container script never runs in a test
 
@@ -251,6 +254,7 @@
 - Verified: confirmed; partly unavoidable, since the build container and the resolver are different contexts.
 - Recommendation: declare each repository once beside its constraint in install.sh (`TFLINT_REPO=...`, used by its URLs), read it with a `declared`-style reader, and drive lock.sh's lists from one table.
 - Status: open
+- Resolution: still open (r4); #103 added COLMAP and Blender to every list and copied their lookups into the 3d toolset, r4.f12
 
 ### r3.f22 - Claude's `latest` default and release URL are restated outside docker-bake.hcl
 
