@@ -150,10 +150,22 @@ The project is dedicated to this, so project-level grants are an acceptable scop
 
 ### GPU quota
 
-- A quota preference (`google_cloud_quotas_quota_preference`) for Cloud Run
-  RTX PRO 6000 GPUs in `us-central1`, start at 1 or 2. New projects get a default
-  grant on first deploy; confirm the default before asking for more. It may still need
-  approval, so it can lag the apply.
+- Granted 2026-11-13: 2 RTX PRO 6000 without zonal redundancy in `us-central1`
+  (`NvidiaRtxPro6000GpuAllocNoZonalRedundancyPerProjectRegion`, 2000), shared by
+  `linux-gpu` and `3d-gpu`. The L4 (`NvidiaL4GpuAllocNoZonalRedundancyPerProjectRegion`)
+  was denied with Google's stock reasons (a new project, little billing history);
+  Gary retries it. Both from support case fad92fe0-b754-417c-aa73-f6a3f17d3e0c.
+- No default grant arrived: the first GPU deploy failed with "You do not have quota
+  for using GPUs without zonal redundancy" (jobs require that mode), and all four
+  Cloud Run GPU quotas read 0 until the request.
+- **Units differ.** The RTX PRO 6000 quota counts milli GPUs (its display name says
+  so; `metricUnit` is `1`), so 2 GPUs is 2000 and a request for "2" grants 0.002.
+  The L4 quota counts whole GPUs. A quota preference here
+  (`google_cloud_quotas_quota_preference`) needs the same care.
+- What the request told Google, so a later one stays consistent: Cloud Run jobs
+  only, one task per execution, one execution per agent session, `MIN_IDLE=0`;
+  peak 3 GPU executions, typically 1 or 2; sessions minutes to a few hours, capped
+  at 9.5, plus a short smoke per image deploy; ongoing.
 
 ## Outputs
 
