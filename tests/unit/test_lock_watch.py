@@ -211,11 +211,11 @@ class Base(unittest.TestCase):
         self.bin = self.tmp / "bin"
         self.bin.mkdir()
 
-    def run_watch(self, *args, stdin=None, env=None, cwd=REPO):
+    def run_watch(self, *args, stdin=None, env=None, cwd=REPO, script=SCRIPT):
         settings = {**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}", "GITHUB_REPOSITORY": "lolay/agent-images"}
         settings.pop("GITHUB_RUN_ID", None)
         settings.update(env or {})
-        return subprocess.run(["bash", str(SCRIPT), *args], cwd=cwd, input=stdin, env=settings,
+        return subprocess.run(["bash", str(script), *args], cwd=cwd, input=stdin, env=settings,
                               capture_output=True, text=True, timeout=60)
 
     def tree(self, name, locks):
@@ -360,6 +360,88 @@ class PinsTests(Base):
         self.assertNotEqual(result.returncode, 0)
 
 
+# lock.sh resolve for ResolveTests: the real one's interface (resolve <type>,
+# Cloud Run types only, a lock on stdout only when all of it resolved), with the
+# types in FAKE_FAIL failing the way 3d-gpu did in lock-watch run 43715897836.
+FAKE_LOCK_SH = r"""#!/bin/bash
+set -euo pipefail
+[[ $# == 2 && $1 == resolve ]] || { echo "lock: usage: lock.sh resolve <type> | ..." >&2; exit 1; }
+[[ -f "infra/gcp/$2.env" && $2 != android ]] || { echo "lock: $2 isn't a Cloud Run type in infra/gcp" >&2; exit 1; }
+echo "resolve $2" >>"$FAKE_LOG"
+if [[ " $FAKE_FAIL " == *" $2 "* ]]; then
+	echo "curl: (22) The requested URL returned error: 403" >&2
+	echo "lock: couldn't fetch https://download.blender.org/release/" >&2
+	exit 22
+fi
+printf '# header\nclaude - 2.1.330\nresolved %s -\n' "$2"
+"""
+
+
+class ResolveTests(Base):
+    """lock-watch.sh resolve: each type on its own, so one failing type doesn't
+    stop the others (lock-watch run 43715897836)."""
+
+    def setUp(self):
+        super().setUp()
+        self.repo = self.tmp / "repo"
+        for name in ("infra/gcp", "scripts/cloud", "hooks/gcp"):
+            shutil.copytree(REPO / name, self.repo / name)
+        # lock-watch.sh runs the lock.sh beside it.
+        executable(self.repo / "scripts/cloud/lock.sh", FAKE_LOCK_SH)
+        self.script = self.repo / "scripts/cloud/lock-watch.sh"
+        self.log = self.tmp / "log"
+        self.candidate = self.tree("candidate", {t: LOCK for t in ("3d-gpu", "gis", "linux", "linux-gpu")})
+
+    def resolve(self, class_="weekly", fail=""):
+        return self.run_watch("resolve", class_, str(self.candidate), cwd=self.repo, script=self.script,
+                              env={"FAKE_LOG": str(self.log), "FAKE_FAIL": fail})
+
+    def lock(self, type_):
+        return (self.candidate / "images/cloud" / type_ / "versions.lock").read_text()
+
+    def test_every_type_resolves(self):
+        result = self.resolve()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "resolved 3d-gpu\nresolved gis\nresolved linux-gpu\n")
+        for type_ in ("3d-gpu", "gis", "linux-gpu"):
+            self.assertIn(f"resolved {type_} -", self.lock(type_))
+        self.assertEqual(self.lock("linux"), LOCK, "a type outside the class is left alone")
+
+    def test_a_failed_type_does_not_stop_the_others(self):
+        # 3d-gpu resolves first, as it did in the failed run.
+        result = self.resolve(fail="3d-gpu")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "failed 3d-gpu\nresolved gis\nresolved linux-gpu\n")
+        self.assertEqual(self.log.read_text(), "resolve 3d-gpu\nresolve gis\nresolve linux-gpu\n")
+        self.assertEqual(self.lock("3d-gpu"), LOCK, "the failed type keeps main's lock")
+        self.assertIn("resolved gis -", self.lock("gis"))
+        self.assertIn("resolved linux-gpu -", self.lock("linux-gpu"))
+        self.assertIn("lock: couldn't fetch https://download.blender.org/release/", result.stderr)
+        self.assertIn("lock-watch: 3d-gpu: lock.sh resolve failed (exit 22)", result.stderr)
+
+    def test_the_resolved_types_are_proposed_and_the_failed_one_is_not(self):
+        main = self.tree("main", {t: LOCK for t in ("3d-gpu", "gis", "linux", "linux-gpu")})
+        result = self.resolve(fail="3d-gpu gis")
+        self.assertEqual(result.stdout, "failed 3d-gpu\nfailed gis\nresolved linux-gpu\n")
+        changed = self.run_watch("changed", str(main), str(self.candidate))
+        self.assertEqual(changed.stdout, "images/cloud/linux-gpu/versions.lock\n")
+        title = self.run_watch("title", str(main), str(self.candidate))
+        self.assertTrue(title.stdout.startswith("lock(linux-gpu): "), title.stdout)
+
+    def test_every_type_failing_still_reports_each(self):
+        result = self.resolve(fail="3d-gpu gis linux-gpu")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "failed 3d-gpu\nfailed gis\nfailed linux-gpu\n")
+
+    def test_an_unknown_class_or_missing_tree_fails(self):
+        self.assertEqual(self.resolve(class_="hourly").returncode, 1)
+        result = self.run_watch("resolve", "weekly", str(self.tmp / "nope"), cwd=self.repo, script=self.script,
+                                env={"FAKE_LOG": str(self.log), "FAKE_FAIL": ""})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no candidate tree", result.stderr)
+        self.assertFalse(self.log.exists(), "nothing resolved")
+
+
 class GitTests(Base):
     """carry and proposed, against a scratch repo with main and lock/watch."""
 
@@ -392,20 +474,42 @@ class GitTests(Base):
     def run_git_watch(self, *args):
         return self.run_watch(*args, cwd=self.repo, env=git_env())
 
+    def results(self, text):
+        path = self.tmp / "results"
+        path.write_text(text)
+        return str(path)
+
     def test_carry_keeps_the_types_this_run_did_not_resolve(self):
         candidate = self.tree("candidate", {"linux": LOCK.replace("2.1.318", "2.1.321")})
-        result = self.run_git_watch("carry", "nightly", str(candidate), "main", "lock/watch")
+        result = self.run_git_watch("carry", self.results("resolved linux\n"), str(candidate), "main", "lock/watch")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("2.1.320", (candidate / "images/cloud/gis/versions.lock").read_text())
         self.assertIn("2.1.321", (candidate / "images/cloud/linux/versions.lock").read_text(),
                       "a type this run resolved keeps this run's candidate")
         self.assertFalse((candidate / "images/cloud/linux-gpu").exists(), "the branch didn't change linux-gpu")
 
+    def test_carry_keeps_the_open_candidate_of_a_type_whose_resolve_failed(self):
+        # The weekly run resolves gis and linux; gis fails. Its candidate starts as
+        # main's lock, so without the carry the refreshed pull request would drop
+        # the branch's gis candidate (or close the pull request if nothing else moved).
+        candidate = self.tree("candidate", {"linux": LOCK.replace("2.1.318", "2.1.321"), "gis": LOCK})
+        result = self.run_git_watch("carry", self.results("resolved linux\nfailed gis\n"), str(candidate),
+                                    "main", "lock/watch")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("2.1.320", (candidate / "images/cloud/gis/versions.lock").read_text())
+        self.assertIn("carried images/cloud/gis/versions.lock", result.stderr)
+        self.assertIn("2.1.321", (candidate / "images/cloud/linux/versions.lock").read_text())
+
+    def test_carry_needs_the_results(self):
+        result = self.run_git_watch("carry", str(self.tmp / "nope"), str(self.tree("c", {})), "main", "lock/watch")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no resolve results", result.stderr)
+
     def test_carry_ignores_what_main_changed_since(self):
         self.write("linux-gpu", LOCK.replace("2.1.318", "2.1.330"))
         self.git("commit", "-qam", "main moves on")
         candidate = self.tree("candidate", {})
-        self.run_git_watch("carry", "nightly", str(candidate), "main", "lock/watch")
+        self.run_git_watch("carry", self.results("resolved linux\n"), str(candidate), "main", "lock/watch")
         self.assertFalse((candidate / "images/cloud/linux-gpu").exists())
 
     def test_carry_drops_a_lock_main_changed_while_the_branch_was_open(self):
@@ -421,7 +525,7 @@ class GitTests(Base):
         self.git("commit", "-qam", "main moves gis")
         # The workflow's candidate starts as main's locks; the nightly run resolves linux.
         candidate = self.tree("candidate", {"linux": LOCK.replace("2.1.318", "2.1.321"), "gis": main_gis, "linux-gpu": LOCK})
-        result = self.run_git_watch("carry", "nightly", str(candidate), "main", "lock/watch")
+        result = self.run_git_watch("carry", self.results("resolved linux\n"), str(candidate), "main", "lock/watch")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((candidate / "images/cloud/gis/versions.lock").read_text(), main_gis,
                          "main's gis lock stands; the branch's older candidate is dropped")
@@ -739,6 +843,20 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("actions: write", retry)
         self.assertNotIn("actions: write", resolve, "resolve runs what upstream hands it")
         self.assertIn("action=retry", resolve)
+
+    def test_a_failed_type_fails_the_run_after_propose(self):
+        watch = (REPO / ".github/workflows/lock-watch.yml").read_text()
+        resolve = watch.split("\n  propose:\n", 1)[0]
+        self.assertIn('scripts/cloud/lock-watch.sh resolve "$CLASS" out/candidate | tee out/results', resolve)
+        self.assertIn("carry out/results out/candidate", resolve)
+        self.assertIn("failed: ${{ steps.resolve.outputs.failed }}", resolve)
+        self.assertNotIn("lock.sh resolve", resolve, "one type at a time, in lock-watch.sh")
+        unresolved = watch.split("\n  unresolved:\n", 1)[1]
+        self.assertIn("needs: [resolve, propose]", unresolved)
+        self.assertIn("if: ${{ always() && needs.resolve.outputs.failed != '' }}", unresolved)
+        self.assertIn("exit 1", unresolved)
+        self.assertIn("permissions: {}", unresolved)
+        self.assertNotIn("secrets.", unresolved)
 
     def test_the_weekly_schedule_is_the_one_the_class_step_reads(self):
         watch = (REPO / ".github/workflows/lock-watch.yml").read_text()

@@ -59,7 +59,7 @@ readonly lock_dir="${LOCK_DIR:-images/cloud}"
 readonly claude_releases=https://downloads.claude.ai/claude-code-releases
 readonly rust_dist=https://static.rust-lang.org/dist
 readonly terraform_index=https://releases.hashicorp.com/terraform/index.json
-readonly blender_releases=https://download.blender.org/release
+readonly blender_sh=images/toolsets/3d/blender.sh
 readonly registry_waits="${LOCK_REGISTRY_WAITS:-30 60 120}"
 
 die() {
@@ -106,13 +106,15 @@ bake_print() {
 
 # --- Upstream ----------------------------------------------------------------
 
-fetch() { curl -fsSL --retry 3 "$@"; }
+# fetch <url>: its body. curl's own error doesn't name the URL (lock-watch run
+# 43715897836 failed on a bare "curl: (22) ... 403"), so the failure does.
+fetch() { curl -fsSL --retry 3 "$1" || die "couldn't fetch $1"; }
 
 # github_latest <owner/repo>: the tag GitHub redirects /releases/latest to (no
 # API call, so no rate limit).
 github_latest() {
-	local url
-	url="$(curl -fsSLI --retry 3 -o /dev/null -w '%{url_effective}' "https://github.com/$1/releases/latest")"
+	local url latest="https://github.com/$1/releases/latest"
+	url="$(curl -fsSLI --retry 3 -o /dev/null -w '%{url_effective}' "$latest")" || die "couldn't fetch $latest"
 	[[ "$url" == */releases/tag/* ]] || die "no latest release for $1 ($url)"
 	printf '%s' "${url##*/}"
 }
@@ -223,16 +225,13 @@ release_repo() {
 	esac
 }
 
-# blender_latest: the newest release in blender.org's index: the newest
-# BlenderX.Y/ series, then the newest x.y.z Linux build in it.
+# blender_latest: the newest release in blender.org's index, read by the 3d
+# toolset's blender.sh, which the build's own fallback uses too: one copy of the
+# index's URL, its mirrors and its patterns.
 blender_latest() {
-	local index series version
-	index="$(fetch "$blender_releases/")"
-	series="$(sed -n -E 's/.*href="Blender([0-9]+\.[0-9]+)\/".*/\1/p' <<<"$index" | sort -V | tail -n 1)"
-	[[ -n "$series" ]] || die "no Blender series in $blender_releases/"
-	index="$(fetch "$blender_releases/Blender$series/")"
-	version="$(sed -n -E 's/.*href="blender-([0-9]+\.[0-9]+\.[0-9]+)-linux-x64\.tar\.xz".*/\1/p' <<<"$index" | sort -V | tail -n 1)"
-	[[ -n "$version" ]] || die "no Linux build in $blender_releases/Blender$series/"
+	local version
+	version="$(bash "$blender_sh" latest)" || die "couldn't read Blender's newest release"
+	[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "blender.sh latest gave '$version'"
 	printf '%s' "$version"
 }
 

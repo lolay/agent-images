@@ -9,7 +9,8 @@
 # in them and reads Homebrew; `propose` (the lock-bot environment, main only)
 # only commits the files `resolve` handed over, after checking each is a lock;
 # `retry` (GITHUB_TOKEN with Actions write, no key) reruns the open pull
-# request's failed build when there's nothing new to push.
+# request's failed build when there's nothing new to push; `unresolved` fails
+# the run, after `propose`, when a type's resolve failed.
 name: lock-watch
 
 on:
@@ -54,6 +55,7 @@ jobs:
       title: ${{ steps.decide.outputs.title }}
       body: ${{ steps.decide.outputs.body }}
       candidate: ${{ steps.decide.outputs.candidate }}
+      failed: ${{ steps.resolve.outputs.failed }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -71,6 +73,7 @@ jobs:
           else class=nightly; fi
           echo "class=$class" | tee -a "$GITHUB_OUTPUT"
       - name: Resolve
+        id: resolve
         env:
           CLASS: ${{ steps.class.outputs.class }}
         run: |
@@ -78,19 +81,16 @@ jobs:
           # The hosted runner's Homebrew isn't on PATH by default.
           eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
           # The candidate tree starts as main's locks; each resolved type
-          # replaces its own.
+          # replaces its own. A type that fails keeps main's and doesn't stop
+          # the others; the unresolved job fails the run after propose.
           mkdir -p out/candidate
           cp --parents images/cloud/*/versions.lock out/candidate/
-          types="$(scripts/cloud/lock-watch.sh types "$CLASS")"
-          for type in $types; do
-            mkdir -p "out/candidate/images/cloud/$type"
-            scripts/cloud/lock.sh resolve "$type" >"out/resolved.lock"
-            mv out/resolved.lock "out/candidate/images/cloud/$type/versions.lock"
-          done
+          scripts/cloud/lock-watch.sh resolve "$CLASS" out/candidate | tee out/results
+          failed="$(sed -n 's/^failed //p' out/results | tr '\n' ' ')"
+          echo "failed=${failed% }" >>"$GITHUB_OUTPUT"
       - name: Decide
         id: decide
         env:
-          CLASS: ${{ steps.class.outputs.class }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -98,9 +98,9 @@ jobs:
           if ((open > 0)); then
             git fetch --no-tags origin lock/watch
             # Keep the open pull request's candidates for the types this run
-            # didn't resolve (the weekly run's, in an hourly run), except a lock
-            # main changed since the branch left it.
-            scripts/cloud/lock-watch.sh carry "$CLASS" out/candidate origin/main origin/lock/watch
+            # didn't resolve (the weekly run's in an hourly run, or a type whose
+            # resolve failed), except a lock main changed since the branch left it.
+            scripts/cloud/lock-watch.sh carry out/results out/candidate origin/main origin/lock/watch
           fi
           changed="$(scripts/cloud/lock-watch.sh changed . out/candidate)"
           if [[ -z "$changed" ]]; then
@@ -225,3 +225,20 @@ jobs:
         run: |
           set -euo pipefail
           scripts/cloud/lock-watch.sh retry | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # A type whose resolve failed was left out of this run's proposal, not the
+  # others' (lock-watch run 43715897836). Fail the run naming it, after propose,
+  # so a broken resolve is visible without holding back the types that resolved.
+  unresolved:
+    needs: [resolve, propose]
+    if: ${{ always() && needs.resolve.outputs.failed != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Fail
+        env:
+          FAILED: ${{ needs.resolve.outputs.failed }}
+        run: |
+          echo "::error title=Lock resolve failed::lock.sh resolve failed for: $FAILED. Their locks weren't proposed this run; the resolve job's log has the error. The other types were proposed as usual."
+          exit 1

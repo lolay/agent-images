@@ -5,13 +5,21 @@
 #
 #   lock-watch.sh types <class>               the Cloud Run types a run resolves:
 #                                             nightly, weekly or all (D4)
+#   lock-watch.sh resolve <class> <candidate> resolve each type in the class with
+#                                             lock.sh into <candidate>, one at a
+#                                             time: a type that fails keeps its
+#                                             lock there and the rest carry on.
+#                                             Prints `resolved <type>` or `failed
+#                                             <type>` for each
 #   lock-watch.sh changed <base> <candidate>  the lock paths that differ, one a line
-#   lock-watch.sh carry <class> <candidate> <main ref> <branch ref>
+#   lock-watch.sh carry <results> <candidate> <main ref> <branch ref>
 #                                             copy into <candidate> the locks the
 #                                             open pull request's branch changed for
-#                                             types this run didn't resolve, so one
-#                                             run never drops another's candidate,
-#                                             unless main changed that lock since
+#                                             types <results> (resolve's output)
+#                                             doesn't list as resolved, so one run
+#                                             never drops another's candidate, nor
+#                                             its own failed type's, unless main
+#                                             changed that lock since
 #   lock-watch.sh proposed <candidate> <main ref> <branch ref>
 #                                             succeed when the branch is already
 #                                             <main ref> plus exactly <candidate>
@@ -62,7 +70,7 @@ die() {
 	printf 'lock-watch: %s\n' "$*" >&2
 	exit 1
 }
-usage() { die "usage: lock-watch.sh types|changed|carry|proposed|guard|title|body|pins|token|revoke|propose|close|retry ..."; }
+usage() { die "usage: lock-watch.sh types|resolve|changed|carry|proposed|guard|title|body|pins|token|revoke|propose|close|retry ..."; }
 
 repo() {
 	[[ "${GITHUB_REPOSITORY:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "GITHUB_REPOSITORY isn't owner/name"
@@ -78,6 +86,31 @@ cmd_types() {
 			printf '%s\n' "$type"
 		fi
 	done < <(gcp_types)
+}
+
+# cmd_resolve <class> <candidate>: each type on its own (lock-watch run
+# 43715897836: blender.org's 403 on 3d-gpu, the first type, stopped gis and
+# linux-gpu too). A failed type's lock in <candidate> is left as it was, and
+# carry treats it as not resolved. The run still fails: the workflow's
+# `unresolved` job reads the failed lines.
+cmd_resolve() {
+	local class="$1" candidate="$2" types type out
+	types="$(cmd_types "$class")"
+	[[ -d "$candidate" ]] || die "no candidate tree $candidate"
+	out="$(mktemp)"
+	for type in $types; do
+		# lock.sh prints a lock only when the whole of it resolved, so out is
+		# either a lock or nothing worth keeping.
+		if "$lock_sh" resolve "$type" >"$out"; then
+			mkdir -p "$candidate/images/cloud/$type"
+			mv "$out" "$candidate/images/cloud/$type/versions.lock"
+			printf 'resolved %s\n' "$type"
+		else
+			printf 'lock-watch: %s: lock.sh resolve failed (exit %s); its lock stays as it was\n' "$type" "$?" >&2
+			printf 'failed %s\n' "$type"
+		fi
+	done
+	rm -f "$out"
 }
 
 # files_in <tree>: every path under a tree that isn't a directory, relative to
@@ -99,8 +132,9 @@ cmd_changed() {
 }
 
 cmd_carry() {
-	local class="$1" candidate="$2" main="$3" from="$4" path type resolved moved base
-	resolved=" $(cmd_types "$class" | tr '\n' ' ')"
+	local results="$1" candidate="$2" main="$3" from="$4" path type resolved moved base
+	[[ -f "$results" ]] || die "no resolve results $results"
+	resolved=" $(sed -n 's/^resolved //p' "$results" | tr '\n' ' ')"
 	base="$(git merge-base "$main" "$from")" || die "$from and $main share no history"
 	# Three dots: what the branch changed since it left main, not what main
 	# changed since.
@@ -407,6 +441,10 @@ case "${1:-}" in
 types)
 	(($# == 2)) || usage
 	cmd_types "$2"
+	;;
+resolve)
+	(($# == 3)) || usage
+	cmd_resolve "$2" "$3"
 	;;
 changed)
 	(($# == 3)) || usage
