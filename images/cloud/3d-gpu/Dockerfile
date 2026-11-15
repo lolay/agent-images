@@ -5,13 +5,14 @@
 # images/cloud/runner then adds the runner files and Claude Code. Build it with
 # images/cloud/docker-bake.hcl, which supplies agent-base (base-gpu).
 
-# COLMAP from source with CUDA (images/toolsets/3d/build-colmap.sh). Only its
-# install tree reaches the image, with the list of Ubuntu packages its binary
-# links, which the 3d toolset installs. COLMAP_VERSION is the lock's.
+# COLMAP from source with CUDA (images/toolsets/3d/build-colmap.sh), from the
+# packages in build-packages.txt. Only its install tree reaches the image, with
+# the Ubuntu packages its binary links (the build list's at the versions it was
+# built against), which the 3d toolset installs. COLMAP_VERSION is the lock's.
 FROM agent-base AS colmap
 ARG COLMAP_VERSION
-RUN --mount=type=bind,source=images/toolsets/3d/build-colmap.sh,target=/tmp/build-colmap.sh \
-	bash /tmp/build-colmap.sh
+RUN --mount=type=bind,source=images/toolsets/3d,target=/tmp/toolsets/3d \
+	bash /tmp/toolsets/3d/build-colmap.sh
 
 FROM agent-base
 

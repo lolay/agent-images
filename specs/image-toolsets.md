@@ -54,6 +54,8 @@ images/toolsets/
   <name>/packages.txt   apt packages (Linux only), optional
   <name>/Brewfile       Homebrew formulae, optional (Linux and macOS)
   <name>/install.sh     anything else (rustup toolchain, tenv, tflint, the SDK), optional
+  <name>/build-packages.txt  apt packages a type's builder stage installs for this
+                        toolset (3d: COLMAP's), optional; locked with packages.txt
   install-toolset.sh    installs one toolset: apt list, then Brewfile, then install.sh
 ```
 
@@ -238,8 +240,13 @@ PyTorch. So the `3d` toolset is a uv project at `/opt/3d` with `requires-python`
 set to the newest version all three publish for, PyTorch from its CUDA index, and
 gsplat built with `TORCH_CUDA_ARCH_LIST="8.9;12.0+PTX"` at image build so no session
 compiles it. COLMAP is built from source in a builder stage
-(`CMAKE_CUDA_ARCHITECTURES="89;120"`) and only its install tree is copied in, with
-the Ubuntu packages its binary links. 8.9 is the L4, kept for the day its quota
+(`CMAKE_CUDA_ARCHITECTURES="89;120"`) from the packages in `build-packages.txt`,
+which the lock resolves with the type's `packages.txt`, and only its install tree is
+copied in, with the Ubuntu packages its binary links: at the versions it was built
+against where the build list installed them, by name where the base image already
+had them (a later toolset may move those within the snapshot). A `-dev` package depends on its library at its own version, so locking or
+pinning the build list locks the libraries the image runs, and an Ubuntu fix to one
+moves the snapshot like any other package (r4.f10). 8.9 is the L4, kept for the day its quota
 comes through. The environment is locked in `images/toolsets/3d/uv.lock`, which
 the lock watch doesn't move: `uv lock --upgrade` there, in a pull request. Blender ships its own Python and its own
 Cycles kernels; take blender.org's Linux build, not Ubuntu's.

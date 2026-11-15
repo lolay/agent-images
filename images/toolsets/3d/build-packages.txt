@@ -1,0 +1,35 @@
+# What images/cloud/3d-gpu's builder stage installs to build COLMAP
+# (build-colmap.sh). The lock resolves these with the type's packages.txt
+# (scripts/cloud/lock.sh packages_of), so each is locked, moves the snapshot
+# when Ubuntu updates it, and takes a name=version pin. The image keeps only
+# the runtime libraries COLMAP links, at the versions installed here: a -dev
+# package depends on its library at its own version, so this list locks them.
+#
+# COLMAP's install guide's Ubuntu list, less Qt and the tests'. Keep the rest:
+# configure finds OpenGL and GLEW as REQUIRED even with the GUI and OpenGL off
+# (cmake/FindDependencies.cmake), and Ubuntu's OpenImageIO CMake config imports
+# openimageio-tools' binaries. gflags and the GL headers aren't in the guide.
+cmake
+ninja-build
+build-essential
+git
+libboost-program-options-dev
+libboost-graph-dev
+libboost-system-dev
+libeigen3-dev
+libopenimageio-dev
+openimageio-tools
+libmetis-dev
+libgoogle-glog-dev
+libsqlite3-dev
+libcgal-dev
+libceres-dev
+libsuitesparse-dev
+libcurl4-openssl-dev
+libssl-dev
+libopenblas-dev
+libgflags-dev
+libgl-dev
+libopengl-dev
+libglx-dev
+libglew-dev
