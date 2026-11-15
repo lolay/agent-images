@@ -508,7 +508,8 @@ pins)
 	cmd_pins "$2"
 	;;
 path)
-	(($# == 2)) && [[ "$2" =~ ^[a-z0-9-]+$ ]] || usage
+	(($# == 2)) || usage
+	[[ "$2" =~ ^[a-z0-9-]+$ ]] || usage
 	lock_file "$2"
 	printf '\n'
 	;;
