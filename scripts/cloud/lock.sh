@@ -7,7 +7,7 @@
 #                                 now (Linux only: Docker, Homebrew, curl, jq)
 #   lock.sh bake-args <type>      print the lock as `docker buildx bake --set`
 #                                 values, one per line (the bake-action's `set`):
-#                                 APT_PINS, name=version@id each, for its
+#                                 APT_PINS, name=version@id, from its
 #                                 apt-pin-snapshot lines
 #                                 (images/cloud/base/apt-pins.sh)
 #   lock.sh diff <old> <new>      print what moved, one line each, nothing if equal
@@ -24,9 +24,11 @@
 #   apt <package> <version>          what apt resolves the type's packages to
 #   apt-floating <package> <version> one from a source with no snapshot
 #                                    (NVIDIA's CUDA repo): recorded, not pinned
-#   apt-pin-snapshot <package> <id>  the snapshot a pinned package's version
-#                                    comes from, when the pin names one; its
-#                                    version is the package's apt line
+#   apt-pin-snapshot <package> <version>@<id>
+#                                    a pin that names the snapshot its version
+#                                    comes from: the build's APT_PINS. Its own
+#                                    line, since a version the base image
+#                                    already has gets no apt line
 #   claude - <version>               Claude Code
 #   rust - <version>                 the Rust toolchain, if the type has rust
 #   terraform - <version>            Terraform, if the type has terraform
@@ -364,7 +366,7 @@ resolve_apt() {
 	printf '%s\n' "$resolved"
 	# A name=version line pins that package, and its snapshot, if it names one.
 	packages_of "$type" | sed -n -E 's/^([a-z0-9.+-]+)=.*/pinned apt\/\1 -/p'
-	[[ -z "$pins" ]] || sed -E 's/^([^=]+)=.*@(.*)$/apt-pin-snapshot \1 \2/' <<<"$pins"
+	[[ -z "$pins" ]] || sed -E 's/^([^=]+)=(.*)$/apt-pin-snapshot \1 \2/' <<<"$pins"
 }
 
 # resolve_brew <type>: every formula the type's Brewfiles install, dependencies
@@ -441,9 +443,9 @@ cmd_resolve() {
 # The build arguments a lock sets, by line kind. `*` reaches every target in the
 # type's graph; each argument is read by the one Dockerfile or install.sh that
 # declares it. apt-pin-snapshot lines become one APT_PINS, name=version@id each
-# (images/cloud/base/apt-pins.sh), the version from the package's apt line.
+# (images/cloud/base/apt-pins.sh).
 cmd_bake_args() {
-	local file kind name value version pins=()
+	local file kind name value pins=()
 	file="$(lock_file "$1")"
 	[[ -f "$file" ]] || die "no lock for $1 ($file); make cloud-lock TYPE=$1 WRITE=1"
 	for kind in base apt-snapshot claude; do
@@ -457,11 +459,7 @@ cmd_bake_args() {
 		rust) printf '*.args.RUST_TOOLCHAIN=%s\n' "$value" ;;
 		terraform) printf '*.args.TERRAFORM_VERSION=%s\n' "$value" ;;
 		release) printf '*.args.%s_VERSION=%s\n' "$(tr '[:lower:]-' '[:upper:]_' <<<"$name")" "$value" ;;
-		apt-pin-snapshot)
-			version="$(lock_value "$file" apt "$name")"
-			[[ -n "$version" ]] || die "$file: apt-pin-snapshot $name has no apt $name line"
-			pins+=("$name=$version@$value")
-			;;
+		apt-pin-snapshot) pins+=("$name=$value") ;;
 		apt | apt-floating | brew | pinned | \#*) ;;
 		*) die "$file: unknown line kind '$kind'" ;;
 		esac

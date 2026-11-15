@@ -314,9 +314,9 @@ terraform - 1.17.1
 ```
 
 `apt-floating` marks a package from a source with no snapshot (NVIDIA's CUDA
-repo; none today), `apt-pin-snapshot <package> <id>` the snapshot a pinned
-package's version comes from when the pin names one (its version is the package's
-`apt` line), and `pinned <what> <issue URL>` a pin
+repo; none today), `apt-pin-snapshot <package> <version>@<id>` a pin that names
+the snapshot its version comes from (its own line: a version the base image
+already has gets no `apt` line), and `pinned <what> <issue URL>` a pin
 ([below](#pinning-a-dependency)).
 
 | Dependency | Locked as | Constraint, where it's declared | Resolved by (from upstream only) |
