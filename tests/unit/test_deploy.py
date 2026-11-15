@@ -165,13 +165,17 @@ class DeployTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(self.job_patches()[before:], [f"agent-{type_}-next", f"agent-{type_}"])
                 task = self.gcp.state.jobs[f"{JOBS}/agent-{type_}"]["template"]["template"]
-                if task.get("nodeSelector", {}).get("accelerator") == "nvidia-rtx-pro-6000":
-                    # The quota Google granted (specs/gcp-infrastructure.md, "GPU
-                    # quota"), at that GPU's minimums: 20 vCPU and 80 GiB.
-                    limits = task["containers"][0]["resources"]["limits"]
-                    self.assertGreaterEqual(int(limits["cpu"]), 20)
-                    self.assertGreaterEqual(int(limits["memory"].removesuffix("Gi")), 80)
-                    self.assertEqual(limits["nvidia.com/gpu"], "1")
+                if not type_.endswith("-gpu"):
+                    self.assertNotIn("nodeSelector", task)
+                    continue
+                # A -gpu type (image-toolsets.md, "Types") runs on the one GPU the quota
+                # allows (specs/gcp-infrastructure.md, "GPU quota"), whatever its env
+                # file says, at that GPU's minimums: 20 vCPU and 80 GiB.
+                self.assertEqual(task.get("nodeSelector"), {"accelerator": "nvidia-rtx-pro-6000"})
+                limits = task["containers"][0]["resources"]["limits"]
+                self.assertGreaterEqual(int(limits["cpu"]), 20)
+                self.assertGreaterEqual(int(limits["memory"].removesuffix("Gi")), 80)
+                self.assertEqual(limits["nvidia.com/gpu"], "1")
 
     def test_live_reuses_the_current_image(self):
         self.assertEqual(self.deploy("type", "linux", IMAGE, "first").returncode, 0)
