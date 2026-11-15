@@ -307,7 +307,7 @@ brew keyutils 1.6.3
 brew krb5 1.22.3
 brew libedit 20260512-3.1
 brew libevent 2.1.13_1
-brew libffi 3.8.0
+brew libffi 3.8.1
 brew libidn2 2.3.8
 brew libnghttp2 1.71.0
 brew libnghttp3 1.19.0
