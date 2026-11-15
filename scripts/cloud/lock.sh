@@ -34,8 +34,8 @@
 #                                    (gcp.md, "Pinning a dependency")
 #
 # Each value is resolved within the constraint declared where the dependency
-# lives: BASE_IMAGE and CLAUDE_VERSION in docker-bake.hcl, packages.txt lines
-# (name=version pins one), RUST_TOOLCHAIN, TERRAFORM_VERSION, TFLINT_VERSION,
+# lives: BASE_IMAGE and CLAUDE_VERSION in docker-bake.hcl, packages.txt and
+# build-packages.txt lines (name=version pins one), RUST_TOOLCHAIN, TERRAFORM_VERSION, TFLINT_VERSION,
 # VIRTUALGL_VERSION and BLENDER_VERSION in their toolsets' install.sh, and
 # COLMAP_VERSION in the 3d toolset's build-colmap.sh. The apt snapshot moves only
 # when what apt resolves today differs from what the lock recorded.
@@ -268,13 +268,16 @@ resolve_base() {
 }
 
 # packages_of <type>: the apt packages the type's image asks for: the base's
-# list, then each toolset's.
+# list, then each toolset's packages.txt and build-packages.txt (what a builder
+# stage installs, whose runtime libraries the image keeps at those versions).
 packages_of() {
-	local toolset
+	local toolset list
 	{
 		cat images/cloud/base/packages.txt
 		while read -r toolset; do
-			[[ ! -f "images/toolsets/$toolset/packages.txt" ]] || cat "images/toolsets/$toolset/packages.txt"
+			for list in packages.txt build-packages.txt; do
+				[[ ! -f "images/toolsets/$toolset/$list" ]] || cat "images/toolsets/$toolset/$list"
+			done
 		done < <(cloud_toolsets "$1")
 	} | sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d'
 }

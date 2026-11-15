@@ -4,8 +4,10 @@ default (`stable`, `latest`), and the layer's cache key stops following the lock
 (r3.f14).
 
 Nothing here is a list of names. The variables are the ones `lock.sh bake-args`
-prints for the repo's locks; a toolset reads one if its install.sh has
-`${NAME:-default}`; a Dockerfile runs a toolset with `install-toolset.sh <name>`."""
+prints for the repo's locks; a script reads one if it has `${NAME:-default}`; a
+Dockerfile stage runs a toolset's install.sh with `install-toolset.sh <name>`, or a
+toolset's own script directly with `bash /tmp/toolsets/<name>/<script>.sh` (a
+builder stage, as 3d-gpu's COLMAP: r4.f1)."""
 
 import re
 import subprocess
@@ -16,6 +18,7 @@ from support import REPO
 CLOUD = REPO / "images/cloud"
 TOOLSETS = REPO / "images/toolsets"
 RUNS_TOOLSET = re.compile(r"install-toolset\.sh\s+(\w+)")
+RUNS_SCRIPT = re.compile(r"bash\s+/tmp/toolsets/(\w+)/([\w.-]+\.sh)")
 
 
 def locked_variables():
@@ -30,11 +33,17 @@ def locked_variables():
     return names
 
 
-def fed_by(toolset, variables):
-    """The locked variables the toolset's install.sh reads."""
-    script = TOOLSETS / toolset / "install.sh"  # optional: not every toolset has one
-    text = script.read_text() if script.exists() else ""
+def fed_by(toolset, variables, script="install.sh"):
+    """The locked variables a toolset's script reads."""
+    path = TOOLSETS / toolset / script  # optional: not every toolset has an install.sh
+    text = path.read_text() if path.exists() else ""
     return {name for name in variables if re.search(r"\$\{%s:-" % name, text)}
+
+
+def scripts_run(line):
+    """(toolset, script) for each toolset script a Dockerfile line runs."""
+    runs = [(match.group(1), "install.sh") for match in RUNS_TOOLSET.finditer(line)]
+    return runs + [(match.group(1), match.group(2)) for match in RUNS_SCRIPT.finditer(line)]
 
 
 def violations(dockerfile, variables):
@@ -45,9 +54,10 @@ def violations(dockerfile, variables):
             declared = set()
         if match := re.match(r"ARG (\w+)", line):
             declared.add(match.group(1))
-        if match := RUNS_TOOLSET.search(line):
-            toolset = match.group(1)
-            missing += [f"{toolset} needs ARG {name} before it" for name in sorted(fed_by(toolset, variables) - declared)]
+        for toolset, script in scripts_run(line):
+            what = toolset if script == "install.sh" else f"{toolset}/{script}"
+            missing += [f"{what} needs ARG {name} before it"
+                        for name in sorted(fed_by(toolset, variables, script) - declared)]
     return missing
 
 
@@ -68,6 +78,9 @@ class ToolsetArgsTests(unittest.TestCase):
             {"rust": {"RUST_TOOLCHAIN"}, "terraform": {"TERRAFORM_VERSION", "TFLINT_VERSION"},
              "gpu": {"VIRTUALGL_VERSION"}, "3d": {"BLENDER_VERSION"}},
         )
+        self.assertEqual(fed_by("3d", variables, "build-colmap.sh"), {"COLMAP_VERSION"})
+        dockerfile = (CLOUD / "3d-gpu/Dockerfile").read_text()
+        self.assertIn(("3d", "build-colmap.sh"), [run for line in dockerfile.splitlines() for run in scripts_run(line)])
 
     def test_a_missing_arg_is_reported(self):
         # The checker itself: a stage that runs rust without its ARG fails.
@@ -79,6 +92,18 @@ class ToolsetArgsTests(unittest.TestCase):
                                   "RUN bash /tmp/toolsets/install-toolset.sh rust\n")
             self.assertEqual(violations(dockerfile, {"RUST_TOOLCHAIN"}),
                              ["rust needs ARG RUST_TOOLCHAIN before it"])
+
+    def test_a_builder_stage_missing_its_arg_is_reported(self):
+        # A stage that runs a toolset's own script, not install-toolset.sh (r4.f1).
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            dockerfile = Path(tmp) / "Dockerfile"
+            dockerfile.write_text("FROM scratch AS colmap\n"
+                                  "RUN --mount=type=bind,source=images/toolsets/3d,target=/tmp/toolsets/3d \\\n"
+                                  "\tbash /tmp/toolsets/3d/build-colmap.sh\n")
+            self.assertEqual(violations(dockerfile, {"COLMAP_VERSION"}),
+                             ["3d/build-colmap.sh needs ARG COLMAP_VERSION before it"])
 
 
 if __name__ == "__main__":

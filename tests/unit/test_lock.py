@@ -326,6 +326,16 @@ class ResolveTests(unittest.TestCase):
             self.assertIn(line, entries)
         self.assertFalse([line for line in entries if line.startswith(("rust ", "terraform "))])
 
+    def test_3d_gpu_resolves_its_builder_packages(self):
+        # COLMAP's build list is locked with the rest, so the libraries the image
+        # keeps at those versions move the snapshot and take pins (r4.f10).
+        self.edit("images/toolsets/3d/build-packages.txt", "libceres-dev\n", "libceres-dev=2.2.0+dfsg-4.1ubuntu1\n")
+        entries = self.entries(self.resolve("3d-gpu"))
+        apt = next(line for line in self.log.read_text().splitlines() if line.startswith("apt "))
+        self.assertIn(" libopenimageio-dev ", apt)
+        self.assertIn(" libceres-dev=2.2.0+dfsg-4.1ubuntu1", apt)
+        self.assertIn("pinned apt/libceres-dev -", entries)
+
     def test_gis_has_no_rust_or_terraform(self):
         lock = self.resolve("gis")
         self.assertNotIn("\nrust ", lock)
