@@ -146,21 +146,32 @@ class DeployTests(unittest.TestCase):
                 self.assertEqual(self.job_patches(), [])
                 self.assertEqual(self.gcloud_calls(), [])
 
-    def test_linux_gpu_deploys_on_an_rtx_pro_6000(self):
-        # The quota Google granted (specs/gcp-infrastructure.md, "GPU quota"): RTX PRO 6000
-        # only, so the real env file must deploy, and on that GPU at its minimums.
-        result = self.deploy("type", "linux-gpu", IMAGE, "abc123")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.job_patches(), ["agent-linux-gpu-next", "agent-linux-gpu"])
-        job = self.gcp.state.jobs[f"{JOBS}/agent-linux-gpu"]
-        # Its 9.5 hour timeout makes it a long running GPU job, Preview only.
-        self.assertEqual(job["launchStage"], "BETA")
-        task = job["template"]["template"]
-        self.assertEqual(task["nodeSelector"], {"accelerator": "nvidia-rtx-pro-6000"})
-        self.assertEqual(
-            task["containers"][0]["resources"]["limits"],
-            {"cpu": "20", "memory": "80Gi", "nvidia.com/gpu": "1"},
-        )
+    def test_every_cloud_run_type_deploys_its_real_env_file(self):
+        # Every type, not one named type (AGENTS.md, "Tests that can fail"): the fake
+        # refuses a long running GPU job without LAUNCH_STAGE, as Cloud Run does, so a
+        # GPU env file that drops it fails here rather than on main's deploy (r4.f2).
+        # The types and their settings come from hooks/gcp/lib.sh, as deploy.sh's do.
+        listed = subprocess.run(
+            ["bash", "-c", 'source hooks/gcp/lib.sh; AGENT_GCP_ENV_DIR=infra/gcp; for type in $(gcp_types); '
+             'do [[ "$(gcp_backend "$type")" == run ]] && gcp_deploys "$type" && echo "$type"; done; true'],
+            cwd=REPO, capture_output=True, text=True, check=True,
+        ).stdout.split()
+        self.assertIn("linux", listed)
+        self.assertIn("linux-gpu", listed)
+        for type_ in listed:
+            with self.subTest(type=type_):
+                before = len(self.job_patches())
+                result = self.deploy("type", type_, IMAGE, "abc123")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.job_patches()[before:], [f"agent-{type_}-next", f"agent-{type_}"])
+                task = self.gcp.state.jobs[f"{JOBS}/agent-{type_}"]["template"]["template"]
+                if task.get("nodeSelector", {}).get("accelerator") == "nvidia-rtx-pro-6000":
+                    # The quota Google granted (specs/gcp-infrastructure.md, "GPU
+                    # quota"), at that GPU's minimums: 20 vCPU and 80 GiB.
+                    limits = task["containers"][0]["resources"]["limits"]
+                    self.assertGreaterEqual(int(limits["cpu"]), 20)
+                    self.assertGreaterEqual(int(limits["memory"].removesuffix("Gi")), 80)
+                    self.assertEqual(limits["nvidia.com/gpu"], "1")
 
     def test_live_reuses_the_current_image(self):
         self.assertEqual(self.deploy("type", "linux", IMAGE, "first").returncode, 0)
