@@ -314,13 +314,15 @@ terraform - 1.17.1
 ```
 
 `apt-floating` marks a package from a source with no snapshot (NVIDIA's CUDA
-repo; none today), and `pinned <what> <issue URL>` a pin
+repo; none today), `apt-pin-snapshot <package> <id>` the snapshot a pinned
+package's version comes from when the pin names one (its version is the package's
+`apt` line), and `pinned <what> <issue URL>` a pin
 ([below](#pinning-a-dependency)).
 
 | Dependency | Locked as | Constraint, where it's declared | Resolved by (from upstream only) |
 | --- | --- | --- | --- |
 | Base image | Digest | `BASE_IMAGE` per base target in `docker-bake.hcl` (a tag; `@sha256` pins it) | `docker buildx imagetools inspect`: the index digest, no pull (a bare registry `HEAD` on mirror.gcr.io needs a token) |
-| apt packages, dependencies included | An Ubuntu snapshot id, plus the full resolved list | `images/cloud/base/packages.txt`, each toolset's `packages.txt`, and its `build-packages.txt` if it has a builder stage (`name=version` pins one) | `apt-get install --simulate` of that list in a stock container at the locked base digest, against today's archive. A resolved set unlike the lock's (or a new base) moves the snapshot to now |
+| apt packages, dependencies included | An Ubuntu snapshot id, plus the full resolved list | `images/cloud/base/packages.txt`, each toolset's `packages.txt`, and its `build-packages.txt` if it has a builder stage (`name=version` pins one; `snapshot=<id>` in its `# pinned:` comment takes that version from that snapshot) | `apt-get install --simulate` of that list in a stock container at the locked base digest, against today's archive, plus each pin's own snapshot as an extra source (`images/cloud/base/apt-pins.sh`). A resolved set unlike the lock's (or a new base) moves the snapshot to now |
 | Homebrew, dependencies and `lolay/tap` included | Each formula with its version and revision | The type's Brewfiles | `brew bundle list`, `brew deps --union` (no build-only dependencies) and `brew info --json=v2` on the runner's own Homebrew, after tapping and trusting the Brewfiles' taps. Matches the image's `brew list` exactly |
 | Claude Code | Version | `CLAUDE_VERSION` in `docker-bake.hcl` (`latest`, `stable`, or a version) | `https://downloads.claude.ai/claude-code-releases/<channel>` |
 | Rust toolchain | Version | `RUST_TOOLCHAIN` in `images/toolsets/rust/install.sh` (`stable`, a minor line, or a version) | rustup's channel manifest |
@@ -332,14 +334,30 @@ The build consumes the lock (`scripts/cloud/bake.sh` locally and on pull request
 the deploy's bake from `lock.sh bake-args`): `BASE_IMAGE` at the locked digest,
 `APT::Snapshot` at the locked snapshot for every apt install, `CLAUDE_VERSION`,
 `RUST_TOOLCHAIN`, `TERRAFORM_VERSION`, `TFLINT_VERSION`, `VIRTUALGL_VERSION`,
-`COLMAP_VERSION` and `BLENDER_VERSION` from the lock, each `ARG` declared just before its own layer. A type with no lock
+`COLMAP_VERSION` and `BLENDER_VERSION` from the lock, each `ARG` declared just before its own layer, and `APT_PINS`
+for the pins that name a snapshot (below). A type with no lock
 doesn't build. apt's snapshot makes the apt layer reproducible, old versions
 included, which plain `pkg=version` can't promise because Ubuntu's update pockets
 keep only the newest. One install isn't held: snapshot.ubuntu.com is HTTPS only and
 the stock `ubuntu:24.04` image has no CA certificates, so the base first installs
 `ca-certificates` (and, on plain Ubuntu, its `openssl`) from today's archive, then
 sets the snapshot. The runner stage drops the setting, so a session's own apt
-reads today's archive. The VM images (android) take each `install.sh`'s default
+reads today's archive.
+
+A pin that names its own snapshot (`apt-pin-snapshot` lines) reaches the build as
+`APT_PINS`, `name=version@id` each. `images/cloud/base/apt-pins.sh` adds each
+snapshot as an extra source (`https://snapshot.ubuntu.com/ubuntu/<id>/`, with
+`Snapshot: no` so the type's `APT::Snapshot` doesn't move it too) and a
+`/etc/apt/preferences.d` entry per pinned package (`Pin: version`, priority 1001),
+in the base layer before its snapshot update, so every toolset layer and builder
+stage installs that version. Nothing else is pinned: an older snapshot holds no
+newer version of any other package, so they still come from the type's snapshot.
+Priority 1001 and `--allow-downgrades` on every package list's install let a pin
+sit below what's installed (`openssl`, which `ca-certificates` brought in from
+today's archive). The runner stage removes both files with the other apt settings.
+The resolve adds the same source in its container, after installing
+`ca-certificates` (the snapshot is HTTPS only), and simulates against the package
+state saved before that install, so the lock still lists what the build installs. The VM images (android) take each `install.sh`'s default
 and have no lock (m5, D2).
 
 Every `apt-get update` in a cloud build, and `lock.sh`'s resolve, runs with
@@ -612,7 +630,7 @@ it's fixed. How, per source:
 | Dependency | Pin | Notes |
 | --- | --- | --- |
 | Base image | `FROM mirror.gcr.io/library/ubuntu:24.04@sha256:...` | The watch reports it as pinned instead of rebuilding |
-| apt package | `name=version` in `packages.txt` (or `build-packages.txt`), resolved against the locked snapshot | Holds the version only while the snapshot has it: a snapshot's index lists each pocket's current version alone, so once Ubuntu replaces an update, pinning back to it fails to resolve and to install (checked 2026-11-15; the release pocket's original version stays). To hold all of apt still, freeze the snapshot timestamp in the lock |
+| apt package | `name=version  # pinned: <issue URL> snapshot=<id>` in `packages.txt` (or `build-packages.txt`), the id a snapshot.ubuntu.com timestamp whose index has that version | A snapshot's index lists each pocket's current version alone, so once Ubuntu replaces an update, the type's snapshot no longer has it (checked 2026-11-15: `noble-updates` had openssl `3.0.13-0ubuntu3.6` at 20260101T000000Z and only `3.0.13-0ubuntu3.16` at 20261101T000000Z). `snapshot=` resolves and installs that package from its own snapshot, and everything else keeps moving ([The lock](#the-lock)). Pin a package's same-version siblings too (`libssl3t64` with `openssl`): an exact-version dependency isn't pinned for you. Without `snapshot=`, the pin resolves against today's archive and holds only while Ubuntu keeps that version. To hold all of apt still, freeze the snapshot timestamp in the lock |
 | Homebrew formula | A versioned formula if one exists (`python@3.12`), else `brew extract --version=X <formula> lolay/tap` and name `lolay/tap/<formula>@X` in the Brewfile | `brew pin` doesn't help a fresh build. An extracted formula has no bottle, so it builds from source |
 | `lolay/tap` formula | Revert in the tap, or add a versioned formula there | It's ours |
 | Claude Code | `CLAUDE_VERSION=2.1.317` (a version) or `stable` (the channel) | The watch then skips Claude. `nightly` types already run with `CLAUDE_UPGRADE=false`; a `weekly` type still updates itself at start, past the pin, and has no setting to stop it yet: add one (an env file key read by `gcp_runner_settings`) if a weekly pin is ever needed |

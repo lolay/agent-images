@@ -19,6 +19,7 @@ RUN --mount=type=bind,source=images/shared,target=/tmp/images/shared \
 	--mount=type=bind,source=images/toolsets/write-claude-md.sh,target=/tmp/images/write-claude-md.sh \
 	--mount=type=bind,source=images/toolsets/toolset-checks.sh,target=/tmp/images/toolset-checks.sh \
 	--mount=type=bind,source=images/toolsets/skills,target=/tmp/images/skills \
+	--mount=type=bind,source=images/cloud/base/apt-pins.sh,target=/tmp/images/apt-pins.sh \
 	<<'SCRIPT'
 set -eu
 shared=/tmp/images/shared
@@ -54,9 +55,10 @@ cp -R /tmp/images/skills/. "$HOME/.claude/skills/"
 sudo install -d -m 755 -o ubuntu -g ubuntu /scratch /mnt/outputs
 sudo install -d -m 755 /mnt/datasets
 # The toolsets are in; a session's own apt (on a runtime that allows sudo) reads
-# today's archive, not the build's snapshot, with apt's own error handling, not
-# the build's (images/cloud/base/Dockerfile).
+# today's archive, not the build's snapshot or its pins' snapshots, with apt's
+# own error handling, not the build's (images/cloud/base/Dockerfile).
 sudo rm -f /etc/apt/apt.conf.d/50agent-snapshot /etc/apt/apt.conf.d/40agent-build
+sudo bash /tmp/images/apt-pins.sh remove
 SCRIPT
 
 # profile.sh's PATH: Homebrew (and rustup's proxies) ahead of the system.

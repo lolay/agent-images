@@ -38,7 +38,7 @@ mapfile -t packages < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$her
 installed() { dpkg-query -W -f='${Package}=${Version}\n' | LC_ALL=C sort; }
 before="$(installed)"
 sudo apt-get update -q
-sudo env DEBIAN_FRONTEND=noninteractive apt-get install -q -y --no-install-recommends "${packages[@]}"
+sudo env DEBIAN_FRONTEND=noninteractive apt-get install -q -y --no-install-recommends --allow-downgrades "${packages[@]}"
 from_build_list="$(LC_ALL=C comm -13 <(printf '%s\n' "$before") <(installed))"
 # Ubuntu's OpenImageIO CMake config wants OpenCV's include directory to exist,
 # though COLMAP uses none of it (the install guide's workaround).

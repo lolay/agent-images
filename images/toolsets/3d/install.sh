@@ -33,7 +33,9 @@ trap 'rm -rf "$work"' EXIT
 mapfile -t packages <"$colmap_packages"
 log "COLMAP's runtime libraries: ${packages[*]}"
 apt update
-apt install -y --no-install-recommends "${packages[@]}"
+# --allow-downgrades: a pin from an older snapshot (images/cloud/base/apt-pins.sh)
+# can be below what an earlier toolset installed.
+apt install -y --no-install-recommends --allow-downgrades "${packages[@]}"
 apt clean
 if [[ "${APT_DROP_LISTS:-false}" == "true" ]]; then
 	sudo rm -rf /var/lib/apt/lists/*

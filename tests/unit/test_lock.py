@@ -70,7 +70,36 @@ if args[:4] == ["run", "--rm", "--entrypoint", "/bin/bash"]:
             log("env " + e)
     if os.environ.get("FAKE_APT_FAIL"):
         sys.exit("E: Unable to locate package nosuchthing")
-    sys.stdout.write(open(os.environ["FAKE_APT"]).read())
+    # The archive apt reads: today's index (what FAKE_APT's simulation installs),
+    # plus each snapshot apt-pins.sh adds as a source, when the container has the
+    # script and the pins. A snapshot's index lists each pocket's current version
+    # only, so a name=version in neither is refused, as apt refuses it.
+    today = open(os.environ["FAKE_APT"]).read().splitlines()
+    sources = [today]
+    pins = next((e[len("APT_PINS="):] for e in env if e.startswith("APT_PINS=")), "")
+    if pins and any(m.endswith("target=/tmp/apt-pins.sh,readonly") for m in mounts):
+        snapshots = json.loads(os.environ.get("FAKE_APT_SNAPSHOTS", "{}"))
+        for pin in pins.split():
+            name, _, snapshot = pin.rpartition("@")
+            if "=" not in name or len(snapshot) != 16:
+                sys.exit("apt-pins: '" + pin + "' isn't <name>=<version>@<snapshot>")
+            if snapshot not in snapshots:
+                sys.exit("E: Failed to fetch https://snapshot.ubuntu.com/ubuntu/" + snapshot + "/dists/noble/InRelease  404  Not Found")
+            sources.append(snapshots[snapshot])
+    def version(line):
+        return line.split("(", 1)[1].split(" ", 1)[0]
+    out = list(today)
+    for wanted in packages[len("PACKAGES="):].split():
+        name, _, want = wanted.partition("=")
+        if not want:
+            continue
+        found = next((line for lines in sources for line in lines
+                      if line.split(" ", 1)[0] == name and version(line) == want), None)
+        if found is None:
+            sys.stderr.write("E: Version '" + want + "' for '" + name + "' was not found\n")
+            sys.exit(100)
+        out = [line for line in out if line.split(" ", 1)[0] != name] + [found]
+    sys.stdout.write("".join(line + "\n" for line in out))
     sys.exit(0)
 sys.exit("docker: fake: unexpected call: " + " ".join(args) + "\nSee 'docker --help'.")
 '''
@@ -193,6 +222,7 @@ class ResolveTests(unittest.TestCase):
         self.log = self.tmp / "log"
         self.apt = self.tmp / "apt.txt"
         self.apt.write_text(APT_TODAY)
+        self.apt_snapshots = {}
         self.urls = {
             "https://downloads.claude.ai/claude-code-releases/latest": "2.1.319",
             "https://downloads.claude.ai/claude-code-releases/stable": "2.1.311",
@@ -236,6 +266,7 @@ class ResolveTests(unittest.TestCase):
             "REAL_DOCKER": REAL_DOCKER,
             "FAKE_LOG": str(self.log),
             "FAKE_APT": str(self.apt),
+            "FAKE_APT_SNAPSHOTS": json.dumps(self.apt_snapshots),
             "FAKE_URLS": str(self.tmp / "urls.json"),
             "FAKE_BREW_DATA": str(self.tmp / "brew.json"),
             "LOCK_DIR": str(self.locks),
@@ -330,6 +361,7 @@ class ResolveTests(unittest.TestCase):
         # COLMAP's build list is locked with the rest, so the libraries the image
         # keeps at those versions move the snapshot and take pins (r4.f10).
         self.edit("images/toolsets/3d/build-packages.txt", "libceres-dev\n", "libceres-dev=2.2.0+dfsg-4.1ubuntu1\n")
+        self.apt.write_text(APT_TODAY + "libceres-dev (2.2.0+dfsg-4.1ubuntu1 Ubuntu:24.04/noble [amd64])\n")
         entries = self.entries(self.resolve("3d-gpu"))
         apt = next(line for line in self.log.read_text().splitlines() if line.startswith("apt "))
         self.assertIn(" libopenimageio-dev ", apt)
@@ -399,7 +431,80 @@ class ResolveTests(unittest.TestCase):
 
     def test_an_apt_pin_is_listed(self):
         self.edit("images/toolsets/native/packages.txt", "cmake\n", "cmake=3.28.3-1build7\n")
-        self.assertIn("pinned apt/cmake -", self.entries(self.resolve()))
+        entries = self.entries(self.resolve())
+        self.assertIn("pinned apt/cmake -", entries)
+        # With no snapshot on the pin, it resolves against today's archive alone.
+        self.assertFalse([line for line in entries if line.startswith("apt-pin-snapshot ")])
+        self.assertIn("env APT_PINS=", self.log.read_text().splitlines())
+
+    # Ubuntu replaced openssl 3.0.13-0ubuntu3.6 in noble-updates: today's index
+    # (and a newer snapshot's) lists only 3.0.13-0ubuntu3.16, the January
+    # snapshot still 3.0.13-0ubuntu3.6 (snapshot.ubuntu.com, checked 2026-11-15).
+    OPENSSL_TODAY = "openssl (3.0.13-0ubuntu3.16 Ubuntu:24.04/noble-updates [amd64])\n"
+    OPENSSL_PINNED = "openssl (3.0.13-0ubuntu3.6 Ubuntu:24.04/noble-updates [amd64])"
+    JANUARY = "20260101T000000Z"
+
+    def pin_openssl(self, comment):
+        self.apt.write_text(APT_TODAY + self.OPENSSL_TODAY)
+        self.apt_snapshots = {self.JANUARY: [self.OPENSSL_PINNED]}
+        self.edit("images/toolsets/core/packages.txt", "git\n", f"git\nopenssl=3.0.13-0ubuntu3.6{comment}\n")
+
+    def test_a_pin_to_a_replaced_version_resolves_from_its_snapshot(self):
+        self.pin_openssl(f"  # pinned: https://github.com/lolay/agent-images/issues/1 snapshot={self.JANUARY}")
+        entries = self.entries(self.resolve())
+        self.assertIn("apt openssl 3.0.13-0ubuntu3.6", entries)
+        self.assertIn(f"apt-pin-snapshot openssl {self.JANUARY}", entries)
+        self.assertIn("pinned apt/openssl -", entries)
+        self.assertIn("apt-snapshot - 20261106T220000Z", entries, "the type's own snapshot still moves")
+        log = self.log.read_text().splitlines()
+        self.assertIn(f"env APT_PINS=openssl=3.0.13-0ubuntu3.6@{self.JANUARY}", log)
+        helper = self.repo / "images/cloud/base/apt-pins.sh"
+        self.assertIn(f"mount type=bind,source={helper},target=/tmp/apt-pins.sh,readonly", log)
+
+    def test_two_pins_from_one_snapshot_are_one_list(self):
+        self.pin_openssl(f" # pinned: - snapshot={self.JANUARY}")
+        self.apt_snapshots[self.JANUARY].append("libssl3t64 (3.0.13-0ubuntu3.6 Ubuntu:24.04/noble-updates [amd64])")
+        self.edit("images/toolsets/core/packages.txt", "git\n",
+                  f"git\nlibssl3t64=3.0.13-0ubuntu3.6 # pinned: - snapshot={self.JANUARY}\n")
+        entries = self.entries(self.resolve())
+        self.assertIn("apt libssl3t64 3.0.13-0ubuntu3.6", entries)
+        self.assertIn(f"apt-pin-snapshot libssl3t64 {self.JANUARY}", entries)
+        self.assertIn(f"env APT_PINS=libssl3t64=3.0.13-0ubuntu3.6@{self.JANUARY} "
+                      f"openssl=3.0.13-0ubuntu3.6@{self.JANUARY}", self.log.read_text().splitlines())
+
+    def test_a_pin_to_a_replaced_version_without_its_snapshot_fails(self):
+        # The gap the snapshot closes: today's archive no longer has the version.
+        self.pin_openssl("  # pinned: https://github.com/lolay/agent-images/issues/1")
+        result = self.run_lock("resolve", "linux")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("E: Version '3.0.13-0ubuntu3.6' for 'openssl' was not found", result.stderr)
+
+    def test_a_pin_from_a_snapshot_that_lacks_it_fails(self):
+        self.pin_openssl(" # pinned: - snapshot=20261101T000000Z")
+        self.apt_snapshots["20261101T000000Z"] = [self.OPENSSL_TODAY.strip()]
+        result = self.run_lock("resolve", "linux")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("for 'openssl' was not found", result.stderr)
+
+    def test_a_malformed_snapshot_pin_fails_before_apt(self):
+        cases = {
+            "no version": "git\nopenssl # pinned: - snapshot=20260101T000000Z\n",
+            "not an id": "git\nopenssl=3.0.13-0ubuntu3.6 # pinned: - snapshot=january\n",
+            "glued to the URL": "git\nopenssl=3.0.13-0ubuntu3.6 # pinned: https://x/1,snapshot=20260101T000000Z\n",
+        }
+        for name, line in cases.items():
+            with self.subTest(name):
+                path = self.repo / "images/toolsets/core/packages.txt"
+                saved = path.read_text()
+                self.log.unlink(missing_ok=True)
+                self.edit("images/toolsets/core/packages.txt", "git\n", line)
+                result = self.run_lock("resolve", "linux")
+                path.write_text(saved)
+                self.assertNotEqual(result.returncode, 0, name)
+                self.assertEqual(result.stdout, "", name)
+                self.assertIn("openssl", result.stderr, name)
+                self.assertFalse(self.log.exists() and self.log_lines("apt "), f"{name}: apt ran")
 
     def test_failures_fail_the_resolve(self):
         cases = {
@@ -507,6 +612,40 @@ class ReadTests(unittest.TestCase):
             "*.args.TFLINT_VERSION=v0.64.0",
             "*.args.VIRTUALGL_VERSION=3.1.5",
         ])
+
+    def test_bake_args_passes_pins_with_their_snapshots(self):
+        # One APT_PINS for the base's apt-pins.sh: name=version@snapshot, the
+        # version from the package's apt line.
+        self.write("linux/versions.lock", self.LOCK
+                   + "apt openssl 3.0.13-0ubuntu3.6\n"
+                   + "apt-pin-snapshot openssl 20260101T000000Z\n"
+                   + "apt-pin-snapshot sqlite3 20260201T000000Z\n"
+                   + "pinned apt/openssl -\npinned apt/sqlite3 -\n")
+        result = self.run_lock("bake-args", "linux")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("*.args.APT_PINS=openssl=3.0.13-0ubuntu3.6@20260101T000000Z "
+                      "sqlite3=3.45.1-1ubuntu2.8@20260201T000000Z", result.stdout.splitlines())
+        self.assertEqual(result.stdout.count("APT_PINS"), 1)
+
+    def test_bake_args_has_no_pins_without_a_pin_snapshot(self):
+        self.write("linux/versions.lock", self.LOCK + "pinned apt/cmake -\n")
+        result = self.run_lock("bake-args", "linux")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("APT_PINS", result.stdout)
+
+    def test_bake_args_refuses_a_pin_snapshot_with_no_version(self):
+        self.write("linux/versions.lock", self.LOCK + "apt-pin-snapshot openssl 20260101T000000Z\n")
+        result = self.run_lock("bake-args", "linux")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("apt-pin-snapshot openssl has no apt openssl line", result.stderr)
+
+    def test_a_pin_snapshot_change_counts_as_its_package(self):
+        old = self.write("old", self.LOCK + "apt-pin-snapshot sqlite3 20260101T000000Z\n")
+        new = self.write("new", self.LOCK.replace("1ubuntu2.8", "1ubuntu2.5")
+                         + "apt-pin-snapshot sqlite3 20251001T000000Z\n")
+        self.assertIn("apt-pin-snapshot/sqlite3: 20260101T000000Z -> 20251001T000000Z",
+                      self.run_lock("diff", old, new).stdout.splitlines())
+        self.assertEqual(self.run_lock("summary", old, new).stdout.strip(), "apt 1 package")
 
     def test_bake_args_refuses_a_missing_or_incomplete_lock(self):
         result = self.run_lock("bake-args", "linux")
