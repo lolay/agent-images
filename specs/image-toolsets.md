@@ -242,8 +242,9 @@ gsplat built with `TORCH_CUDA_ARCH_LIST="8.9;12.0+PTX"` at image build so no ses
 compiles it. COLMAP is built from source in a builder stage
 (`CMAKE_CUDA_ARCHITECTURES="89;120"`) from the packages in `build-packages.txt`,
 which the lock resolves with the type's `packages.txt`, and only its install tree is
-copied in, with the Ubuntu packages its binary links at the versions it was built
-against. A `-dev` package depends on its library at its own version, so locking or
+copied in, with the Ubuntu packages its binary links: at the versions it was built
+against where the build list installed them, by name where the base image already
+had them (a later toolset may move those within the snapshot). A `-dev` package depends on its library at its own version, so locking or
 pinning the build list locks the libraries the image runs, and an Ubuntu fix to one
 moves the snapshot like any other package (r4.f10). 8.9 is the L4, kept for the day its quota
 comes through. The environment is locked in `images/toolsets/3d/uv.lock`, which

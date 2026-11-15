@@ -4,9 +4,9 @@
 # nothing here may need one.
 #
 # - COLMAP's runtime libraries: the builder stage (images/cloud/3d-gpu) built
-#   COLMAP into /opt/colmap and listed the Ubuntu packages its binary links as
-#   name=version, the versions it was built against (locked through
-#   build-packages.txt).
+#   COLMAP into /opt/colmap and listed the Ubuntu packages its binary links:
+#   name=version for those its build list installed (locked through
+#   build-packages.txt), the name alone for those the base image had.
 # - Blender from blender.org (BLENDER_VERSION), checked against the
 #   release's SHA-256 file, in /opt/blender: its own Python and Cycles kernels.
 # - /opt/3d: Python and the locked environment (pyproject.toml, uv.lock), with

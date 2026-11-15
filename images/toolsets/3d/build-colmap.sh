@@ -3,9 +3,11 @@
 # whose install tree is all the image keeps. CUDA for the L4 (8.9) and
 # Blackwell (12.0, with PTX); headless, so SIFT runs on CUDA rather than OpenGL.
 # Its Ubuntu packages are build-packages.txt beside it, which the lock resolves.
-# It ends by listing the packages the binary links, each at the version
-# installed here, in runtime-packages.txt, which the 3d toolset's install.sh
-# installs: so the image runs COLMAP with exactly what it was built against.
+# It ends by listing the packages the binary links in runtime-packages.txt,
+# which the 3d toolset's install.sh installs: those the build list installed at
+# the version installed here (so the image runs COLMAP with what it was built
+# against, pins included), and those the base image already had by name, since
+# a later toolset may move them within the snapshot.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,8 +33,13 @@ fi
 # The same comment and pin rules as packages.txt (install-toolset.sh).
 mapfile -t packages < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$here/build-packages.txt")
 ((${#packages[@]} > 0)) || die "no packages in $here/build-packages.txt"
+# What the install adds or changes: the build list's packages and dependencies.
+# shellcheck disable=SC2016 # dpkg-query's own ${field} syntax, not the shell's
+installed() { dpkg-query -W -f='${Package}=${Version}\n' | LC_ALL=C sort; }
+before="$(installed)"
 sudo apt-get update -q
 sudo env DEBIAN_FRONTEND=noninteractive apt-get install -q -y --no-install-recommends "${packages[@]}"
+from_build_list="$(LC_ALL=C comm -13 <(printf '%s\n' "$before") <(installed))"
 # Ubuntu's OpenImageIO CMake config wants OpenCV's include directory to exist,
 # though COLMAP uses none of it (the install guide's workaround).
 sudo mkdir -p /usr/include/opencv4
@@ -75,7 +82,10 @@ done | cut -d: -f1 | LC_ALL=C sort -u >"$owners_file"
 mapfile -t owners <"$owners_file"
 rm -f "$owners_file"
 ((${#owners[@]} > 0)) || die "found no packages for $bin's libraries"
-# Each at its installed version, so the image gets what COLMAP was built against.
-# shellcheck disable=SC2016 # dpkg-query's own ${field} syntax, not the shell's
-dpkg-query -W -f='${Package}=${Version}\n' "${owners[@]}" | sudo tee "$list" >/dev/null
+# Pinned to the built version if the build list installed it; by name if the
+# base image had it (that version may not be in the snapshot at all).
+for package in "${owners[@]}"; do
+	built="$(awk -F= -v name="$package" '$1 == name {print; exit}' <<<"$from_build_list")"
+	printf '%s\n' "${built:-$package}"
+done | sudo tee "$list" >/dev/null
 log "runtime packages: $(paste -sd ' ' "$list")"
