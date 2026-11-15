@@ -299,7 +299,7 @@ built from, and the check compares upstream against it, so nothing ever reads th
 image. One thing has its own lock: `3d-gpu`'s Python environment, `/opt/3d`, is
 `images/toolsets/3d/uv.lock`, which the watch doesn't move (`uv lock --upgrade` in a
 pull request; image-toolsets.md). `scripts/cloud/lock.sh` is its one reader and writer: `resolve <type>`
-(Linux, with Docker and Homebrew), `bake-args`, `diff`, `summary` and `pins`. A lock is
+(Linux, with Docker and Homebrew), `bake-args`, `diff`, `summary`, `pins` and `path`. A lock is
 `<kind> <name> <value>` lines, sorted, under a header:
 
 ```text
@@ -333,7 +333,18 @@ the deploy's bake from `lock.sh bake-args`): `BASE_IMAGE` at the locked digest,
 `APT::Snapshot` at the locked snapshot for every apt install, `CLAUDE_VERSION`,
 `RUST_TOOLCHAIN`, `TERRAFORM_VERSION`, `TFLINT_VERSION`, `VIRTUALGL_VERSION`,
 `COLMAP_VERSION` and `BLENDER_VERSION` from the lock, each `ARG` declared just before its own layer. A type with no lock
-doesn't build. apt's snapshot makes the apt layer reproducible, old versions
+doesn't build.
+
+A new type's first lock comes from its own pull request (r4.f11, option C; owner,
+2026-11-15). The watch resolves only types on `main`, and a session has no Docker,
+so `cloud-build.yml` does it: on a type with no lock, `scripts/cloud/new-lock.sh`
+runs `lock.sh resolve <type>`, the job uploads the result as the artifact
+`versions-lock-<type>`, writes the `gh run download` command that fetches it into
+`images/cloud/<type>/` in the job summary, and fails that type. The author commits
+the file as it came, and the rerun builds from it. Nothing writes the branch for
+them, and a type that has a lock is never resolved there: moving a lock stays the
+watch's. So `lock.sh resolve` writes every lock, the first one included; no lock is
+written or seeded by hand. apt's snapshot makes the apt layer reproducible, old versions
 included, which plain `pkg=version` can't promise because Ubuntu's update pockets
 keep only the newest. One install isn't held: snapshot.ubuntu.com is HTTPS only and
 the stock `ubuntu:24.04` image has no CA certificates, so the base first installs

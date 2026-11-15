@@ -119,6 +119,29 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # A new runner type has no lock yet, and a session can't resolve one (no
+      # Docker). This leg resolves it, hands it over as an artifact with the
+      # command to fetch it in the summary, and fails until the author commits it
+      # (r4.f11). A type with a lock passes straight through: moving a lock is
+      # the watch's (lock-watch.yml), never a pull request's.
+      - name: Lock ${{ matrix.target }}
+        id: lock
+        if: matrix.target != 'orchestrator'
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          # The hosted runner's Homebrew isn't on PATH by default.
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          scripts/cloud/new-lock.sh "$TARGET" "out/new-lock/$TARGET"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ failure() && steps.lock.outputs.artifact != '' }}
+        with:
+          name: ${{ steps.lock.outputs.artifact }}
+          path: out/new-lock/${{ matrix.target }}/versions.lock
+          retention-days: 14
+          if-no-files-found: error
+          overwrite: true
       # A runner type builds from its lock (images/cloud/<type>/versions.lock)
       # with its versions report, as make cloud-build does locally; --load sends
       # the image to Docker for the smoke, and versions-<type> keeps its local
