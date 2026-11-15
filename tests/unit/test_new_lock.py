@@ -98,9 +98,11 @@ class NewLockTests(unittest.TestCase):
         self.assertFalse(self.out.exists())
         self.assertFalse(self.output.exists(), "named an artifact for a type that has a lock")
 
-    def test_every_type_here_has_a_lock_and_is_left_alone(self):
+    def test_every_type_with_a_lock_is_left_alone(self):
         # Every Cloud Run type, as cloud-build's matrix lists them (make
-        # cloud-targets, from changed-targets.sh --all), at the repo's own locks.
+        # cloud-targets, from changed-targets.sh --all), each given a lock here:
+        # a new type's pull request has none committed yet, and its pre-push
+        # gate must still pass so it can get one from cloud-build.
         listed = subprocess.run(
             ["bash", "scripts/cloud/changed-targets.sh", "--all"], cwd=REPO, capture_output=True, text=True, check=True
         )
@@ -108,10 +110,15 @@ class NewLockTests(unittest.TestCase):
         self.assertIn("linux", types)
         for type_ in types:
             with self.subTest(type_):
-                result = self.run_script(type_, str(self.tmp / "out" / type_), lock_dir=False)
+                lock = self.locks / type_ / "versions.lock"
+                lock.parent.mkdir()
+                lock.write_text(f"# {type_}\n")
+                result = self.run_script(type_, str(self.tmp / "out" / type_))
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn(f"images/cloud/{type_}/versions.lock", result.stdout)
+                self.assertIn(f"{type_} has a lock ({lock})", result.stdout)
+                self.assertEqual(lock.read_text(), f"# {type_}\n")
         self.assertEqual(self.resolved(), [])
+        self.assertFalse(self.output.exists())
 
     def test_a_type_without_a_lock_is_resolved_handed_over_and_fails(self):
         result = self.run_script("linux", str(self.out))
