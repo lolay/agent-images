@@ -43,15 +43,19 @@ With a Python script run by `blender -b -P`, build a scene about 30 m by 10 m:
 Place 120 cameras like a field capture:
 
 - 72 on the ground: two passes along each side of the row, at 1.5 m and 3 m height,
-  18 cameras each, about 70% overlap. The 1.5 m passes look at the trees; the 3 m
-  passes look down at the ground in front of them, so the ground ties both sides to
-  the aerial set.
+  18 cameras each, about 70% overlap. The 1.5 m passes look at the trunks and lower
+  canopy, aimed at about 1.3 m so the ground behind the trees stays in frame; the 3 m
+  passes look down at the ground in front of them. The ground is what ties each pass
+  to the others and to the aerial set.
 - 48 aerial and oblique: a grid of nadir and oblique shots from 15 m, some of the
   obliques steeper, from about 6.5 m out from the row.
 
-A first run with every ground camera looking at the trees and no coarse ground layer
-split into three models (the aerial set and each side), so keep both. Render 1920 by
-1080 with Cycles on the GPU (OptiX if available, else CUDA), 64 samples, denoised.
+Two runs split into three models when ground passes lost the ground: every ground
+camera aimed at the trees with no coarse ground layer (2026-11-14), and the 1.5 m
+passes aimed at the canopies (2026-11-15). Keep the coarse layer and the ground in
+every frame. Render 1920 by 1080 with Cycles on the GPU (OptiX if available, else
+CUDA), 64 samples, denoised with OpenImageDenoise on the GPU: OptiX's denoiser needs
+`/usr/share/nvidia/nvoptix.bin` from the driver, which Cloud Run doesn't mount.
 Keep a scene mask for each render (the depth pass works: the sky is at infinity), so
 the scoring below leaves the sky out. Export:
 
@@ -93,9 +97,9 @@ compare it with points sampled from `scene_gt.ply` (Open3D is fine): report accu
 count. Completeness is the share of truth points within 5 cm of the reconstruction,
 counting only truth points some capture camera can see (ray-cast from the camera
 centers); report it over all truth points too. Pass if accuracy is under 3 cm and
-completeness over 80%. (The canopies overlap, so about a third of the truth surface
-is hidden from every camera; over all truth, the first run scored 58.5% with the
-visible part at 89.9%.)
+completeness over 80%. (The canopies overlap, so a third to a half of the truth
+surface is hidden from every camera, depending on the scene: over all truth, the
+runs scored 58.5% and 46.0%, with the visible part at 89.9% and 85.8%.)
 
 ## 5. Gaussian splatting (GPU)
 
@@ -105,12 +109,14 @@ example trainer, so write a small one on `gsplat.rasterization` and its
 `DefaultStrategy`. Report training time, steps per second, peak GPU memory, the
 number of Gaussians, and PSNR, SSIM and LPIPS on the held-out images.
 
-Score the scene, not the sky: no capture camera constrains the sky, so before scoring
-copy the ground truth's sky pixels (from the mask) into the splat render, here and in
-step 7. Metric packages (`lpips`, `torchmetrics`) aren't in `/opt/3d`, which
-sessions can't write to; install them beside it with `uv pip install --target pylib lpips
-torchmetrics` and run with `PYTHONPATH=pylib`. A new virtual environment made with
-`--system-site-packages` doesn't see `/opt/3d`'s packages. Render one held-out
+Score the scene, not the sky: no capture camera constrains the sky. PSNR, here and
+in step 7, is over the mask's scene pixels; for SSIM and LPIPS, which need whole
+images, copy the ground truth's sky pixels into the splat render first, and report
+that it flatters them. Metric packages (`lpips`, `torchmetrics`) aren't in
+`/opt/3d`; the session user owns it, so add them with `uv pip install --python
+/opt/3d/.venv lpips torchmetrics`, which reuses its PyTorch. Don't use `--target`
+into another directory, which pulls a second PyTorch, or a new virtual environment
+with `--system-site-packages`, which doesn't see `/opt/3d`'s packages. Render one held-out
 view next to its ground-truth image as `splat_vs_gt.png`, and a novel view from a
 camera that wasn't in the capture as `splat_novel.png`. Pass if held-out PSNR is
 above 25 dB.
@@ -129,7 +135,7 @@ row between two trees, and climbing out over the other end. It should pass throu
 places no capture camera was, so it shows what the reconstruction really learned.
 
 - **Ground truth:** render the path in Blender with Cycles on the GPU (OptiX if
-  available), 1920 by 1080, 64 samples, denoised.
+  available), 1920 by 1080, 64 samples, denoised as in step 2.
 - **Reconstruction:** render the same path from the Gaussian splatting model on the
   GPU. Record frames per second.
 - **Video:** encode `flythrough.mp4`: the two side by side (1920 by 540 per frame),

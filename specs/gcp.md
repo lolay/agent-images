@@ -296,7 +296,9 @@ deploys everything. A manual dispatch takes a list of targets, or `all`.
 Each Cloud Run type has a lock in git, `images/cloud/<type>/versions.lock`: every
 dependency resolved to an exact version. It's the record of what the live image was
 built from, and the check compares upstream against it, so nothing ever reads the
-image. `scripts/cloud/lock.sh` is its one reader and writer: `resolve <type>`
+image. One thing has its own lock: `3d-gpu`'s Python environment, `/opt/3d`, is
+`images/toolsets/3d/uv.lock`, which the watch doesn't move (`uv lock --upgrade` in a
+pull request; image-toolsets.md). `scripts/cloud/lock.sh` is its one reader and writer: `resolve <type>`
 (Linux, with Docker and Homebrew), `bake-args`, `diff`, `summary` and `pins`. A lock is
 `<kind> <name> <value>` lines, sorted, under a header:
 
@@ -323,13 +325,14 @@ repo; none today), and `pinned <what> <issue URL>` a pin
 | Claude Code | Version | `CLAUDE_VERSION` in `docker-bake.hcl` (`latest`, `stable`, or a version) | `https://downloads.claude.ai/claude-code-releases/<channel>` |
 | Rust toolchain | Version | `RUST_TOOLCHAIN` in `images/toolsets/rust/install.sh` (`stable`, a minor line, or a version) | rustup's channel manifest |
 | Terraform | Version | `TERRAFORM_VERSION` in `images/toolsets/terraform/install.sh` (`latest`, `~> x.y`, or a version) | HashiCorp's release index, newest stable on that line |
-| tflint, VirtualGL | Release tag | `TFLINT_VERSION`, `VIRTUALGL_VERSION` in their toolsets' `install.sh` | The tag GitHub redirects `/releases/latest` to |
+| tflint, VirtualGL, COLMAP | Release tag | `TFLINT_VERSION`, `VIRTUALGL_VERSION` in their toolsets' `install.sh`; `COLMAP_VERSION` in `images/toolsets/3d/build-colmap.sh` | The tag GitHub redirects `/releases/latest` to |
+| Blender | Release version | `BLENDER_VERSION` in `images/toolsets/3d/install.sh` | The newest `blender-x.y.z-linux-x64.tar.xz` in the newest series on download.blender.org's release index |
 
 The build consumes the lock (`scripts/cloud/bake.sh` locally and on pull requests,
 the deploy's bake from `lock.sh bake-args`): `BASE_IMAGE` at the locked digest,
 `APT::Snapshot` at the locked snapshot for every apt install, `CLAUDE_VERSION`,
-`RUST_TOOLCHAIN`, `TERRAFORM_VERSION`, `TFLINT_VERSION` and `VIRTUALGL_VERSION`
-from the lock, each `ARG` declared just before its own layer. A type with no lock
+`RUST_TOOLCHAIN`, `TERRAFORM_VERSION`, `TFLINT_VERSION`, `VIRTUALGL_VERSION`,
+`COLMAP_VERSION` and `BLENDER_VERSION` from the lock, each `ARG` declared just before its own layer. A type with no lock
 doesn't build. apt's snapshot makes the apt layer reproducible, old versions
 included, which plain `pkg=version` can't promise because Ubuntu's update pockets
 keep only the newest. One install isn't held: snapshot.ubuntu.com is HTTPS only and
@@ -609,13 +612,13 @@ it's fixed. How, per source:
 | Dependency | Pin | Notes |
 | --- | --- | --- |
 | Base image | `FROM mirror.gcr.io/library/ubuntu:24.04@sha256:...` | The watch reports it as pinned instead of rebuilding |
-| apt package | `name=version` in `packages.txt`, resolved against the locked snapshot | The snapshot keeps old versions installable. To hold all of apt still, freeze the snapshot timestamp in the lock |
+| apt package | `name=version` in `packages.txt` (or `build-packages.txt`), resolved against the locked snapshot | Holds the version only while the snapshot has it: a snapshot's index lists each pocket's current version alone, so once Ubuntu replaces an update, pinning back to it fails to resolve and to install (checked 2026-11-15; the release pocket's original version stays). To hold all of apt still, freeze the snapshot timestamp in the lock |
 | Homebrew formula | A versioned formula if one exists (`python@3.12`), else `brew extract --version=X <formula> lolay/tap` and name `lolay/tap/<formula>@X` in the Brewfile | `brew pin` doesn't help a fresh build. An extracted formula has no bottle, so it builds from source |
 | `lolay/tap` formula | Revert in the tap, or add a versioned formula there | It's ours |
 | Claude Code | `CLAUDE_VERSION=2.1.317` (a version) or `stable` (the channel) | The watch then skips Claude. `nightly` types already run with `CLAUDE_UPGRADE=false`; a `weekly` type still updates itself at start, past the pin, and has no setting to stop it yet: add one (an env file key read by `gcp_runner_settings`) if a weekly pin is ever needed |
 | Rust toolchain | `RUST_TOOLCHAIN=1.91.0` (a version) or `1.91` (a minor line) in `images/toolsets/rust/install.sh` | The watch resolves within it: a minor line still takes patch releases |
 | Terraform | `TERRAFORM_VERSION=1.14.2` or `~> 1.14` in `images/toolsets/terraform/install.sh` | tenv takes the constraint as is |
-| Type tool from a release | Its version in the Dockerfile | |
+| Type tool from a release | Its `*_VERSION` default in the script that reads it (the release rows of the lock table) | |
 
 Pins live where the dependency is declared, each with `# pinned: <issue URL>`, and the
 lock marks them pinned. The watch lists every pin in the job summary next to
@@ -1198,9 +1201,26 @@ What it found:
 | Capture | The spec's camera layout split into three models; the session added a coarse ground texture and pointed the 3 m passes at the ground. The test now prescribes that layout |
 | Patch match | 57 of the session's 92 minutes, and longer than a background command's limit (killed once, resumed). The test now caps it at 960 px and runs it in `tmux` |
 | The sky | Unconstrained by any capture camera, so the flythrough dipped to 11.5 dB looking along the row; the session trained a learned sky to compensate. The test now scores scene pixels only |
-| Metric packages | `lpips` and an SSIM aren't in `/opt/3d`, and shouldn't be: evaluation is the project's. `/opt/3d` is root-owned, so they go in with `uv pip install --target`; the test says how |
+| Metric packages | `lpips` and an SSIM aren't in `/opt/3d`, and shouldn't be: evaluation is the project's. The session user owns `/opt/3d`, so they go in with `uv pip install --python /opt/3d/.venv` (r4.f6); the test says how |
 | gsplat's trainer | Not in its wheel; the session wrote a small one on `gsplat.rasterization`, which the test now expects |
 | Step 7's 50% | Cycles averages 27% (each frame denoises and writes a PNG) at 99% peak; the test now reads peak |
+
+**Rerun, 2026-11-15**, on the retuned test after lolay/agent-images#110 (COLMAP's
+packages locked): every check passed in about 65 minutes against 92. Patch match at
+960 px took 26 minutes, not 57. Completeness over camera-visible truth 85.8%,
+accuracy 5.7 mm, camera position RMSE 0.93 mm (`global_mapper`), scene-only
+held-out PSNR 30.0 dB, splats at 1,086 fps. It found:
+
+- The 1.5 m passes aimed at the canopies split the capture into three models again;
+  aimed at about 1.3 m, with the ground behind the trees in frame, all 120
+  registered. The test says so now.
+- OptiX's denoiser needs `/usr/share/nvidia/nvoptix.bin`, which Cloud Run's driver
+  mount lacks; OptiX rendering and OpenImageDenoise on the GPU work.
+- `--target` installs of the metric packages pulled a second PyTorch; the test now
+  installs into `/opt/3d/.venv`, which the session user owns (r4.f6).
+- Ubuntu's Ceres has no CUDA, so the mappers' bundle adjustment is CPU only (144 s
+  for `global_mapper` here). A Ceres built with CUDA in the builder stage is the fix
+  if larger captures need it.
 
 Not measured yet: a session's cold start, so `EXPECTED_SPAWN_SECONDS` stays 300.
 
@@ -1481,7 +1501,7 @@ self-update at start (`CLAUDE_UPGRADE=false`) on the `nightly` types only
 | L4 | Denied 2026-11-13; Gary retries. The images already carry `sm_89`, so an L4 type is an env file |
 | `3d-gpu` scratch | 100 GiB; the spec wants 200. The per-instance quota allows 200, but a volume holds at most 100 and `job-spec.sh` mounts one |
 | Spirula Studio | Vulkan runs on Cloud Run's GPUs, so it can go in `3d-gpu` once its license allows redistributing the binary |
-| `/opt/3d` and project packages | The 3d toolset's `CLAUDE.md` says to add packages with uv in the project, but a project environment can't see `/opt/3d`'s PyTorch. Say `uv pip install --target` (as tests/sessions/3d-gpu.md does) with the next image change, since editing it rebuilds the image |
+| The 3d and gpu toolsets' `CLAUDE.md` | Two lines for the next image change, since editing them rebuilds the image. 3d: a project environment can't see `/opt/3d`'s PyTorch, so add packages to `/opt/3d/.venv` itself (`uv pip install --python /opt/3d/.venv`, as tests/sessions/3d-gpu.md does). gpu: OptiX renders, but its denoiser needs `nvoptix.bin`, which Cloud Run doesn't mount; denoise with OpenImageDenoise on the GPU |
 | `android` spawn time | Not measured: the session test starts once the VM is up. Time a queued session to its first prompt, then set `EXPECTED_SPAWN_SECONDS` (240 now) |
 | Session notice on the `android` VMs | The cost and retire-time notice comes from the Cloud Run session hook; the VMs don't run it yet |
 | Outputs and datasets on the `android` VMs | gcsfuse mounts like the Cloud Run types'; left out of m2, since its test doesn't use them |
