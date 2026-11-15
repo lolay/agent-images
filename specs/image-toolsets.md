@@ -354,7 +354,9 @@ tooling as PyO3 extensions, or Rust splatting like Brush). If that becomes true,
   with compute, EGL, GLX, Vulkan and NVDEC (`agent-gpu-libs`). ffmpeg's NVENC
   encodes on it: the gpu smoke's `h264_nvenc` encode passed in Cloud Run
   (execution `agent-linux-gpu-next-hn5j4`, 2026-11-13), and Blender's Cycles
-  renders with OptiX (the `3d-gpu` session test, 2026-11-14).
+  renders with OptiX (the `3d-gpu` session test, 2026-11-14). OptiX's denoiser
+  doesn't run: it needs `/usr/share/nvidia/nvoptix.bin`, a driver data file the
+  mount lacks (rerun, 2026-11-15). OpenImageDenoise on the GPU does.
 - **CUDA's image hides the graphics libraries.** It sets
   `NVIDIA_DRIVER_CAPABILITIES=compute,utility`, which leaves EGL, GLX, Vulkan,
   NVENC and OptiX out of the driver mount; each GPU type's Dockerfile sets `all`.
