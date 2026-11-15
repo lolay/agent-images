@@ -78,9 +78,12 @@ sys.exit("docker: fake: unexpected call: " + " ".join(args) + "\nSee 'docker --h
 FAKE_CURL = r'''#!/usr/bin/env python3
 # curl for the URLs in FAKE_URLS: "<url>" is a body, "redirect <url>" where a
 # HEAD with -w %{url_effective} lands, and "status <url>" the HTTP errors its
-# first attempts get, one each. Retries follow curl's rules: --retry N retries a
-# transient error (408, 429, 5xx) up to N times, and anything else only with
-# --retry-all-errors, so a 403 without it fails at once (curl exits 22).
+# first attempts get, one each. A status of "partial" sends "partial <url>" and
+# then breaks off (curl exits 56), as a dropped connection does: written to
+# stdout, those bytes stay; with -o, curl starts the file afresh each attempt.
+# Retries follow curl's rules: --retry N retries a transient error (408, 429,
+# 5xx) up to N times, and anything else only with --retry-all-errors, so a 403
+# without it fails at once (curl exits 22).
 import json, os, sys
 args = sys.argv[1:]
 urls = json.load(open(os.environ["FAKE_URLS"]))
@@ -121,6 +124,14 @@ for tries in range(retry + 1):
     status = statuses[n] if n < len(statuses) else (200 if key in urls else 404)
     if status == 200:
         break
+    if status == "partial":
+        if out is not None:
+            open(out, "w").write(urls["partial " + url])
+        else:
+            sys.stdout.write(urls["partial " + url]); sys.stdout.flush()
+        if tries == retry or "--retry-all-errors" not in flags:
+            sys.exit("curl: (56) Recv failure: Connection reset by peer")
+        continue
     transient = status in (408, 429, 500, 502, 503, 504)
     if tries == retry or not (transient or "--retry-all-errors" in flags):
         sys.exit("curl: (22) The requested URL returned error: " + str(status))
@@ -573,6 +584,23 @@ class BlenderTests(unittest.TestCase):
         self.assertIn(f"blender: {BLENDER}/ failed\n", result.stderr)
         self.assertIn(f"blender: the release index from {BLENDER_MIRROR}\n", result.stderr)
         self.assertIn(f"blender: Blender5.10/ from {BLENDER_MIRROR}\n", result.stderr)
+
+    def test_a_transfer_that_breaks_off_leaves_nothing_behind(self):
+        # blender.org sends part of an index naming a series the mirror doesn't
+        # have, then drops the connection on every attempt. Only the mirror's
+        # page may be read, or latest picks the series blender.org half-sent.
+        self.urls[f"partial {BLENDER}/"] = '<a href="Blender9.9/">Blender9.9/</a>\n<a href="Blend'
+        self.urls[f"status {BLENDER}/"] = ["partial"] * 99
+        result = self.blender("latest")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "5.10.1\n")
+        self.assertIn(f"blender: the release index from {BLENDER_MIRROR}\n", result.stderr)
+        out = self.tmp / "blender.sha256"
+        self.urls[f"partial {BLENDER}/Blender5.10/blender-5.10.1.sha256"] = "000  blender-5.10.1-linux"
+        self.urls[f"status {BLENDER}/Blender5.10/blender-5.10.1.sha256"] = ["partial"] * 99
+        result = self.blender("get", "Blender5.10/blender-5.10.1.sha256", str(out))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(out.read_text(), "abc  blender-5.10.1-linux-x64.tar.xz\n")
 
     def test_every_source_refusing_fails(self):
         self.urls = {}

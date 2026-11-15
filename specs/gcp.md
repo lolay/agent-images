@@ -450,7 +450,9 @@ deploys; it only proposes a pull request:
 
 The job summary lists every pin with its locked value, upstream's newest now and its
 issue's state, read with `GITHUB_TOKEN` (the bot has no Issues permission); a closed
-issue reads **closed**: remove the pin?
+issue reads **closed**: remove the pin? A lookup that fails there doesn't fail
+`resolve`, which would skip `propose` for every type: the `unresolved` job turns
+the run red for it instead.
 
 A version that breaks something never reaches `main`: its pull request stays open
 and red once its retries are spent, which is the notification, and the next run that sees `main` or upstream

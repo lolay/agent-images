@@ -33,17 +33,22 @@ die() {
 
 # get <path> [out]: the first source that serves <path>. A source's own retries
 # end before the next is tried, so a mirror only answers when the primary
-# refused every attempt.
+# refused every attempt. Every transfer goes to a temporary file, which curl
+# starts afresh each time, and only the one that succeeded reaches <out> or
+# stdout: a transfer that broke off partway can't leave its bytes in front of
+# the next source's body.
 get() {
-	local path="$1" out="${2:-}" source args=(-fsSL --retry 3 --retry-all-errors)
-	[[ -z "$out" ]] || args+=(-o "$out")
+	local path="$1" out="${2:-}" source part
+	part="$(mktemp)"
 	for source in "${sources[@]}"; do
-		if curl "${args[@]}" "$source/$path"; then
+		if curl -fsSL --retry 3 --retry-all-errors -o "$part" "$source/$path"; then
 			printf 'blender: %s from %s\n' "${path:-the release index}" "$source" >&2
+			if [[ -n "$out" ]]; then mv "$part" "$out"; else cat "$part" && rm -f "$part"; fi
 			return 0
 		fi
 		printf 'blender: %s/%s failed\n' "$source" "$path" >&2
 	done
+	rm -f "$part"
 	die "no source served ${path:-the release index} (${sources[*]})"
 }
 

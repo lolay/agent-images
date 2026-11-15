@@ -56,6 +56,7 @@ jobs:
       body: ${{ steps.decide.outputs.body }}
       candidate: ${{ steps.decide.outputs.candidate }}
       failed: ${{ steps.resolve.outputs.failed }}
+      pins: ${{ steps.pins.outcome }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -133,9 +134,13 @@ jobs:
           fi
       # Every pin with upstream's newest and its issue's state, read with
       # GITHUB_TOKEN (the App has no Issues permission), so a pin whose issue
-      # closed stands out (specs/gcp.md, "Pinning a dependency").
+      # closed stands out (specs/gcp.md, "Pinning a dependency"). A failed
+      # lookup here mustn't fail the job, which would skip propose for every
+      # type: the unresolved job reports it instead.
       - name: Pins
+        id: pins
         if: ${{ !cancelled() }}
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -229,9 +234,10 @@ jobs:
   # A type whose resolve failed was left out of this run's proposal, not the
   # others' (lock-watch run 43715897836). Fail the run naming it, after propose,
   # so a broken resolve is visible without holding back the types that resolved.
+  # A failed pins list is reported here too, for the same reason.
   unresolved:
     needs: [resolve, propose]
-    if: ${{ always() && needs.resolve.outputs.failed != '' }}
+    if: ${{ always() && (needs.resolve.outputs.failed != '' || needs.resolve.outputs.pins == 'failure') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
@@ -239,6 +245,12 @@ jobs:
       - name: Fail
         env:
           FAILED: ${{ needs.resolve.outputs.failed }}
+          PINS: ${{ needs.resolve.outputs.pins }}
         run: |
-          echo "::error title=Lock resolve failed::lock.sh resolve failed for: $FAILED. Their locks weren't proposed this run; the resolve job's log has the error. The other types were proposed as usual."
+          if [[ -n "$FAILED" ]]; then
+            echo "::error title=Lock resolve failed::lock.sh resolve failed for: $FAILED. Their locks weren't proposed this run; the resolve job's log has the error. The other types were proposed as usual."
+          fi
+          if [[ "$PINS" == failure ]]; then
+            echo "::error title=Pins list failed::An upstream lookup for a pin failed; the resolve job's Pins step has the error. The locks were proposed as usual."
+          fi
           exit 1

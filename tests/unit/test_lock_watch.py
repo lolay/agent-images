@@ -853,10 +853,21 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("lock.sh resolve", resolve, "one type at a time, in lock-watch.sh")
         unresolved = watch.split("\n  unresolved:\n", 1)[1]
         self.assertIn("needs: [resolve, propose]", unresolved)
-        self.assertIn("if: ${{ always() && needs.resolve.outputs.failed != '' }}", unresolved)
+        self.assertIn("if: ${{ always() && (needs.resolve.outputs.failed != '' || "
+                      "needs.resolve.outputs.pins == 'failure') }}", unresolved)
         self.assertIn("exit 1", unresolved)
         self.assertIn("permissions: {}", unresolved)
         self.assertNotIn("secrets.", unresolved)
+
+    def test_a_failed_pins_list_does_not_skip_propose(self):
+        # Pins is resolve's last step: failing the job would skip propose for
+        # every type, so it reports through the unresolved job instead.
+        watch = (REPO / ".github/workflows/lock-watch.yml").read_text()
+        resolve = watch.split("\n  propose:\n", 1)[0]
+        pins = resolve.split("- name: Pins\n", 1)[1]
+        self.assertIn("id: pins", pins)
+        self.assertIn("continue-on-error: true", pins)
+        self.assertIn("pins: ${{ steps.pins.outcome }}", resolve)
 
     def test_the_weekly_schedule_is_the_one_the_class_step_reads(self):
         watch = (REPO / ".github/workflows/lock-watch.yml").read_text()
