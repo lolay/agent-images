@@ -6,7 +6,10 @@
 #   lock.sh resolve <type>        print a candidate lock, resolved from upstream
 #                                 now (Linux only: Docker, Homebrew, curl, jq)
 #   lock.sh bake-args <type>      print the lock as `docker buildx bake --set`
-#                                 values, one per line (the bake-action's `set`)
+#                                 values, one per line (the bake-action's `set`),
+#                                 and APT_PINS, name=version@id, from the
+#                                 type's package lists
+#                                 (images/cloud/base/apt-pins.sh)
 #   lock.sh diff <old> <new>      print what moved, one line each, nothing if equal
 #   lock.sh summary <old> <new>   one line for a title: `claude 2.1.318, go
 #                                 1.27.4, apt 3 packages`
@@ -23,6 +26,12 @@
 #   apt <package> <version>          what apt resolves the type's packages to
 #   apt-floating <package> <version> one from a source with no snapshot
 #                                    (NVIDIA's CUDA repo): recorded, not pinned
+#   apt-pin-snapshot <package> <version>@<id>
+#                                    a pin that names the snapshot its version
+#                                    comes from. A record: the build reads it
+#                                    from the list, as it does the version. Its
+#                                    own line, since a version the base image
+#                                    already has gets no apt line
 #   claude - <version>               Claude Code
 #   rust - <version>                 the Rust toolchain, if the type has rust
 #   terraform - <version>            Terraform, if the type has terraform
@@ -37,7 +46,8 @@
 #
 # Each value is resolved within the constraint declared where the dependency
 # lives: BASE_IMAGE and CLAUDE_VERSION in docker-bake.hcl, packages.txt and
-# build-packages.txt lines (name=version pins one), RUST_TOOLCHAIN, TERRAFORM_VERSION, TFLINT_VERSION,
+# build-packages.txt lines (name=version pins one, and `snapshot=<id>` in its
+# `# pinned:` comment takes that version from that snapshot), RUST_TOOLCHAIN, TERRAFORM_VERSION, TFLINT_VERSION,
 # VIRTUALGL_VERSION and BLENDER_VERSION in their toolsets' install.sh, and
 # COLMAP_VERSION in the 3d toolset's build-colmap.sh. The apt snapshot moves only
 # when what apt resolves today differs from what the lock recorded.
@@ -268,52 +278,107 @@ resolve_base() {
 	printf 'base - %s@%s\n' "$constraint" "$digest"
 }
 
-# packages_of <type>: the apt packages the type's image asks for: the base's
-# list, then each toolset's packages.txt and build-packages.txt (what a builder
-# stage installs, whose runtime libraries the image keeps at those versions).
-packages_of() {
+# package_lines <type>: the lines of every apt list the type's image installs,
+# comments included: the base's list, then each toolset's packages.txt and
+# build-packages.txt (what a builder stage installs, whose runtime libraries the
+# image keeps at those versions).
+package_lines() {
 	local toolset list
-	{
-		cat images/cloud/base/packages.txt
-		while read -r toolset; do
-			for list in packages.txt build-packages.txt; do
-				[[ ! -f "images/toolsets/$toolset/$list" ]] || cat "images/toolsets/$toolset/$list"
-			done
-		done < <(cloud_toolsets "$1")
-	} | sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d'
+	cat images/cloud/base/packages.txt
+	while read -r toolset; do
+		for list in packages.txt build-packages.txt; do
+			[[ ! -f "images/toolsets/$toolset/$list" ]] || cat "images/toolsets/$toolset/$list"
+		done
+	done < <(cloud_toolsets "$1")
 }
+
+# packages_of <type>: the apt packages the type's image asks for, as the build
+# reads them (install-toolset.sh's install_apt).
+packages_of() { package_lines "$1" | sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d'; }
+
+# apt_pins_of <type>: each pin whose `# pinned:` comment names its snapshot
+# (`name=version  # pinned: <issue URL> snapshot=<id>`), as name=version@id, one
+# per line: the list images/cloud/base/apt-pins.sh takes. The builds read the
+# line as an ordinary pin, the comment stripped.
+apt_pins_of() {
+	local line package snapshot
+	while IFS= read -r line; do
+		[[ "$line" == *'#'*snapshot=* ]] || continue
+		package="${line%%#*}"
+		package="${package//[[:space:]]/}"
+		[[ -n "$package" ]] || continue
+		[[ "${line#*#}" =~ (^|[[:space:]])snapshot=([^[:space:]]*) ]] ||
+			die "$1: '$line': snapshot= is a word of its own in the comment"
+		snapshot="${BASH_REMATCH[2]}"
+		[[ "$package" =~ ^[a-z0-9][a-z0-9.+-]*=[^=@]+$ ]] ||
+			die "$1: '$line': a snapshot needs a name=version pin"
+		[[ "$snapshot" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] ||
+			die "$1: '$line': '$snapshot' isn't a snapshot id (YYYYMMDDTHHMMSSZ)"
+		printf '%s@%s\n' "$package" "$snapshot"
+	done < <(package_lines "$1")
+}
+
+# apt_pins <type>: the type's APT_PINS, for the resolve and the build alike: one
+# per identical pin, since a package can be in two lists (curl, in the base's and
+# core's); apt-pins.sh still refuses two that differ.
+apt_pins() { apt_pins_of "$1" | LC_ALL=C sort -u; }
 
 # resolve_apt <type> <base ref> <old lock or empty>: what apt resolves the type's
 # packages to today, in a stock container at the locked base digest, and the
-# snapshot that holds it: the old one if nothing moved, else now.
+# snapshot that holds it: the old one if nothing moved, else now. A pin that
+# names its snapshot resolves against that snapshot too, added the way the build
+# adds it (images/cloud/base/apt-pins.sh).
 resolve_apt() {
-	local type="$1" base="$2" old="$3" packages now resolved
+	local type="$1" base="$2" old="$3" packages pins newest_pin now resolved
 	mapfile -t packages < <(packages_of "$type")
+	# Assigned, not read through <(...): a bad pin's die has to stop the resolve.
+	pins="$(apt_pins "$type")"
 	now="${LOCK_NOW:-$(date -u +%Y%m%dT%H%M%SZ)}"
 	# --entrypoint: CUDA's entrypoint prints a banner on stdout. apt-build.conf
 	# fails the update when part of the archive doesn't download, rather than
 	# resolving without it. --mount, unlike -v, refuses a missing source.
+	# With pins: snapshot.ubuntu.com is HTTPS only and the stock image has no CA
+	# certificates, so ca-certificates comes from today's archive first, as in
+	# the build, and the simulation reads the package state saved before it, so
+	# the lock still lists what the build installs.
 	resolved="$(docker run --rm --entrypoint /bin/bash \
 		--mount "type=bind,source=$PWD/images/cloud/base/apt-build.conf,target=/tmp/apt-build.conf,readonly" \
-		-e APT_CONFIG=/tmp/apt-build.conf -e PACKAGES="${packages[*]}" "$base" -c '
+		--mount "type=bind,source=$PWD/images/cloud/base/apt-pins.sh,target=/tmp/apt-pins.sh,readonly" \
+		-e APT_CONFIG=/tmp/apt-build.conf -e APT_PINS="${pins//$'\n'/ }" -e PACKAGES="${packages[*]}" "$base" -c '
 		set -euo pipefail
+		status=/var/lib/dpkg/status
+		if [[ -n "$APT_PINS" ]]; then
+			cp "$status" /tmp/dpkg-status
+			status=/tmp/dpkg-status
+			apt-get update -q >/tmp/update.log 2>&1 || { cat /tmp/update.log >&2; exit 1; }
+			DEBIAN_FRONTEND=noninteractive apt-get install -q -y --no-install-recommends ca-certificates >/tmp/install.log 2>&1 ||
+				{ cat /tmp/install.log >&2; exit 1; }
+			# shellcheck disable=SC2086 # a list of pins
+			bash /tmp/apt-pins.sh install $APT_PINS
+		fi
 		apt-get update -q >/tmp/update.log 2>&1 || { cat /tmp/update.log >&2; exit 1; }
 		# shellcheck disable=SC2086 # a list of names
-		apt-get install --simulate --no-install-recommends $PACKAGES | sed -n "s/^Inst //p"')" ||
+		apt-get install --simulate --no-install-recommends -o Dir::State::status="$status" $PACKAGES | sed -n "s/^Inst //p"')" ||
 		die "apt couldn't resolve $type's packages in $base"
 	# Inst <name> [<installed>] (<version> <origin>[, <origin>...] [<arch>])
 	resolved="$(sed -E 's/^([^ ]+) (\[[^]]*\] )?\(([^ ]+) (.*) \[[^]]*\]\).*/\1 \3 \4/' <<<"$resolved" |
 		awk '{kind = ($3 ~ /^Ubuntu:/) ? "apt" : "apt-floating"; print kind, $1, $2}' | LC_ALL=C sort)"
 	[[ -n "$resolved" ]] || die "apt resolved nothing for $type"
+	# The old snapshot stays only if no pin's snapshot is newer: the build
+	# refuses one that is (apt-pins.sh), since its whole index is a source.
+	# Snapshot ids are timestamps, so they sort as text.
+	newest_pin="$(sed -n 's/.*@//p' <<<"$pins" | LC_ALL=C sort | tail -n 1)"
 	if [[ -n "$old" ]] && [[ "$(lock_value "$old" base)" == "$base" ]] &&
-		[[ "$(grep -E '^apt(-floating)? ' "$old" | LC_ALL=C sort)" == "$resolved" ]]; then
+		[[ "$(grep -E '^apt(-floating)? ' "$old" | LC_ALL=C sort)" == "$resolved" ]] &&
+		! [[ "$newest_pin" > "$(lock_value "$old" apt-snapshot)" ]]; then
 		printf 'apt-snapshot - %s\n' "$(lock_value "$old" apt-snapshot)"
 	else
 		printf 'apt-snapshot - %s\n' "$now"
 	fi
 	printf '%s\n' "$resolved"
-	# A name=version line pins that package.
+	# A name=version line pins that package, and its snapshot, if it names one.
 	packages_of "$type" | sed -n -E 's/^([a-z0-9.+-]+)=.*/pinned apt\/\1 -/p'
+	[[ -z "$pins" ]] || sed -E 's/^([^=]+)=(.*)$/apt-pin-snapshot \1 \2/' <<<"$pins"
 }
 
 # resolve_brew <type>: every formula the type's Brewfiles install, dependencies
@@ -389,10 +454,14 @@ cmd_resolve() {
 
 # The build arguments a lock sets, by line kind. `*` reaches every target in the
 # type's graph; each argument is read by the one Dockerfile or install.sh that
-# declares it.
+# declares it. APT_PINS comes from the package lists, not the lock, the way
+# install_apt takes a pin's version: a pin needs no resolving, and a pull
+# request that adds one builds with it before the watch re-locks main.
 cmd_bake_args() {
-	local file kind name value
+	local file kind name value pins
 	file="$(lock_file "$1")"
+	# First, so a bad pin fails before anything is printed.
+	pins="$(apt_pins "$1")"
 	[[ -f "$file" ]] || die "no lock for $1 ($file): cloud-build resolves a new type's lock on its pull request for the author to commit (AGENTS.md)"
 	for kind in base apt-snapshot claude; do
 		[[ -n "$(lock_value "$file" "$kind")" ]] || die "$file has no $kind line"
@@ -405,10 +474,11 @@ cmd_bake_args() {
 		rust) printf '*.args.RUST_TOOLCHAIN=%s\n' "$value" ;;
 		terraform) printf '*.args.TERRAFORM_VERSION=%s\n' "$value" ;;
 		release) printf '*.args.%s_VERSION=%s\n' "$(tr '[:lower:]-' '[:upper:]_' <<<"$name")" "$value" ;;
-		apt | apt-floating | brew | pinned | \#*) ;;
+		apt | apt-floating | apt-pin-snapshot | brew | pinned | \#*) ;;
 		*) die "$file: unknown line kind '$kind'" ;;
 		esac
 	done < <(grep -v '^#' "$file")
+	[[ -z "$pins" ]] || printf '*.args.APT_PINS=%s\n' "${pins//$'\n'/ }"
 }
 
 # entries <file>: `<kind> <name> <value>` without the header.
@@ -430,7 +500,12 @@ cmd_summary() {
 			kind = substr(key, 1, index(key, "/") - 1)
 			name = substr(key, index(key, "/") + 1)
 		}
-		kind == "apt" || kind == "apt-floating" { apt++; next }
+		# A package counts once, whichever of its lines moved: a pin whose
+		# version the base already has has no apt line, only its pin line.
+		kind == "apt" || kind == "apt-floating" || kind == "apt-pin-snapshot" {
+			if (!(name in moved)) { moved[name] = 1; apt++ }
+			next
+		}
 		kind == "apt-snapshot" || kind == "pinned" { next }
 		{
 			if (name == "-") name = kind
@@ -447,10 +522,17 @@ cmd_summary() {
 		}'
 }
 
-# pinned_value <file> <what>: the locked value a `pinned <what>` line holds.
+# pinned_value <file> <what>: the locked value a `pinned <what>` line holds. An
+# apt pin the base image already satisfies has no apt line; its
+# apt-pin-snapshot line holds the version.
 pinned_value() {
+	local value
 	case "$2" in
-	apt/*) lock_value "$1" apt "${2#apt/}" ;;
+	apt/*)
+		value="$(lock_value "$1" apt "${2#apt/}")"
+		[[ -n "$value" ]] || value="$(lock_value "$1" apt-pin-snapshot "${2#apt/}")"
+		printf '%s' "${value%@*}"
+		;;
 	tflint | virtualgl | colmap | blender) lock_value "$1" release "$2" ;;
 	*) lock_value "$1" "$2" ;;
 	esac

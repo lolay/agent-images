@@ -47,7 +47,9 @@ install_apt() {
 	((${#packages[@]} > 0)) || return 0
 	log "installing ${#packages[@]} apt packages"
 	apt update
-	apt install -y --no-install-recommends "${packages[@]}"
+	# --allow-downgrades: a pin from an older snapshot can be below what's
+	# installed (images/cloud/base/apt-pins.sh).
+	apt install -y --no-install-recommends --allow-downgrades "${packages[@]}"
 	apt clean
 	if [[ "${APT_DROP_LISTS:-false}" == "true" ]]; then
 		sudo rm -rf /var/lib/apt/lists/*
