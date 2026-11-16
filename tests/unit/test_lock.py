@@ -704,6 +704,19 @@ class ReadTests(unittest.TestCase):
                 self.assertIn(f"has no {kind} line", result.stderr)
                 self.assertEqual(result.stdout, "")
 
+    def test_path_names_the_lock_whether_or_not_it_exists(self):
+        self.write("linux/versions.lock", self.LOCK)
+        for type_ in ("linux", "newtype"):
+            with self.subTest(type_):
+                result = self.run_lock("path", type_)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, f"{self.tmp}/{type_}/versions.lock\n")
+        for args in (("path",), ("path", "../linux"), ("path", "linux", "x")):
+            with self.subTest(args):
+                result = self.run_lock(*args)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stdout, "")
+
     def test_bake_args_refuses_an_unknown_kind(self):
         self.write("linux/versions.lock", self.LOCK + "npm left-pad 1.3.0\n")
         result = self.run_lock("bake-args", "linux")

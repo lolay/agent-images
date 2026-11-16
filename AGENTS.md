@@ -31,9 +31,14 @@ namespaces without their setuid helpers. Don't try. What needs it is CI's:
   installs from the locked snapshot, and a toolchain with no lock line takes its
   `install.sh` default.
 
-The exception is a new runner type: it has no lock, so cloud-build fails until one is
-seeded with `make cloud-lock TYPE=<type> WRITE=1` on a host with Docker. Say so in the
-pull request.
+A new runner type has no lock, and the watch only resolves types on `main`. Don't
+write one: cloud-build resolves it on the pull request (`scripts/cloud/new-lock.sh`),
+uploads it as the artifact `versions-lock-<type>`, and fails that type's build with
+the command to fetch it in the job summary. Run that command (`gh run download <run
+id> --repo lolay/agent-images --name versions-lock-<type> --dir
+images/cloud/<type>`), commit the file unedited at `images/cloud/<type>/versions.lock`,
+and push; the rerun builds from it. A type that already has a lock is never
+re-resolved there.
 
 In your report, don't list the build or the lock as something you couldn't do. Say the
 image build runs in cloud-build on the pull request, and if one is open, give its gate
