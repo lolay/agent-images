@@ -24,9 +24,9 @@ class AptPinsTests(unittest.TestCase):
         (self.root / "etc").mkdir()
         (self.root / "etc/os-release").write_text('NAME="Ubuntu"\nVERSION_ID="24.04"\nVERSION_CODENAME=noble\n')
 
-    def run_pins(self, *args):
+    def run_pins(self, *args, **env):
         return subprocess.run(["bash", str(SCRIPT), *args], capture_output=True, text=True, timeout=30,
-                              env={"PATH": "/usr/bin:/bin", "APT_PINS_ROOT": str(self.root)})
+                              env={"PATH": "/usr/bin:/bin", "APT_PINS_ROOT": str(self.root), **env})
 
     def read(self, name):
         return (self.root / name).read_text()
@@ -72,6 +72,17 @@ class AptPinsTests(unittest.TestCase):
                 self.assertFalse((self.root / SOURCES).exists())
                 self.assertFalse((self.root / PREFERENCES).exists())
 
+    def test_a_pin_snapshot_newer_than_the_builds_is_refused(self):
+        # Its whole index is a source: newer versions of every other package.
+        pins = ("cmake=3.28.3-1build7@20250601T120000Z", "openssl=1@20260101T000000Z")
+        result = self.run_pins("install", *pins, APT_SNAPSHOT="20251231T235959Z")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("20260101T000000Z is newer than the build's snapshot, 20251231T235959Z", result.stderr)
+        self.assertFalse((self.root / SOURCES).exists())
+        for snapshot in ("20260101T000000Z", "20261101T000000Z"):
+            with self.subTest(snapshot):
+                self.assertEqual(self.run_pins("install", *pins, APT_SNAPSHOT=snapshot).returncode, 0)
+
     def test_a_package_pinned_twice_is_refused(self):
         result = self.run_pins("install", "openssl=1@20260101T000000Z", "openssl=2@20250101T000000Z")
         self.assertEqual(result.returncode, 1)
@@ -103,7 +114,7 @@ class BuildUsesPinsTests(unittest.TestCase):
         base = self.text("images/cloud/base/Dockerfile")
         self.assertIn("source=images/cloud/base/apt-pins.sh,target=/tmp/apt-pins.sh", base)
         self.assertRegex(base, r"(?m)^ARG APT_PINS$")
-        pins = base.find("bash /tmp/apt-pins.sh install $APT_PINS")
+        pins = base.find('APT_SNAPSHOT="$APT_SNAPSHOT" bash /tmp/apt-pins.sh install $APT_PINS')
         self.assertNotEqual(pins, -1)
         self.assertLess(base.index("/etc/apt/apt.conf.d/50agent-snapshot"), pins)
         self.assertNotEqual(base.find("apt-get update", pins), -1, "no update after the pins")

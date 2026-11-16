@@ -26,7 +26,7 @@ FROM ${BASE_IMAGE}
 # APT_PINS is the lock's pins that name their own snapshot: apt-pins.sh adds
 # each snapshot as a source and makes the pinned version the candidate for that
 # package alone, here and in every toolset layer (the runner stage removes them
-# too). --allow-downgrades, here and in every toolset's install: such a pin can
+# too). It refuses a pin's snapshot newer than APT_SNAPSHOT. --allow-downgrades, here and in every toolset's install: such a pin can
 # be older than what's installed (openssl, which ca-certificates brought in
 # from today's archive).
 ARG APT_SNAPSHOT
@@ -39,7 +39,7 @@ RUN --mount=type=bind,source=images/cloud/base/packages.txt,target=/tmp/base-pac
 	&& apt-get update \
 	&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates \
 	&& printf 'APT::Snapshot "%s";\n' "$APT_SNAPSHOT" >/etc/apt/apt.conf.d/50agent-snapshot \
-	&& bash /tmp/apt-pins.sh install $APT_PINS \
+	&& APT_SNAPSHOT="$APT_SNAPSHOT" bash /tmp/apt-pins.sh install $APT_PINS \
 	&& apt-get update \
 	&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --allow-downgrades \
 		$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' /tmp/base-packages.txt) \

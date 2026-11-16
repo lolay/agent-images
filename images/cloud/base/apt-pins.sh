@@ -8,7 +8,9 @@
 #
 #   apt-pins.sh install [<name>=<version>@<snapshot>...]
 #       one source per snapshot, one preference per package; with no pins,
-#       nothing (and no files)
+#       nothing (and no files). With APT_SNAPSHOT set (the build's), a pin's
+#       snapshot newer than it is refused: the source is the snapshot's whole
+#       index, which would then offer newer versions of every other package.
 #   apt-pins.sh remove
 #       deletes both files
 #
@@ -40,7 +42,9 @@ install_pins() {
 	for pin in "$@"; do
 		[[ "$pin" =~ ^([a-z0-9][a-z0-9.+-]*)=([^=@[:space:]]+)@([0-9]{8}T[0-9]{6}Z)$ ]] ||
 			die "'$pin' isn't <name>=<version>@<snapshot>"
-		name="${BASH_REMATCH[1]}"
+		name="${BASH_REMATCH[1]}" snapshot="${BASH_REMATCH[3]}"
+		[[ -z "${APT_SNAPSHOT:-}" ]] || ! [[ "$snapshot" > "$APT_SNAPSHOT" ]] ||
+			die "$pin: $snapshot is newer than the build's snapshot, $APT_SNAPSHOT (lock.sh resolve moves it)"
 		[[ -z "${seen[$name]:-}" ]] || die "$name is pinned twice"
 		seen[$name]=1
 	done

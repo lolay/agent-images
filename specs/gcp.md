@@ -350,8 +350,13 @@ snapshot as an extra source (`https://snapshot.ubuntu.com/ubuntu/<id>/`, with
 `Snapshot: no` so the type's `APT::Snapshot` doesn't move it too) and a
 `/etc/apt/preferences.d` entry per pinned package (`Pin: version`, priority 1001),
 in the base layer before its snapshot update, so every toolset layer and builder
-stage installs that version. Nothing else is pinned: an older snapshot holds no
-newer version of any other package, so they still come from the type's snapshot.
+stage installs that version. Nothing else is pinned: the source is the pin
+snapshot's whole index, but a snapshot no newer than the type's holds no newer
+version of any other package, so they still come from the type's snapshot. That
+ordering is enforced: the resolve keeps the old type snapshot only if no pin's is
+newer, and `apt-pins.sh` refuses a pin snapshot newer than the build's
+`APT_SNAPSHOT`. The same pin on a package in two lists (`curl`, in the base's and
+core's) counts once; two pins that differ fail the build.
 Priority 1001 and `--allow-downgrades` on every package list's install let a pin
 sit below what's installed (`openssl`, which `ca-certificates` brought in from
 today's archive). The runner stage removes both files with the other apt settings.

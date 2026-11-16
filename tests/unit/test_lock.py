@@ -496,6 +496,31 @@ class ResolveTests(unittest.TestCase):
         self.assertIn(f"*.args.APT_PINS=libssl3t64=3.0.13-0ubuntu3.6@{self.JANUARY} "
                       f"openssl=3.0.13-0ubuntu3.6@{self.JANUARY}", result.stdout.splitlines())
 
+    def test_the_same_pin_in_two_lists_counts_once(self):
+        # curl is in the base's list and core's; apt-pins.sh refuses a package
+        # pinned twice, so identical pins reach it once.
+        pin = f"curl=8.5.0-2ubuntu10.1 # pinned: - snapshot={self.JANUARY}\n"
+        self.apt_snapshots = {self.JANUARY: ["curl (8.5.0-2ubuntu10.1 Ubuntu:24.04/noble-updates [amd64])"]}
+        self.edit("images/cloud/base/packages.txt", "curl\n", pin)
+        self.edit("images/toolsets/core/packages.txt", "curl\n", pin)
+        entries = self.entries(self.resolve())
+        self.assertEqual([line for line in entries if line.startswith("apt-pin-snapshot ")],
+                         [f"apt-pin-snapshot curl 8.5.0-2ubuntu10.1@{self.JANUARY}"])
+        self.assertIn(f"env APT_PINS=curl=8.5.0-2ubuntu10.1@{self.JANUARY}", self.log.read_text().splitlines())
+
+    def test_a_pin_snapshot_newer_than_the_locked_one_moves_it(self):
+        # The build refuses a pin snapshot newer than the type's: its whole index
+        # is a source. So the old snapshot stays only if it's at least as new.
+        self.pin_openssl(f" # pinned: - snapshot={self.JANUARY}")
+        first = self.resolve()
+        for locked, expected in (("20251201T000000Z", "20261107T000000Z"),
+                                 (self.JANUARY, self.JANUARY),
+                                 ("20260201T000000Z", "20260201T000000Z")):
+            with self.subTest(locked):
+                self.write_lock("linux", first.replace("apt-snapshot - 20261106T220000Z", f"apt-snapshot - {locked}"))
+                again = self.resolve(LOCK_NOW="20261107T000000Z")
+                self.assertIn(f"apt-snapshot - {expected}", self.entries(again))
+
     def test_a_pin_to_a_replaced_version_without_its_snapshot_fails(self):
         # The gap the snapshot closes: today's archive no longer has the version.
         self.pin_openssl("  # pinned: https://github.com/lolay/agent-images/issues/1")

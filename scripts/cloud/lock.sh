@@ -322,10 +322,12 @@ apt_pins_of() {
 # names its snapshot resolves against that snapshot too, added the way the build
 # adds it (images/cloud/base/apt-pins.sh).
 resolve_apt() {
-	local type="$1" base="$2" old="$3" packages pins now resolved
+	local type="$1" base="$2" old="$3" packages pins newest_pin now resolved
 	mapfile -t packages < <(packages_of "$type")
 	# Assigned, not read through <(...): a bad pin's die has to stop the resolve.
-	pins="$(apt_pins_of "$type")"
+	# One per identical pin: a package can be in two lists (curl, in the base's
+	# and core's); apt-pins.sh still refuses two that differ.
+	pins="$(apt_pins_of "$type" | LC_ALL=C sort -u)"
 	now="${LOCK_NOW:-$(date -u +%Y%m%dT%H%M%SZ)}"
 	# --entrypoint: CUDA's entrypoint prints a banner on stdout. apt-build.conf
 	# fails the update when part of the archive doesn't download, rather than
@@ -357,8 +359,13 @@ resolve_apt() {
 	resolved="$(sed -E 's/^([^ ]+) (\[[^]]*\] )?\(([^ ]+) (.*) \[[^]]*\]\).*/\1 \3 \4/' <<<"$resolved" |
 		awk '{kind = ($3 ~ /^Ubuntu:/) ? "apt" : "apt-floating"; print kind, $1, $2}' | LC_ALL=C sort)"
 	[[ -n "$resolved" ]] || die "apt resolved nothing for $type"
+	# The old snapshot stays only if no pin's snapshot is newer: the build
+	# refuses one that is (apt-pins.sh), since its whole index is a source.
+	# Snapshot ids are timestamps, so they sort as text.
+	newest_pin="$(sed -n 's/.*@//p' <<<"$pins" | LC_ALL=C sort | tail -n 1)"
 	if [[ -n "$old" ]] && [[ "$(lock_value "$old" base)" == "$base" ]] &&
-		[[ "$(grep -E '^apt(-floating)? ' "$old" | LC_ALL=C sort)" == "$resolved" ]]; then
+		[[ "$(grep -E '^apt(-floating)? ' "$old" | LC_ALL=C sort)" == "$resolved" ]] &&
+		! [[ "$newest_pin" > "$(lock_value "$old" apt-snapshot)" ]]; then
 		printf 'apt-snapshot - %s\n' "$(lock_value "$old" apt-snapshot)"
 	else
 		printf 'apt-snapshot - %s\n' "$now"
