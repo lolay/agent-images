@@ -315,8 +315,9 @@ terraform - 1.17.1
 
 `apt-floating` marks a package from a source with no snapshot (NVIDIA's CUDA
 repo; none today), `apt-pin-snapshot <package> <version>@<id>` a pin that names
-the snapshot its version comes from (its own line: a version the base image
-already has gets no `apt` line), and `pinned <what> <issue URL>` a pin
+the snapshot its version comes from (a record, since the build reads the pin from
+its list; its own line, since a version the base image already has gets no `apt`
+line), and `pinned <what> <issue URL>` a pin
 ([below](#pinning-a-dependency)).
 
 | Dependency | Locked as | Constraint, where it's declared | Resolved by (from upstream only) |
@@ -355,8 +356,12 @@ the stock `ubuntu:24.04` image has no CA certificates, so the base first install
 sets the snapshot. The runner stage drops the setting, so a session's own apt
 reads today's archive.
 
-A pin that names its own snapshot (`apt-pin-snapshot` lines) reaches the build as
-`APT_PINS`, `name=version@id` each. `images/cloud/base/apt-pins.sh` adds each
+A pin that names its own snapshot reaches the build as `APT_PINS`,
+`name=version@id` each, which `lock.sh bake-args` reads from the type's package
+lists, not the lock, the way `install_apt` takes a pin's version: a pin needs no
+resolving, and a pull request that adds one builds with it before the watch
+re-locks `main`. The lock's `apt-pin-snapshot` lines record it for `diff`,
+`summary` and `pins`. `images/cloud/base/apt-pins.sh` adds each
 snapshot as an extra source (`https://snapshot.ubuntu.com/ubuntu/<id>/`, with
 `Snapshot: no` so the type's `APT::Snapshot` doesn't move it too) and a
 `/etc/apt/preferences.d` entry per pinned package (`Pin: version`, priority 1001),
@@ -366,7 +371,9 @@ snapshot's whole index, but a snapshot no newer than the type's holds no newer
 version of any other package, so they still come from the type's snapshot. That
 ordering is enforced: the resolve keeps the old type snapshot only if no pin's is
 newer, and `apt-pins.sh` refuses a pin snapshot newer than the build's
-`APT_SNAPSHOT`. The same pin on a package in two lists (`curl`, in the base's and
+`APT_SNAPSHOT`. In the pull request that adds a pin, that's the type's current
+lock, so name a snapshot no newer than its `apt-snapshot` line (a pin back to a
+replaced version always is). The same pin on a package in two lists (`curl`, in the base's and
 core's) counts once; two pins that differ fail the build.
 Priority 1001 and `--allow-downgrades` on every package list's install let a pin
 sit below what's installed (`openssl`, which `ca-certificates` brought in from

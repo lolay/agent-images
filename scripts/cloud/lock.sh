@@ -6,9 +6,9 @@
 #   lock.sh resolve <type>        print a candidate lock, resolved from upstream
 #                                 now (Linux only: Docker, Homebrew, curl, jq)
 #   lock.sh bake-args <type>      print the lock as `docker buildx bake --set`
-#                                 values, one per line (the bake-action's `set`):
-#                                 APT_PINS, name=version@id, from its
-#                                 apt-pin-snapshot lines
+#                                 values, one per line (the bake-action's `set`),
+#                                 and APT_PINS, name=version@id, from the
+#                                 type's package lists
 #                                 (images/cloud/base/apt-pins.sh)
 #   lock.sh diff <old> <new>      print what moved, one line each, nothing if equal
 #   lock.sh summary <old> <new>   one line for a title: `claude 2.1.318, go
@@ -28,8 +28,9 @@
 #                                    (NVIDIA's CUDA repo): recorded, not pinned
 #   apt-pin-snapshot <package> <version>@<id>
 #                                    a pin that names the snapshot its version
-#                                    comes from: the build's APT_PINS. Its own
-#                                    line, since a version the base image
+#                                    comes from. A record: the build reads it
+#                                    from the list, as it does the version. Its
+#                                    own line, since a version the base image
 #                                    already has gets no apt line
 #   claude - <version>               Claude Code
 #   rust - <version>                 the Rust toolchain, if the type has rust
@@ -317,6 +318,11 @@ apt_pins_of() {
 	done < <(package_lines "$1")
 }
 
+# apt_pins <type>: the type's APT_PINS, for the resolve and the build alike: one
+# per identical pin, since a package can be in two lists (curl, in the base's and
+# core's); apt-pins.sh still refuses two that differ.
+apt_pins() { apt_pins_of "$1" | LC_ALL=C sort -u; }
+
 # resolve_apt <type> <base ref> <old lock or empty>: what apt resolves the type's
 # packages to today, in a stock container at the locked base digest, and the
 # snapshot that holds it: the old one if nothing moved, else now. A pin that
@@ -326,9 +332,7 @@ resolve_apt() {
 	local type="$1" base="$2" old="$3" packages pins newest_pin now resolved
 	mapfile -t packages < <(packages_of "$type")
 	# Assigned, not read through <(...): a bad pin's die has to stop the resolve.
-	# One per identical pin: a package can be in two lists (curl, in the base's
-	# and core's); apt-pins.sh still refuses two that differ.
-	pins="$(apt_pins_of "$type" | LC_ALL=C sort -u)"
+	pins="$(apt_pins "$type")"
 	now="${LOCK_NOW:-$(date -u +%Y%m%dT%H%M%SZ)}"
 	# --entrypoint: CUDA's entrypoint prints a banner on stdout. apt-build.conf
 	# fails the update when part of the archive doesn't download, rather than
@@ -450,11 +454,14 @@ cmd_resolve() {
 
 # The build arguments a lock sets, by line kind. `*` reaches every target in the
 # type's graph; each argument is read by the one Dockerfile or install.sh that
-# declares it. apt-pin-snapshot lines become one APT_PINS, name=version@id each
-# (images/cloud/base/apt-pins.sh).
+# declares it. APT_PINS comes from the package lists, not the lock, the way
+# install_apt takes a pin's version: a pin needs no resolving, and a pull
+# request that adds one builds with it before the watch re-locks main.
 cmd_bake_args() {
-	local file kind name value pins=()
+	local file kind name value pins
 	file="$(lock_file "$1")"
+	# First, so a bad pin fails before anything is printed.
+	pins="$(apt_pins "$1")"
 	[[ -f "$file" ]] || die "no lock for $1 ($file): cloud-build resolves a new type's lock on its pull request for the author to commit (AGENTS.md)"
 	for kind in base apt-snapshot claude; do
 		[[ -n "$(lock_value "$file" "$kind")" ]] || die "$file has no $kind line"
@@ -467,12 +474,11 @@ cmd_bake_args() {
 		rust) printf '*.args.RUST_TOOLCHAIN=%s\n' "$value" ;;
 		terraform) printf '*.args.TERRAFORM_VERSION=%s\n' "$value" ;;
 		release) printf '*.args.%s_VERSION=%s\n' "$(tr '[:lower:]-' '[:upper:]_' <<<"$name")" "$value" ;;
-		apt-pin-snapshot) pins+=("$name=$value") ;;
-		apt | apt-floating | brew | pinned | \#*) ;;
+		apt | apt-floating | apt-pin-snapshot | brew | pinned | \#*) ;;
 		*) die "$file: unknown line kind '$kind'" ;;
 		esac
 	done < <(grep -v '^#' "$file")
-	((${#pins[@]} == 0)) || printf '*.args.APT_PINS=%s\n' "${pins[*]}"
+	[[ -z "$pins" ]] || printf '*.args.APT_PINS=%s\n' "${pins//$'\n'/ }"
 }
 
 # entries <file>: `<kind> <name> <value>` without the header.

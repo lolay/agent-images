@@ -800,6 +800,67 @@ class BlenderTests(unittest.TestCase):
         self.assertIn("lock: couldn't read Blender's newest release", result.stderr)
 
 
+class PinBakeArgsTests(unittest.TestCase):
+    """bake-args takes APT_PINS from the type's package lists, as install_apt takes
+    a pin's version: a pull request that adds a snapshot pin builds with it while
+    its lock is still main's (no Docker needed)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.repo = self.tmp / "repo"
+        for name in ("images/cloud", "images/toolsets", "infra/gcp", "scripts/cloud", "hooks/gcp"):
+            shutil.copytree(REPO / name, self.repo / name)
+        self.locks = self.tmp / "locks"
+        (self.locks / "linux").mkdir(parents=True)
+        # main's lock: no pin lines at all.
+        (self.locks / "linux/versions.lock").write_text(ReadTests.LOCK)
+
+    def add(self, list_name, old, new):
+        path = self.repo / list_name
+        text = path.read_text()
+        self.assertIn(old, text)
+        path.write_text(text.replace(old, new, 1))
+
+    def bake_args(self):
+        return subprocess.run(["bash", str(self.repo / "scripts/cloud/lock.sh"), "bake-args", "linux"],
+                              cwd=self.repo, capture_output=True, text=True, timeout=30,
+                              env={**os.environ, "LOCK_DIR": str(self.locks)})
+
+    def test_a_pin_added_before_the_lock_has_it_reaches_the_build(self):
+        self.add("images/toolsets/core/packages.txt", "git\n",
+                 "git\nopenssl=3.0.13-0ubuntu3.6 # pinned: https://x/1 snapshot=20260101T000000Z\n")
+        self.add("images/toolsets/native/packages.txt", "cmake\n",
+                 "cmake=3.28.3-1build7  # pinned: - snapshot=20250601T120000Z\n")
+        result = self.bake_args()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("*.args.APT_PINS=cmake=3.28.3-1build7@20250601T120000Z "
+                      "openssl=3.0.13-0ubuntu3.6@20260101T000000Z", result.stdout.splitlines())
+        self.assertEqual(result.stdout.count("APT_PINS"), 1)
+
+    def test_the_same_pin_in_two_lists_is_passed_once(self):
+        pin = "curl=8.5.0-2ubuntu10.1 # pinned: - snapshot=20260101T000000Z\n"
+        self.add("images/cloud/base/packages.txt", "curl\n", pin)
+        self.add("images/toolsets/core/packages.txt", "curl\n", pin)
+        result = self.bake_args()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("*.args.APT_PINS=curl=8.5.0-2ubuntu10.1@20260101T000000Z", result.stdout.splitlines())
+
+    def test_a_pin_without_a_snapshot_adds_nothing(self):
+        self.add("images/toolsets/native/packages.txt", "cmake\n", "cmake=3.28.3-1build7\n")
+        result = self.bake_args()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("APT_PINS", result.stdout)
+
+    def test_a_bad_pin_fails_before_printing_anything(self):
+        # bake.sh accepts any non-empty output (r3.f3), so nothing may come first.
+        self.add("images/toolsets/core/packages.txt", "git\n", "git\nopenssl # pinned: - snapshot=20260101T000000Z\n")
+        result = self.bake_args()
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("a snapshot needs a name=version pin", result.stderr)
+
+
 class ReadTests(unittest.TestCase):
     LOCK = (
         "# a header\n"
@@ -845,21 +906,12 @@ class ReadTests(unittest.TestCase):
             "*.args.VIRTUALGL_VERSION=3.1.5",
         ])
 
-    def test_bake_args_passes_pins_with_their_snapshots(self):
-        # One APT_PINS for the base's apt-pins.sh: name=version@snapshot.
+    def test_bake_args_ignores_the_locks_pin_lines(self):
+        # A record only: APT_PINS comes from the package lists (PinBakeArgsTests),
+        # and the repo's lists name no snapshot.
         self.write("linux/versions.lock", self.LOCK
-                   + "apt openssl 3.0.13-0ubuntu3.6\n"
                    + "apt-pin-snapshot openssl 3.0.13-0ubuntu3.6@20260101T000000Z\n"
-                   + "apt-pin-snapshot sqlite3 3.45.1-1ubuntu2.8@20260201T000000Z\n"
-                   + "pinned apt/openssl -\npinned apt/sqlite3 -\n")
-        result = self.run_lock("bake-args", "linux")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("*.args.APT_PINS=openssl=3.0.13-0ubuntu3.6@20260101T000000Z "
-                      "sqlite3=3.45.1-1ubuntu2.8@20260201T000000Z", result.stdout.splitlines())
-        self.assertEqual(result.stdout.count("APT_PINS"), 1)
-
-    def test_bake_args_has_no_pins_without_a_pin_snapshot(self):
-        self.write("linux/versions.lock", self.LOCK + "pinned apt/cmake -\n")
+                   + "pinned apt/cmake -\n")
         result = self.run_lock("bake-args", "linux")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("APT_PINS", result.stdout)
