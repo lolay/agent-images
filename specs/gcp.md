@@ -326,7 +326,7 @@ repo; none today), and `pinned <what> <issue URL>` a pin
 | Rust toolchain | Version | `RUST_TOOLCHAIN` in `images/toolsets/rust/install.sh` (`stable`, a minor line, or a version) | rustup's channel manifest |
 | Terraform | Version | `TERRAFORM_VERSION` in `images/toolsets/terraform/install.sh` (`latest`, `~> x.y`, or a version) | HashiCorp's release index, newest stable on that line |
 | tflint, VirtualGL, COLMAP | Release tag | `TFLINT_VERSION`, `VIRTUALGL_VERSION` in their toolsets' `install.sh`; `COLMAP_VERSION` in `images/toolsets/3d/build-colmap.sh` | The tag GitHub redirects `/releases/latest` to |
-| Blender | Release version | `BLENDER_VERSION` in `images/toolsets/3d/install.sh` | The newest `blender-x.y.z-linux-x64.tar.xz` in the newest series on download.blender.org's release index |
+| Blender | Release version | `BLENDER_VERSION` in `images/toolsets/3d/install.sh` | The newest `blender-x.y.z-linux-x64.tar.xz` in the newest series on download.blender.org's release index, read by `images/toolsets/3d/blender.sh` (below) |
 
 The build consumes the lock (`scripts/cloud/bake.sh` locally and on pull requests,
 the deploy's bake from `lock.sh bake-args`): `BASE_IMAGE` at the locked digest,
@@ -365,6 +365,21 @@ with `--retry 3`; any other failure, or a 429 after the last wait, fails the
 resolve at once with the registry's error. Found on 2026-11-12 (lock-watch run
 43141207783), when the 429 failed the watch with a bare exit 4 from `jq`.
 
+Blender's files have one reader, `images/toolsets/3d/blender.sh`, which the
+resolve and the 3d toolset's install both call: the index, the series page, the
+tarball and its SHA-256 file. download.blender.org answers 403 to GitHub's hosted
+runners now and then, and curl's `--retry` doesn't retry a 403, so each file is
+fetched with `--retry 3 --retry-all-errors` from download.blender.org first, then
+from two of Blender's official mirrors (OCF Berkeley, NLUUG) in order. Every file
+logs which source served it. A mirror only ever stands in for the same path, and
+the install checks the tarball against the release's SHA-256 file as before. A
+mirror that trails a new release can make a resolve lock the previous one for a
+run; the next run that reaches download.blender.org moves it on. Found on
+2026-11-15: a cloud-build of #110 got the 403 on the 5.3.0 tarball, and lock-watch
+run 43715897836 got a 403 while resolving `3d-gpu` (its log has only curl's bare
+"(22) ... 403", so the URL isn't certain; `lock.sh` now names the URL of any
+fetch that fails).
+
 Homebrew is the exception, and stays that way (owner, 2026-11-06): it only installs
 current versions, so its lock entries are a record and a change trigger, never a pin.
 A moved formula is what makes the watch propose a lock and so a build, but the build
@@ -395,10 +410,20 @@ A dispatch takes `all`, `nightly` or `weekly`. One run at a time, queued. It nev
 deploys; it only proposes a pull request:
 
 1. `resolve` (read-only `GITHUB_TOKEN`, no secrets) resolves each type in the class
-   with `lock.sh resolve` into a candidate tree that starts as `main`'s locks.
+   on its own (`lock-watch.sh resolve`, one `lock.sh resolve` per type) into a
+   candidate tree that starts as `main`'s locks. A type whose resolve fails keeps
+   `main`'s lock in the candidate and the loop carries on, so one type's upstream
+   can't hold back the others' locks: on 2026-11-15 (run 43715897836) a 403 while
+   resolving `3d-gpu`, the first type, failed the whole job, and `gis`, `linux-gpu`
+   and `3d-gpu` all went without a lock for the week. The run still goes red: a
+   job of its own, `unresolved` (no permissions), runs after `propose` and fails
+   naming the types that didn't resolve, so the types that did are proposed and
+   the broken one is visible.
 2. If a lock pull request is open, the locks its branch changed for types this run
-   didn't resolve are carried into the candidate (`lock-watch.sh carry`), so the
-   hourly run never drops the weekly run's `gis` candidate. A lock `main` changed
+   didn't resolve, whether outside its class or failed, are carried into the
+   candidate (`lock-watch.sh carry`, reading `resolve`'s results), so the hourly
+   run never drops the weekly run's `gis` candidate, and a failed resolve never
+   drops or closes the candidate it already has open. A lock `main` changed
    since the branch left it (a constraint change re-locked, or a rollback) is
    dropped, not carried, since the branch's copy is older than `main`'s and would
    revert it; that type's next resolve proposes afresh.
@@ -425,7 +450,9 @@ deploys; it only proposes a pull request:
 
 The job summary lists every pin with its locked value, upstream's newest now and its
 issue's state, read with `GITHUB_TOKEN` (the bot has no Issues permission); a closed
-issue reads **closed**: remove the pin?
+issue reads **closed**: remove the pin? A lookup that fails there doesn't fail
+`resolve`, which would skip `propose` for every type: the `unresolved` job turns
+the run red for it instead.
 
 A version that breaks something never reaches `main`: its pull request stays open
 and red once its retries are spent, which is the notification, and the next run that sees `main` or upstream

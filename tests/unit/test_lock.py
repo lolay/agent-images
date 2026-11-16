@@ -76,33 +76,81 @@ sys.exit("docker: fake: unexpected call: " + " ".join(args) + "\nSee 'docker --h
 '''
 
 FAKE_CURL = r'''#!/usr/bin/env python3
+# curl for the URLs in FAKE_URLS: "<url>" is a body, "redirect <url>" where a
+# HEAD with -w %{url_effective} lands, and "status <url>" the HTTP errors its
+# first attempts get, one each. A status of "partial" sends "partial <url>" and
+# then breaks off (curl exits 56), as a dropped connection does: written to
+# stdout, those bytes stay; with -o, curl starts the file afresh each attempt.
+# Retries follow curl's rules: --retry N retries a transient error (408, 429,
+# 5xx) up to N times, and anything else only with --retry-all-errors, so a 403
+# without it fails at once (curl exits 22).
 import json, os, sys
 args = sys.argv[1:]
 urls = json.load(open(os.environ["FAKE_URLS"]))
 def log(line):
     with open(os.environ["FAKE_LOG"], "a") as f:
         f.write(line + "\n")
-if args[:3] == ["-fsSL", "--retry", "3"] and len(args) == 4:
-    url = args[3]
-    if url not in urls:
-        sys.exit("curl: (22) The requested URL returned error: 404")
-    log("get " + url)
-    # Like curl: a reader that closes the pipe early fails the transfer (23).
-    try:
-        sys.stdout.write(urls[url])
-        sys.stdout.flush()
-    except BrokenPipeError:
-        sys.stderr.write("curl: (23) Failure writing output to destination\n")
-        os._exit(23)
-    sys.exit(0)
-if args[:7] == ["-fsSLI", "--retry", "3", "-o", "/dev/null", "-w", "%{url_effective}"] and len(args) == 8:
-    url = args[7]
-    if "redirect " + url not in urls:
-        sys.exit("curl: (22) The requested URL returned error: 404")
+def attempts(url):
+    if not os.path.exists(os.environ["FAKE_LOG"]):
+        return 0
+    return sum(line == "attempt " + url for line in open(os.environ["FAKE_LOG"]).read().splitlines())
+flags, retry, out, write, url, i = set(), 0, None, None, None, 0
+while i < len(args):
+    a = args[i]
+    if a in ("-fsSL", "-fsSLI", "--retry-all-errors"):
+        flags.add(a); i += 1
+    elif a == "--retry":
+        retry = int(args[i + 1]); i += 2
+    elif a == "-o":
+        out = args[i + 1]; i += 2
+    elif a == "-w" and args[i + 1] == "%{url_effective}":
+        write = args[i + 1]; i += 2
+    elif a.startswith("-"):
+        sys.exit("curl: option " + a + ": is unknown\ncurl: try 'curl --help' for more information")
+    elif url is None:
+        url = a; i += 1
+    else:
+        sys.exit("curl: fake: a second URL: " + a)
+if url is None or not flags & {"-fsSL", "-fsSLI"}:
+    sys.exit("curl: fake: option not expected: " + " ".join(args))
+head = "-fsSLI" in flags
+if head and (out != "/dev/null" or write is None):
+    sys.exit("curl: fake: option not expected: " + " ".join(args))
+key = ("redirect " + url) if head else url
+for tries in range(retry + 1):
+    n = attempts(url)
+    log("attempt " + url)
+    statuses = urls.get("status " + url, [])
+    status = statuses[n] if n < len(statuses) else (200 if key in urls else 404)
+    if status == 200:
+        break
+    if status == "partial":
+        if out is not None:
+            open(out, "w").write(urls["partial " + url])
+        else:
+            sys.stdout.write(urls["partial " + url]); sys.stdout.flush()
+        if tries == retry or "--retry-all-errors" not in flags:
+            sys.exit("curl: (56) Recv failure: Connection reset by peer")
+        continue
+    transient = status in (408, 429, 500, 502, 503, 504)
+    if tries == retry or not (transient or "--retry-all-errors" in flags):
+        sys.exit("curl: (22) The requested URL returned error: " + str(status))
+if head:
     log("head " + url)
-    sys.stdout.write(urls["redirect " + url])
+    sys.stdout.write(urls[key])
     sys.exit(0)
-sys.exit("curl: fake: option not expected: " + " ".join(args))
+log("get " + url)
+if out is not None:
+    open(out, "w").write(urls[url])
+    sys.exit(0)
+# Like curl: a reader that closes the pipe early fails the transfer (23).
+try:
+    sys.stdout.write(urls[url])
+    sys.stdout.flush()
+except BrokenPipeError:
+    sys.stderr.write("curl: (23) Failure writing output to destination\n")
+    os._exit(23)
+sys.exit(0)
 '''
 
 FAKE_BREW = r'''#!/usr/bin/env python3
@@ -463,6 +511,141 @@ class ResolveTests(unittest.TestCase):
                 self.assertIn("isn't a Cloud Run type", result.stderr)
 
 
+BLENDER = "https://download.blender.org/release"
+BLENDER_MIRROR = "https://mirrors.ocf.berkeley.edu/blender/release"
+BLENDER_SH = REPO / "images/toolsets/3d/blender.sh"
+
+
+class BlenderTests(unittest.TestCase):
+    """images/toolsets/3d/blender.sh, which lock.sh and the 3d toolset both read
+    Blender through, against a fake curl that refuses the way blender.org did
+    (lock-watch run 43715897836: a 403 that curl's --retry leaves alone)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        (self.tmp / "bin").mkdir()
+        executable(self.tmp / "bin/curl", FAKE_CURL)
+        self.log = self.tmp / "log"
+        self.urls = {}
+        for source in (BLENDER, BLENDER_MIRROR):
+            self.urls.update({
+                f"{source}/": '<a href="Blender5.3/">Blender5.3/</a>\n<a href="Blender5.10/">Blender5.10/</a>\n',
+                f"{source}/Blender5.10/": '<a href="blender-5.10.0-linux-x64.tar.xz">x</a>\n'
+                                          '<a href="blender-5.10.1-linux-x64.tar.xz">x</a>\n'
+                                          '<a href="blender-5.10.1-windows-x64.zip">x</a>\n',
+                f"{source}/Blender5.10/blender-5.10.1.sha256": "abc  blender-5.10.1-linux-x64.tar.xz\n",
+            })
+
+    def env(self):
+        (self.tmp / "urls.json").write_text(json.dumps(self.urls))
+        return {**os.environ, "PATH": f"{self.tmp / 'bin'}:{os.environ['PATH']}",
+                "FAKE_URLS": str(self.tmp / "urls.json"), "FAKE_LOG": str(self.log)}
+
+    def blender(self, *args):
+        return subprocess.run(["bash", str(BLENDER_SH), *args], cwd=REPO, env=self.env(),
+                              capture_output=True, text=True, timeout=60)
+
+    def refuse(self, url, times):
+        self.urls[f"status {url}"] = [403] * times
+
+    def attempts(self, url):
+        return self.log.read_text().splitlines().count(f"attempt {url}")
+
+    def test_latest_is_the_newest_build_in_the_newest_series(self):
+        # The series sort as versions (5.10 after 5.3), not as text.
+        result = self.blender("latest")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "5.10.1\n")
+        self.assertIn(f"blender: the release index from {BLENDER}\n", result.stderr)
+        self.assertNotIn(BLENDER_MIRROR, self.log.read_text())
+
+    def test_a_403_then_success_is_served_by_blender_org(self):
+        self.refuse(f"{BLENDER}/", 1)
+        self.refuse(f"{BLENDER}/Blender5.10/blender-5.10.1.sha256", 2)
+        result = self.blender("latest")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "5.10.1\n")
+        self.assertEqual(self.attempts(f"{BLENDER}/"), 2, "the 403, then the retry that served it")
+        out = self.tmp / "blender.sha256"
+        result = self.blender("get", "Blender5.10/blender-5.10.1.sha256", str(out))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"blender: Blender5.10/blender-5.10.1.sha256 from {BLENDER}\n", result.stderr)
+        self.assertEqual(out.read_text(), "abc  blender-5.10.1-linux-x64.tar.xz\n")
+        self.assertNotIn(BLENDER_MIRROR, self.log.read_text(), "the retry served it; no mirror was asked")
+
+    def test_a_refusing_blender_org_falls_back_to_a_mirror_and_says_so(self):
+        self.refuse(f"{BLENDER}/", 99)
+        self.refuse(f"{BLENDER}/Blender5.10/", 99)
+        result = self.blender("latest")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "5.10.1\n")
+        self.assertEqual(self.attempts(f"{BLENDER}/"), 4, "one try and three retries before the mirror")
+        self.assertIn(f"blender: {BLENDER}/ failed\n", result.stderr)
+        self.assertIn(f"blender: the release index from {BLENDER_MIRROR}\n", result.stderr)
+        self.assertIn(f"blender: Blender5.10/ from {BLENDER_MIRROR}\n", result.stderr)
+
+    def test_a_transfer_that_breaks_off_leaves_nothing_behind(self):
+        # blender.org sends part of an index naming a series the mirror doesn't
+        # have, then drops the connection on every attempt. Only the mirror's
+        # page may be read, or latest picks the series blender.org half-sent.
+        self.urls[f"partial {BLENDER}/"] = '<a href="Blender9.9/">Blender9.9/</a>\n<a href="Blend'
+        self.urls[f"status {BLENDER}/"] = ["partial"] * 99
+        result = self.blender("latest")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "5.10.1\n")
+        self.assertIn(f"blender: the release index from {BLENDER_MIRROR}\n", result.stderr)
+        out = self.tmp / "blender.sha256"
+        self.urls[f"partial {BLENDER}/Blender5.10/blender-5.10.1.sha256"] = "000  blender-5.10.1-linux"
+        self.urls[f"status {BLENDER}/Blender5.10/blender-5.10.1.sha256"] = ["partial"] * 99
+        result = self.blender("get", "Blender5.10/blender-5.10.1.sha256", str(out))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(out.read_text(), "abc  blender-5.10.1-linux-x64.tar.xz\n")
+
+    def test_every_source_refusing_fails(self):
+        self.urls = {}
+        result = self.blender("get", "Blender5.10/blender-5.10.1.sha256", str(self.tmp / "out"))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("blender: no source served Blender5.10/blender-5.10.1.sha256", result.stderr)
+        self.assertIn(f"blender: {BLENDER}/Blender5.10/blender-5.10.1.sha256 failed", result.stderr)
+        result = self.blender("latest")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+
+    def test_an_index_with_no_linux_build_fails(self):
+        self.urls[f"{BLENDER}/Blender5.10/"] = '<a href="blender-5.10.1-windows-x64.zip">x</a>\n'
+        result = self.blender("latest")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no Linux build in Blender5.10/", result.stderr)
+
+    def test_usage(self):
+        for args in ([], ["latest", "x"], ["get"], ["nope"]):
+            with self.subTest(args):
+                self.assertEqual(self.blender(*args).returncode, 1)
+
+    def lock_pins(self):
+        locks = self.tmp / "locks/3d-gpu"
+        locks.mkdir(parents=True)
+        (locks / "versions.lock").write_text("release blender 5.3.0\npinned blender -\n")
+        return subprocess.run(["bash", str(SCRIPT), "pins", "3d-gpu"], cwd=REPO,
+                              env={**self.env(), "LOCK_DIR": str(self.tmp / "locks")},
+                              capture_output=True, text=True, timeout=60)
+
+    def test_lock_reads_blender_through_the_helper(self):
+        # lock.sh's resolve and pins share release_latest; pins needs no Docker.
+        self.refuse(f"{BLENDER}/", 1)
+        result = self.lock_pins()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "blender\t5.3.0\t5.10.1\t-\n")
+        self.assertEqual(self.attempts(f"{BLENDER}/"), 2)
+
+    def test_lock_fails_when_blender_cant_be_read(self):
+        self.urls = {}
+        result = self.lock_pins()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("lock: couldn't read Blender's newest release", result.stderr)
+
+
 class ReadTests(unittest.TestCase):
     LOCK = (
         "# a header\n"
@@ -554,6 +737,22 @@ class ReadTests(unittest.TestCase):
         old = self.write("old", self.LOCK)
         self.assertEqual(self.run_lock("diff", old, old).stdout, "")
         self.assertEqual(self.run_lock("summary", old, old).stdout.strip(), "")
+
+    def test_a_failed_fetch_names_its_url(self):
+        # lock-watch run 43715897836 failed on a bare "curl: (22) ... 403".
+        bin_ = self.tmp / "bin"
+        bin_.mkdir()
+        executable(bin_ / "curl", FAKE_CURL)
+        (self.tmp / "urls.json").write_text(json.dumps({
+            "status https://downloads.claude.ai/claude-code-releases/latest": [403]}))
+        self.write("linux/versions.lock", self.LOCK + "pinned claude -\n")
+        result = subprocess.run(
+            ["bash", str(SCRIPT), "pins", "linux"], cwd=REPO, capture_output=True, text=True, timeout=30,
+            env={**os.environ, "LOCK_DIR": str(self.tmp), "PATH": f"{bin_}:{os.environ['PATH']}",
+                 "FAKE_URLS": str(self.tmp / "urls.json"), "FAKE_LOG": str(self.tmp / "log")})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("curl: (22) The requested URL returned error: 403", result.stderr)
+        self.assertIn("lock: couldn't fetch https://downloads.claude.ai/claude-code-releases/latest", result.stderr)
 
     def test_usage(self):
         for args in ([], ["resolve"], ["bake-args"], ["diff", "a"], ["nope", "x"]):
