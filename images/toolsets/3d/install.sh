@@ -43,20 +43,17 @@ fi
 /opt/colmap/bin/colmap -h >/dev/null || die "colmap doesn't run with those libraries"
 
 # BLENDER_VERSION: a version (the lock's, scripts/cloud/lock.sh, or a pin), else
-# the newest in blender.org's release index.
+# the newest in blender.org's release index. blender.sh knows where the files
+# come from (blender.org, then its mirrors) and says which served each.
 version="${BLENDER_VERSION:-latest}"
 if [[ "$version" == latest ]]; then
-	series="$(curl -fsSL --retry 3 https://download.blender.org/release/ |
-		sed -n -E 's/.*href="Blender([0-9]+\.[0-9]+)\/".*/\1/p' | sort -V | tail -n 1)"
-	version="$(curl -fsSL --retry 3 "https://download.blender.org/release/Blender$series/" |
-		sed -n -E 's/.*href="blender-([0-9]+\.[0-9]+\.[0-9]+)-linux-x64\.tar\.xz".*/\1/p' | sort -V | tail -n 1)"
+	version="$(bash "$here/blender.sh" latest)"
 fi
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "unexpected Blender release '$version'"
 series="${version%.*}"
-url="https://download.blender.org/release/Blender$series"
 log "Blender $version"
-curl -fsSL --retry 3 -o "$work/blender.tar.xz" "$url/blender-$version-linux-x64.tar.xz"
-curl -fsSL --retry 3 -o "$work/blender.sha256" "$url/blender-$version.sha256"
+bash "$here/blender.sh" get "Blender$series/blender-$version-linux-x64.tar.xz" "$work/blender.tar.xz"
+bash "$here/blender.sh" get "Blender$series/blender-$version.sha256" "$work/blender.sha256"
 sum="$(awk -v f="blender-$version-linux-x64.tar.xz" '$2 == f {print $1}' "$work/blender.sha256")"
 [[ -n "$sum" ]] || die "no checksum for blender-$version-linux-x64.tar.xz in blender-$version.sha256"
 printf '%s  %s\n' "$sum" "$work/blender.tar.xz" | sha256sum -c --quiet -
