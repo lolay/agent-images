@@ -318,7 +318,8 @@ repo; none today), `apt-pin-snapshot <package> <version>@<id>` a pin that names
 the snapshot its version comes from (a record, since the build reads the pin from
 its list; its own line, since a version the base image already has gets no `apt`
 line), and `pinned <what> <issue URL>` a pin
-([below](#pinning-a-dependency)).
+([below](#pinning-a-dependency)); an apt pin is `pinned apt/<package> <issue URL>`,
+the URL the first word of its list line's `# pinned:` comment (`-` if it names none).
 
 | Dependency | Locked as | Constraint, where it's declared | Resolved by (from upstream only) |
 | --- | --- | --- | --- |
@@ -691,7 +692,9 @@ it's fixed. How, per source:
 Pins live where the dependency is declared, each with `# pinned: <issue URL>`, and the
 lock marks them pinned. The watch lists every pin in the job summary next to
 upstream's current version and the issue's state, so a pin whose issue closed stands
-out instead of rotting.
+out instead of rotting. A package pinned in two lists (curl, in the base's and core's)
+is one pin; if the lists name different issues, `resolve` and `bake-args` fail rather
+than pick one, and a list that names none beside one that does gives that issue.
 
 ## Keys
 
