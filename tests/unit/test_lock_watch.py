@@ -8,6 +8,7 @@ current head, and a pull request whose head lands in main is marked merged."""
 import base64
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -868,6 +869,30 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("id: pins", pins)
         self.assertIn("continue-on-error: true", pins)
         self.assertIn("pins: ${{ steps.pins.outcome }}", resolve)
+
+    def registry_waits(self):
+        text = (REPO / "scripts/cloud/lock.sh").read_text()
+        default = re.search(r'registry_waits="\$\{LOCK_REGISTRY_WAITS:-([0-9 ]+)\}"', text)
+        self.assertIsNotNone(default, "lock.sh declares no LOCK_REGISTRY_WAITS default")
+        return [int(wait) for wait in default.group(1).split()]
+
+    def test_the_registry_waits_outlast_the_quotas_seen(self):
+        # mirror.gcr.io's 429 outlasted 30 + 60 + 120 seconds twice on
+        # 2026-11-16 (runs 43792252860 and 43793578932).
+        self.assertGreaterEqual(sum(self.registry_waits()), 600)
+
+    def test_the_resolve_job_outlasts_every_type_waiting_out_the_registry(self):
+        # Each type reads its base's digest once, so a run where every type hits
+        # the quota waits the full list per type, one after another; the job
+        # still needs time for the resolves themselves (about 7 minutes in run
+        # 43793578932).
+        watch = (REPO / ".github/workflows/lock-watch.yml").read_text()
+        resolve = watch.split("\n  resolve:\n", 1)[1].split("\n  propose:\n", 1)[0]
+        timeout = int(re.search(r"\n    timeout-minutes: (\d+)\n", resolve).group(1))
+        types = subprocess.run(["bash", str(SCRIPT), "types", "all"], cwd=REPO, capture_output=True,
+                               text=True, check=True).stdout.split()
+        self.assertGreaterEqual(timeout * 60, len(types) * sum(self.registry_waits()) + 15 * 60,
+                                f"{len(types)} types waiting out the registry don't fit in {timeout} minutes")
 
     def test_the_weekly_schedule_is_the_one_the_class_step_reads(self):
         watch = (REPO / ".github/workflows/lock-watch.yml").read_text()
