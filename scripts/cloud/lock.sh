@@ -493,8 +493,13 @@ cmd_summary() {
 			kind = substr(key, 1, index(key, "/") - 1)
 			name = substr(key, index(key, "/") + 1)
 		}
-		kind == "apt" || kind == "apt-floating" { apt++; next }
-		kind == "apt-snapshot" || kind == "apt-pin-snapshot" || kind == "pinned" { next }
+		# A package counts once, whichever of its lines moved: a pin whose
+		# version the base already has has no apt line, only its pin line.
+		kind == "apt" || kind == "apt-floating" || kind == "apt-pin-snapshot" {
+			if (!(name in moved)) { moved[name] = 1; apt++ }
+			next
+		}
+		kind == "apt-snapshot" || kind == "pinned" { next }
 		{
 			if (name == "-") name = kind
 			sub(/.*\//, "", name)

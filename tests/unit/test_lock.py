@@ -689,6 +689,12 @@ class ReadTests(unittest.TestCase):
                       self.run_lock("diff", old, new).stdout.splitlines())
         self.assertEqual(self.run_lock("summary", old, new).stdout.strip(), "apt 1 package")
 
+    def test_a_pin_snapshot_change_alone_counts_its_package(self):
+        # Only the pin line moves for a version the base image already has.
+        old = self.write("old", self.LOCK + "apt-pin-snapshot zlib1g 1:1.3.dfsg-3.1ubuntu2@20260101T000000Z\n")
+        new = self.write("new", self.LOCK + "apt-pin-snapshot zlib1g 1:1.3.dfsg-3.1ubuntu2@20260201T000000Z\n")
+        self.assertEqual(self.run_lock("summary", old, new).stdout.strip(), "apt 1 package")
+
     def test_bake_args_refuses_a_missing_or_incomplete_lock(self):
         result = self.run_lock("bake-args", "linux")
         self.assertEqual(result.returncode, 1)
