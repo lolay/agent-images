@@ -16,6 +16,8 @@
 #   lock.sh pins <type>           each pin in the type's lock, tab-separated:
 #                                 what, locked value, upstream's newest now, and
 #                                 the issue URL (or -)
+#   lock.sh path <type>           where the type's lock is, whether or not it
+#                                 exists yet
 #
 # A lock is `<kind> <name> <value>` lines, sorted, under a comment header:
 #
@@ -75,7 +77,7 @@ die() {
 	printf 'lock: %s\n' "$*" >&2
 	exit 1
 }
-usage() { die "usage: lock.sh resolve <type> | bake-args <type> | diff <old> <new> | summary <old> <new> | pins <type>"; }
+usage() { die "usage: lock.sh resolve <type> | bake-args <type> | diff <old> <new> | summary <old> <new> | pins <type> | path <type>"; }
 
 lock_file() { printf '%s/%s/versions.lock' "$lock_dir" "$1"; }
 
@@ -453,7 +455,7 @@ cmd_resolve() {
 cmd_bake_args() {
 	local file kind name value pins=()
 	file="$(lock_file "$1")"
-	[[ -f "$file" ]] || die "no lock for $1 ($file); make cloud-lock TYPE=$1 WRITE=1"
+	[[ -f "$file" ]] || die "no lock for $1 ($file): cloud-build resolves a new type's lock on its pull request for the author to commit (AGENTS.md)"
 	for kind in base apt-snapshot claude; do
 		[[ -n "$(lock_value "$file" "$kind")" ]] || die "$file has no $kind line"
 	done
@@ -579,6 +581,12 @@ summary)
 pins)
 	(($# == 2)) || usage
 	cmd_pins "$2"
+	;;
+path)
+	(($# == 2)) || usage
+	[[ "$2" =~ ^[a-z0-9-]+$ ]] || usage
+	lock_file "$2"
+	printf '\n'
 	;;
 *) usage ;;
 esac
