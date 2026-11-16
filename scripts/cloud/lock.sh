@@ -515,10 +515,17 @@ cmd_summary() {
 		}'
 }
 
-# pinned_value <file> <what>: the locked value a `pinned <what>` line holds.
+# pinned_value <file> <what>: the locked value a `pinned <what>` line holds. An
+# apt pin the base image already satisfies has no apt line; its
+# apt-pin-snapshot line holds the version.
 pinned_value() {
+	local value
 	case "$2" in
-	apt/*) lock_value "$1" apt "${2#apt/}" ;;
+	apt/*)
+		value="$(lock_value "$1" apt "${2#apt/}")"
+		[[ -n "$value" ]] || value="$(lock_value "$1" apt-pin-snapshot "${2#apt/}")"
+		printf '%s' "${value%@*}"
+		;;
 	tflint | virtualgl | colmap | blender) lock_value "$1" release "$2" ;;
 	*) lock_value "$1" "$2" ;;
 	esac

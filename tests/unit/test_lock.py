@@ -695,6 +695,21 @@ class ReadTests(unittest.TestCase):
         new = self.write("new", self.LOCK + "apt-pin-snapshot zlib1g 1:1.3.dfsg-3.1ubuntu2@20260201T000000Z\n")
         self.assertEqual(self.run_lock("summary", old, new).stdout.strip(), "apt 1 package")
 
+    def test_pins_reads_a_snapshot_pins_version_from_its_own_line(self):
+        # libssl3t64's version is the base image's own, so apt installed nothing
+        # and the lock has no apt line for it; openssl has one.
+        self.write("linux/versions.lock", self.LOCK
+                   + "apt openssl 3.0.13-0ubuntu3.6\n"
+                   + "apt-pin-snapshot libssl3t64 3.0.13-0ubuntu3.6@20260101T000000Z\n"
+                   + "apt-pin-snapshot openssl 3.0.13-0ubuntu3.6@20260101T000000Z\n"
+                   + "pinned apt/libssl3t64 -\npinned apt/openssl -\n")
+        result = self.run_lock("pins", "linux")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), [
+            "apt/libssl3t64\t3.0.13-0ubuntu3.6\t-\t-",
+            "apt/openssl\t3.0.13-0ubuntu3.6\t-\t-",
+        ])
+
     def test_bake_args_refuses_a_missing_or_incomplete_lock(self):
         result = self.run_lock("bake-args", "linux")
         self.assertEqual(result.returncode, 1)
