@@ -894,6 +894,16 @@ class WorkflowTests(unittest.TestCase):
         self.assertGreaterEqual(timeout * 60, len(types) * sum(self.registry_waits()) + 15 * 60,
                                 f"{len(types)} types waiting out the registry don't fit in {timeout} minutes")
 
+    def test_a_pull_request_build_gets_as_long_as_the_deploy_build(self):
+        # The same image is built in both, from the same lock; a build that fits
+        # the deploy's time but not the pull request's holds the pull request
+        # red on a slow apt day (3d-gpu on #118 and #119, 2026-11-16).
+        def timeout(workflow, job):
+            text = (REPO / ".github/workflows" / workflow).read_text()
+            body = text.split(f"\n  {job}:\n", 1)[1].split("\n  steps:", 1)[0]
+            return int(re.search(r"\n    timeout-minutes: (\d+)\n", body).group(1))
+        self.assertGreaterEqual(timeout("cloud-build.yml", "build"), timeout("cloud-deploy.yml", "types"))
+
     def test_the_weekly_schedule_is_the_one_the_class_step_reads(self):
         watch = (REPO / ".github/workflows/lock-watch.yml").read_text()
         crons = [line.split('"')[1] for line in watch.splitlines() if line.strip().startswith("- cron:")]
