@@ -2,12 +2,17 @@
   `$CUDA_HOME`), matching the host's driver. Build for the GPU you're on: `sm_120`
   on an RTX PRO 6000, `sm_89` on an L4 (`nvidia-smi --query-gpu=compute_cap
   --format=csv`); code built only for older GPUs fails with "no kernel image".
-  PyTorch: its CUDA build, not the CPU wheel.
+  `CUDAARCHS` (CMake) and `TORCH_CUDA_ARCH_LIST` (PyTorch extensions) default to
+  both GPUs; set them to yours for a faster build. PyTorch: its CUDA build, not
+  the CPU wheel.
 - Rendering on the GPU, where the driver allows: EGL offscreen (`EGL_PLATFORM`
   device or surfaceless), Vulkan (`vulkaninfo --summary`), and `vglrun` for GLX
   apps on the virtual display. Check the renderer string: Mesa's llvmpipe or
   lavapipe means it fell back to the CPU. `agent-gpu-libs` says which of the
   driver's libraries the host mounted (EGL, GLX, Vulkan, NVENC, NVDEC, OptiX).
+  OptiX renders (Blender's Cycles), but its denoiser needs
+  `/usr/share/nvidia/nvoptix.bin`, which Cloud Run's driver mount lacks: denoise
+  with OpenImageDenoise on the GPU instead.
   On `$DISPLAY` (Xvfb) plain GLX and EGL's X11 platform are llvmpipe: use
   `vglrun`, or EGL's device or surfaceless platform, for the GPU.
 - The driver's libraries resolve through `LD_LIBRARY_PATH`, not the `ldconfig`

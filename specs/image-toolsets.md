@@ -359,12 +359,16 @@ tooling as PyO3 extensions, or Rust splatting like Brush). If that becomes true,
   mount lacks (rerun, 2026-11-15). OpenImageDenoise on the GPU does.
 - **CUDA's image hides the graphics libraries.** It sets
   `NVIDIA_DRIVER_CAPABILITIES=compute,utility`, which leaves EGL, GLX, Vulkan,
-  NVENC and OptiX out of the driver mount; each GPU type's Dockerfile sets `all`.
+  NVENC and OptiX out of the driver mount. `base-gpu`'s `gpu` stage sets `all`, once
+  for every GPU type, so a new one can't forget it (r4.f14).
 
 ## Build wiring
 
 - **Cloud images:** `agent-base` is Ubuntu, the user and `core`; `base-gpu` is the
-  same Dockerfile on CUDA's devel image (`BASE_IMAGE`), the GPU types' parent.
+  same Dockerfile on CUDA's devel image (`BASE_IMAGE`), then its `gpu` stage, the
+  GPU types' parent. That stage sets the driver capabilities and the CUDA targets
+  (`CUDAARCHS`, `TORCH_CUDA_ARCH_LIST`) from `docker-bake.hcl`'s `CUDA_CAPABILITIES`,
+  which COLMAP's, gsplat's and the gpu probe's builds read.
   `linux-gpu` builds `linux`'s Dockerfile on `base-gpu`, then its own adds `gpu`, so
   it can't drift from `linux`. Each type's
   Dockerfile (bake target `<type>-tools`) adds one `RUN install-toolset.sh <name>`

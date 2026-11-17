@@ -164,7 +164,9 @@ Region: `us-central1`, the one with both L4 and RTX PRO 6000 on Cloud Run.
 
 Each type's tools are a list of toolsets ([image-toolsets.md](image-toolsets.md)),
 so no type inherits another's. The GPU types' parent, `base-gpu` (m3), is
-`agent-base`'s Dockerfile on CUDA's devel image rather than runtime.
+`agent-base`'s Dockerfile on CUDA's devel image rather than runtime, ending in its
+`gpu` stage: what every GPU image needs, set once there (the driver capabilities,
+and the GPUs CUDA builds target).
 
 We manage them, in this repo, next to the macOS and Linux images, and they share
 `images/shared` so sessions behave the same everywhere.
@@ -173,8 +175,10 @@ We manage them, in this repo, next to the macOS and Linux images, and they share
 images/cloud/
   base/Dockerfile      ubuntu:24.04 through mirror.gcr.io, the runner user, and the
                        core toolset; a build parent only. Bake target base-gpu is
-                       the same on CUDA 13.0 devel (BASE_IMAGE), for the -gpu types,
-                       which add the gpu toolset (VirtualGL, Vulkan, EGL) last
+                       the same on CUDA 13.0 devel (BASE_IMAGE) plus its gpu stage
+                       (NVIDIA_DRIVER_CAPABILITIES, CUDAARCHS, TORCH_CUDA_ARCH_LIST),
+                       for the -gpu types, which add the gpu toolset (VirtualGL,
+                       Vulkan, EGL) last
   <type>/Dockerfile    FROM agent-base, agent-base-gpu or another type's tools
                        (linux-gpu is FROM agent-linux, which bake builds on
                        base-gpu), adds the type's toolsets, one layer each (bake
@@ -206,7 +210,10 @@ Choices, carried over from [design.md](design.md):
   `/usr/local/nvidia/lib64`, so `agent-base-gpu` uses a CUDA 13.0 userland. Newer CUDA
   needs NVIDIA's forward-compatibility package. Anything compiled (COLMAP, PyTorch
   extensions) must target compute capability 12.0 or carry PTX, or it fails on
-  Blackwell.
+  Blackwell. The images build for every GPU in `docker-bake.hcl`'s
+  `CUDA_CAPABILITIES` (the L4's 8.9 and Blackwell's 12.0, with PTX for the newest),
+  which `base-gpu` sets as `CUDAARCHS` and `TORCH_CUDA_ARCH_LIST`, and each toolset's
+  `check.txt` checks every CUDA binary for each.
 - **Docker Hub images come through Google's mirror** (`mirror.gcr.io/library/ubuntu`,
   `mirror.gcr.io/nvidia/cuda`): Docker Hub rate-limits anonymous pulls, which CI and
   local builds hit. The mirror is a pull-through cache of Docker Hub, so a digest is
@@ -286,7 +293,7 @@ matrix. A failed deploy makes the next one redeploy more, never less:
 
 The `FROM` chain comes from the Dockerfiles themselves, so adding a type doesn't mean
 editing the map. `agent-base-gpu` has no directory (it's bake target `base-gpu`,
-`base`'s Dockerfile on CUDA), so the chain reads it as `base`; `test_bake.py` checks
+`base`'s Dockerfile on CUDA, to its `gpu` stage), so the chain reads it as `base`; `test_bake.py` checks
 the chain against the bake file's. `infra/gcp/project.env` changes everything. When the diff can't be
 computed (no earlier successful deploy, or its commit is gone after a force push), it
 deploys everything. A manual dispatch takes a list of targets, or `all`.
@@ -1574,10 +1581,9 @@ self-update at start (`CLAUDE_UPGRADE=false`) on the `nightly` types only
 | --- | --- |
 | GPU types' spawn time | Not measured: the deploy's smoke gives provisioning (2 to 3 minutes) and container start (1 to 2), not a queued session to its first prompt. Sets `EXPECTED_SPAWN_SECONDS` (300 now, both types) and whether a standby is worth paying for |
 | Two GPUs for both types | The quota is 2 RTX PRO 6000 across `linux-gpu` and `3d-gpu` ([gcp-infrastructure.md](gcp-infrastructure.md), "GPU quota"); what a third concurrent session does hasn't been seen |
-| L4 | Denied 2026-11-13; Gary retries. The images already carry `sm_89`, so an L4 type is an env file |
+| L4 | Denied 2026-11-13; Gary retries. The images already carry `sm_89`, and `check.txt` checks each CUDA binary for it, so an L4 type is an env file |
 | `3d-gpu` scratch | 100 GiB; the spec wants 200. The per-instance quota allows 200, but a volume holds at most 100 and `job-spec.sh` mounts one |
 | Spirula Studio | Vulkan runs on Cloud Run's GPUs, so it can go in `3d-gpu` once its license allows redistributing the binary |
-| The 3d and gpu toolsets' `CLAUDE.md` | Two lines for the next image change, since editing them rebuilds the image. 3d: a project environment can't see `/opt/3d`'s PyTorch, so add packages to `/opt/3d/.venv` itself (`uv pip install --python /opt/3d/.venv`, as tests/sessions/3d-gpu.md does). gpu: OptiX renders, but its denoiser needs `nvoptix.bin`, which Cloud Run doesn't mount; denoise with OpenImageDenoise on the GPU |
 | `android` spawn time | Not measured: the session test starts once the VM is up. Time a queued session to its first prompt, then set `EXPECTED_SPAWN_SECONDS` (240 now) |
 | Session notice on the `android` VMs | The cost and retire-time notice comes from the Cloud Run session hook; the VMs don't run it yet |
 | Outputs and datasets on the `android` VMs | gcsfuse mounts like the Cloud Run types'; left out of m2, since its test doesn't use them |
