@@ -104,7 +104,11 @@ jobs:
   build:
     needs: plan
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # As long as the deploy's per-type job (cloud-deploy.yml, types). A 3d-gpu
+    # build takes about 30 minutes, but a slow snapshot.ubuntu.com stretches
+    # every apt stage: on 2026-11-16 it served a new snapshot at 148 kB/s and
+    # 3d-gpu needed about 80 minutes (#118, #119).
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:

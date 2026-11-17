@@ -58,7 +58,7 @@
 #   LOCK_NOW       the snapshot id to use if apt moved (default: now, UTC)
 #   LOCK_DIR       where the current locks are (default images/cloud)
 #   LOCK_REGISTRY_WAITS  seconds to wait before each retry of a rate-limited
-#                  registry read (default "30 60 120"; tests set zeros)
+#                  registry read (default "30 60 120 180 240"; tests set zeros)
 # Run from the repo root.
 set -euo pipefail
 # A failure inside $(...) fails the script too: a lock resolved halfway must
@@ -75,7 +75,7 @@ readonly claude_releases=https://downloads.claude.ai/claude-code-releases
 readonly rust_dist=https://static.rust-lang.org/dist
 readonly terraform_index=https://releases.hashicorp.com/terraform/index.json
 readonly blender_sh=images/toolsets/3d/blender.sh
-readonly registry_waits="${LOCK_REGISTRY_WAITS:-30 60 120}"
+readonly registry_waits="${LOCK_REGISTRY_WAITS:-30 60 120 180 240}"
 
 die() {
 	printf 'lock: %s\n' "$*" >&2
@@ -137,8 +137,10 @@ github_latest() {
 # image_digest <ref>: the digest a tag names now. mirror.gcr.io answers 429
 # when Google's quota on its reads from Docker Hub runs out (lock-watch run
 # 43141207783, 2026-11-12), a limit that clears in minutes, so a 429 is retried
-# after each of registry_waits, the way curl's --retry treats one above. Any
-# other failure fails at once.
+# after each of registry_waits, the way curl's --retry treats one above. The
+# waits add up to about ten minutes: the quota has outlasted three and a half
+# (runs 43792252860 and 43793578932, 2026-11-16), while another read cleared
+# after the first 30 seconds. Any other failure fails at once.
 image_digest() {
 	local wait out err
 	err="$(mktemp)"

@@ -402,10 +402,15 @@ error.
 The resolve's one registry read, the base tag's digest, does retry, but only on
 a 429: mirror.gcr.io answers one when Google's quota on its reads from Docker
 Hub runs out, a limit that clears in minutes, unlike an outage. `lock.sh` waits
-30, 60 and 120 seconds between attempts, the way its curl calls already retry
-with `--retry 3`; any other failure, or a 429 after the last wait, fails the
-resolve at once with the registry's error. Found on 2026-11-12 (lock-watch run
-43141207783), when the 429 failed the watch with a bare exit 4 from `jq`.
+30, 60, 120, 180 and 240 seconds between attempts (`LOCK_REGISTRY_WAITS`), the
+way its curl calls already retry with `--retry 3`; any other failure, or a 429
+after the last wait, fails the resolve at once with the registry's error. Found on
+2026-11-12 (lock-watch run 43141207783), when the 429 failed the watch with a bare
+exit 4 from `jq`. The waits were 30, 60 and 120 seconds until 2026-11-16, when the
+quota outlasted all three twice in 13 minutes (runs 43792252860 for `linux` and
+43793578932 for `gis`) while a read in between cleared after 30 seconds: they now
+add up to about ten minutes. Every type in a run can wait them out, one after
+another, within the `resolve` job's 60-minute timeout, which a test checks.
 
 Blender's files have one reader, `images/toolsets/3d/blender.sh`, which the
 resolve and the 3d toolset's install both call: the index, the series page, the
