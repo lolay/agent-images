@@ -85,6 +85,61 @@ class BakeScriptTests(unittest.TestCase):
         self.assertIn("no lock for gis", result.stderr)
         self.assertFalse(self.calls.exists(), "built without a lock")
 
+    def test_a_lock_that_fails_after_printing_builds_nothing(self):
+        # The real trigger: bake-args prints the lines before an unknown kind, then dies.
+        (self.locks / "linux" / "versions.lock").write_text(LOCK + "go - 1.27.0\n")
+        lock = subprocess.run(
+            ["bash", str(REPO / "scripts/cloud/lock.sh"), "bake-args", "linux"],
+            cwd=REPO, env={**os.environ, "LOCK_DIR": str(self.locks)}, capture_output=True, text=True,
+        )
+        self.assertNotEqual(lock.returncode, 0)
+        self.assertIn("*.args.CLAUDE_VERSION=2.1.319", lock.stdout, "the trigger printed nothing first")
+        result = self.bake("linux")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unknown line kind 'go'", result.stderr)
+        self.assertFalse(self.calls.exists(), "built with a partial set of lock arguments")
+
+    def fake_lock_repo(self, lines, status):
+        """A repo root with bake.sh and a lock.sh that prints `lines`, then exits `status`.
+        Like the real one, it takes only `bake-args <type>`."""
+        root = self.tmp / "fakerepo"
+        (root / "scripts/cloud").mkdir(parents=True)
+        shutil.copy(SCRIPT, root / "scripts/cloud/bake.sh")
+        write_executable(
+            root / "scripts/cloud/lock.sh",
+            'if (($# != 2)) || [[ "$1" != bake-args ]]; then echo "lock: fake: usage: bake-args <type>" >&2; exit 2; fi\n'
+            + "".join(f"printf '%s\\n' '{line}'\n" for line in lines)
+            + f"exit {status}\n",
+        )
+        return root
+
+    def bake_in(self, root, *args):
+        env = {**os.environ, "PATH": f"{self.tmp / 'bin'}:{os.environ['PATH']}", "FAKE_CALLS": str(self.calls),
+               "COMMIT": "abc123"}
+        return subprocess.run(["bash", "scripts/cloud/bake.sh", *args], cwd=root, env=env,
+                              capture_output=True, text=True, timeout=30)
+
+    def test_the_status_of_a_failing_lock_is_the_status_of_bake(self):
+        root = self.fake_lock_repo(["*.args.BASE_IMAGE=x", "*.args.CLAUDE_VERSION=1"], 7)
+        result = self.bake_in(root, "linux")
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assertFalse(self.calls.exists(), "built after bake-args failed")
+
+    def test_a_lock_that_prints_nothing_builds_nothing(self):
+        root = self.fake_lock_repo([], 0)
+        result = self.bake_in(root, "linux")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no build arguments", result.stderr)
+        self.assertFalse(self.calls.exists(), "built with no lock arguments")
+
+    def test_a_lock_that_succeeds_builds_with_every_line(self):
+        root = self.fake_lock_repo(["*.args.BASE_IMAGE=x", "*.args.CLAUDE_VERSION=1"], 0)
+        result = self.bake_in(root, "linux")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = self.call()["argv"]
+        self.assertEqual([argv[i + 1] for i, a in enumerate(argv) if a == "--set"],
+                         ["*.args.BASE_IMAGE=x", "*.args.CLAUDE_VERSION=1"])
+
     def test_the_orchestrator_takes_claude_version(self):
         result = self.bake("orchestrator", "--load", CLAUDE_VERSION="2.1.300")
         self.assertEqual(result.returncode, 0, result.stderr)

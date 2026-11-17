@@ -29,12 +29,17 @@ if [[ "$target" == orchestrator ]]; then
 	CLAUDE_VERSION="${CLAUDE_VERSION:-latest}" exec "${bake[@]}" "$@" orchestrator
 fi
 
-mapfile -t args < <(scripts/cloud/lock.sh bake-args "$target")
-# A failed process substitution doesn't fail mapfile; an empty list means it did.
-((${#args[@]} > 0)) || {
+# Read into a variable, not `mapfile < <(...)`: a failed process substitution
+# doesn't fail mapfile, so a bake-args that printed some lines and then died
+# (an unknown line kind in the lock) built with a partial set of --set values.
+# Here its exit status stops bake.sh (set -e, inherit_errexit) before any build.
+output="$(scripts/cloud/lock.sh bake-args "$target")"
+# A bake-args that exits 0 with nothing would build with no lock at all.
+[[ -n "$output" ]] || {
 	printf 'bake: no build arguments from %s'"'"'s lock\n' "$target" >&2
 	exit 1
 }
+mapfile -t args <<<"$output"
 sets=()
 for arg in "${args[@]}"; do
 	sets+=(--set "$arg")
