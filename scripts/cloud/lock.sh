@@ -42,7 +42,10 @@
 #                                    and a build trigger, never a pin (owner,
 #                                    2026-11-06)
 #   pinned <what> <issue URL or ->   a pin where the dependency is declared
-#                                    (gcp.md, "Pinning a dependency")
+#                                    (gcp.md, "Pinning a dependency"). An apt
+#                                    pin is `pinned apt/<package> <URL>`, the
+#                                    URL from its list line's `# pinned:`
+#                                    comment
 #
 # Each value is resolved within the constraint declared where the dependency
 # lives: BASE_IMAGE and CLAUDE_VERSION in docker-bake.hcl, packages.txt and
@@ -320,6 +323,37 @@ apt_pins_of() {
 	done < <(package_lines "$1")
 }
 
+# apt_pin_notes <type>: a `pinned apt/<name> <issue URL or ->` line for each
+# name=version pin in the type's package lists, the URL the first word after the
+# comment's `# pinned:` (`snapshot=<id>` may follow it; - when the comment names
+# no URL or there is none). A package pinned the same way in two lists (curl, in
+# the base's and core's) is one line. Two lists that name different issues for
+# one package fail: the pin's issue is one fact, and which one the watch should
+# show is not for a script to guess. A list that names an issue beside one that
+# names none gives the issue.
+apt_pin_notes() {
+	local line package url
+	local -A noted=()
+	while IFS= read -r line; do
+		package="${line%%#*}"
+		package="${package//[[:space:]]/}"
+		[[ "$package" =~ ^([a-z0-9.+-]+)= ]] || continue
+		package="${BASH_REMATCH[1]}"
+		url=-
+		if [[ "$line" =~ \#[[:space:]]*pinned:[[:space:]]*([^[:space:]]+) && "${BASH_REMATCH[1]}" != snapshot=* ]]; then
+			url="${BASH_REMATCH[1]}"
+		fi
+		if [[ "${noted[$package]:--}" != - && "$url" != - && "${noted[$package]}" != "$url" ]]; then
+			die "$1: apt/$package's pin names two issues: ${noted[$package]} and $url"
+		fi
+		[[ "$url" != - ]] || url="${noted[$package]:--}"
+		noted[$package]="$url"
+	done < <(package_lines "$1")
+	for package in "${!noted[@]}"; do
+		printf 'pinned apt/%s %s\n' "$package" "${noted[$package]}"
+	done | LC_ALL=C sort
+}
+
 # apt_pins <type>: the type's APT_PINS, for the resolve and the build alike: one
 # per identical pin, since a package can be in two lists (curl, in the base's and
 # core's); apt-pins.sh still refuses two that differ.
@@ -331,10 +365,11 @@ apt_pins() { apt_pins_of "$1" | LC_ALL=C sort -u; }
 # names its snapshot resolves against that snapshot too, added the way the build
 # adds it (images/cloud/base/apt-pins.sh).
 resolve_apt() {
-	local type="$1" base="$2" old="$3" packages pins newest_pin now resolved
+	local type="$1" base="$2" old="$3" packages pins notes newest_pin now resolved
 	mapfile -t packages < <(packages_of "$type")
 	# Assigned, not read through <(...): a bad pin's die has to stop the resolve.
 	pins="$(apt_pins "$type")"
+	notes="$(apt_pin_notes "$type")"
 	now="${LOCK_NOW:-$(date -u +%Y%m%dT%H%M%SZ)}"
 	# --entrypoint: CUDA's entrypoint prints a banner on stdout. apt-build.conf
 	# fails the update when part of the archive doesn't download, rather than
@@ -379,7 +414,7 @@ resolve_apt() {
 	fi
 	printf '%s\n' "$resolved"
 	# A name=version line pins that package, and its snapshot, if it names one.
-	packages_of "$type" | sed -n -E 's/^([a-z0-9.+-]+)=.*/pinned apt\/\1 -/p'
+	[[ -z "$notes" ]] || printf '%s\n' "$notes"
 	[[ -z "$pins" ]] || sed -E 's/^([^=]+)=(.*)$/apt-pin-snapshot \1 \2/' <<<"$pins"
 }
 
@@ -464,6 +499,9 @@ cmd_bake_args() {
 	file="$(lock_file "$1")"
 	# First, so a bad pin fails before anything is printed.
 	pins="$(apt_pins "$1")"
+	# Not printed: the build doesn't read it, but a pull request that names two
+	# issues for one package fails here, in cloud-build, not in the next resolve.
+	apt_pin_notes "$1" >/dev/null
 	[[ -f "$file" ]] || die "no lock for $1 ($file): cloud-build resolves a new type's lock on its pull request for the author to commit (AGENTS.md)"
 	for kind in base apt-snapshot claude; do
 		[[ -n "$(lock_value "$file" "$kind")" ]] || die "$file has no $kind line"

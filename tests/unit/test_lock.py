@@ -492,6 +492,55 @@ class ResolveTests(unittest.TestCase):
         self.assertFalse([line for line in entries if line.startswith("apt-pin-snapshot ")])
         self.assertIn("env APT_PINS=", self.log.read_text().splitlines())
 
+    ISSUE = "https://github.com/lolay/agent-images/issues/117"
+
+    def test_an_apt_pin_names_its_issue(self):
+        self.edit("images/toolsets/native/packages.txt", "cmake\n", f"cmake=3.28.3-1build7  # pinned: {self.ISSUE}\n")
+        entries = self.entries(self.resolve())
+        self.assertIn(f"pinned apt/cmake {self.ISSUE}", entries)
+        self.assertNotIn("pinned apt/cmake -", entries)
+
+    def test_an_apt_pin_with_a_snapshot_names_its_issue_not_the_snapshot(self):
+        self.pin_openssl(f"  # pinned: {self.ISSUE} snapshot={self.JANUARY}")
+        entries = self.entries(self.resolve())
+        self.assertIn(f"pinned apt/openssl {self.ISSUE}", entries)
+        self.assertIn(f"apt-pin-snapshot openssl 3.0.13-0ubuntu3.6@{self.JANUARY}", entries)
+
+    def test_an_apt_pin_with_a_snapshot_and_no_issue_stays_unnamed(self):
+        self.pin_openssl(f"  # pinned: snapshot={self.JANUARY}")
+        self.assertIn("pinned apt/openssl -", self.entries(self.resolve()))
+
+    def pin_curl_from_january(self):
+        self.apt_snapshots = {self.JANUARY: ["curl (8.5.0-2ubuntu10.1 Ubuntu:24.04/noble-updates [amd64])"]}
+
+    def test_the_same_apt_pin_in_two_lists_names_its_issue_once(self):
+        self.pin_curl_from_january()
+        pin = f"curl=8.5.0-2ubuntu10.1 # pinned: {self.ISSUE} snapshot={self.JANUARY}\n"
+        self.edit("images/cloud/base/packages.txt", "curl\n", pin)
+        self.edit("images/toolsets/core/packages.txt", "curl\n", pin)
+        entries = self.entries(self.resolve())
+        self.assertEqual([line for line in entries if line.startswith("pinned apt/curl")],
+                         [f"pinned apt/curl {self.ISSUE}"])
+
+    def test_an_apt_pin_with_an_issue_in_one_list_and_none_in_the_other_names_the_issue(self):
+        self.pin_curl_from_january()
+        self.edit("images/cloud/base/packages.txt", "curl\n", f"curl=8.5.0-2ubuntu10.1 # pinned: snapshot={self.JANUARY}\n")
+        self.edit("images/toolsets/core/packages.txt", "curl\n",
+                  f"curl=8.5.0-2ubuntu10.1 # pinned: {self.ISSUE} snapshot={self.JANUARY}\n")
+        entries = self.entries(self.resolve())
+        self.assertEqual([line for line in entries if line.startswith("pinned apt/curl")],
+                         [f"pinned apt/curl {self.ISSUE}"])
+
+    def test_an_apt_pin_naming_two_issues_fails(self):
+        self.pin_curl_from_january()
+        self.edit("images/cloud/base/packages.txt", "curl\n",
+                  f"curl=8.5.0-2ubuntu10.1 # pinned: https://x/1 snapshot={self.JANUARY}\n")
+        self.edit("images/toolsets/core/packages.txt", "curl\n",
+                  f"curl=8.5.0-2ubuntu10.1 # pinned: https://x/2 snapshot={self.JANUARY}\n")
+        result = self.run_lock("resolve", "linux")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("apt/curl's pin names two issues", result.stderr)
+
     # Ubuntu replaced openssl 3.0.13-0ubuntu3.6 in noble-updates: today's index
     # (and a newer snapshot's) lists only 3.0.13-0ubuntu3.16, the January
     # snapshot still 3.0.13-0ubuntu3.6 (snapshot.ubuntu.com, checked 2026-11-15).
@@ -509,7 +558,7 @@ class ResolveTests(unittest.TestCase):
         entries = self.entries(self.resolve())
         self.assertIn("apt openssl 3.0.13-0ubuntu3.6", entries)
         self.assertIn(f"apt-pin-snapshot openssl 3.0.13-0ubuntu3.6@{self.JANUARY}", entries)
-        self.assertIn("pinned apt/openssl -", entries)
+        self.assertIn("pinned apt/openssl https://github.com/lolay/agent-images/issues/1", entries)
         self.assertIn("apt-snapshot - 20261106T220000Z", entries, "the type's own snapshot still moves")
         log = self.log.read_text().splitlines()
         self.assertIn(f"env APT_PINS=openssl=3.0.13-0ubuntu3.6@{self.JANUARY}", log)
@@ -859,6 +908,22 @@ class PinBakeArgsTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertEqual(result.stdout, "")
         self.assertIn("a snapshot needs a name=version pin", result.stderr)
+
+    def test_an_apt_pin_naming_two_issues_fails_before_printing_anything(self):
+        # The build never reads the issue, but the pull request that names two
+        # fails in cloud-build's bake-args, not in the next resolve on main.
+        self.add("images/cloud/base/packages.txt", "curl\n", "curl=8.5.0-2ubuntu10.1 # pinned: https://x/1\n")
+        self.add("images/toolsets/core/packages.txt", "curl\n", "curl=8.5.0-2ubuntu10.1 # pinned: https://x/2\n")
+        result = self.bake_args()
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("apt/curl's pin names two issues: https://x/1 and https://x/2", result.stderr)
+
+    def test_an_apt_pin_naming_the_same_issue_in_two_lists_is_fine(self):
+        pin = "curl=8.5.0-2ubuntu10.1 # pinned: https://x/1\n"
+        self.add("images/cloud/base/packages.txt", "curl\n", pin)
+        self.add("images/toolsets/core/packages.txt", "curl\n", pin)
+        self.assertEqual(self.bake_args().returncode, 0)
 
 
 class ReadTests(unittest.TestCase):
