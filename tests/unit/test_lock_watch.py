@@ -510,8 +510,15 @@ class GitTests(Base):
         self.write("linux-gpu", LOCK.replace("2.1.318", "2.1.330"))
         self.git("commit", "-qam", "main moves on")
         candidate = self.tree("candidate", {})
-        self.run_git_watch("carry", self.results("resolved linux\n"), str(candidate), "main", "lock/watch")
+        result = self.run_git_watch("carry", self.results("resolved linux\n"), str(candidate), "main", "lock/watch")
+        self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse((candidate / "images/cloud/linux-gpu").exists())
+        # r4.f3: main moving linux-gpu leaves gis, which main didn't touch, carried.
+        # A drop check that ignored the path would drop every lock on any change to main.
+        self.assertNotIn("dropped", result.stderr)
+        self.assertIn("carried images/cloud/gis/versions.lock from lock/watch", result.stderr)
+        self.assertEqual((candidate / "images/cloud/gis/versions.lock").read_text(),
+                         LOCK.replace("2.1.318", "2.1.320"), "the branch's gis candidate is carried")
 
     def test_carry_drops_a_lock_main_changed_while_the_branch_was_open(self):
         # r3.f1: lock/watch holds gis at claude 9.9.1; main then moves gis to 2.0.0
