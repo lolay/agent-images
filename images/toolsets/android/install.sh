@@ -25,6 +25,8 @@
 # The AVD "agent" is booted once here (the build VM has nested KVM too) and
 # saves a quickboot snapshot, so each session's emulator boots in seconds.
 # AGENT_EMULATOR_SNAPSHOT=0 skips that step (for testing without KVM).
+#
+# log and die are install-toolset.sh's.
 set -euo pipefail
 
 : "${TOOLSET_RECORD_DIR:?}"
@@ -37,11 +39,6 @@ readonly sdk="$ANDROID_HOME"
 readonly repository=https://dl.google.com/android/repository
 readonly avd=agent
 
-log() { printf '==> android: %s\n' "$*"; }
-die() {
-	printf '==> android: %s\n' "$*" >&2
-	exit 1
-}
 # The Android CLI, without usage metrics.
 android_cli() { android --no-metrics "$@"; }
 

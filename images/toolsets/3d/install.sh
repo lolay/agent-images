@@ -10,36 +10,24 @@
 # - Blender from blender.org (BLENDER_VERSION), checked against the
 #   release's SHA-256 file, in /opt/blender: its own Python and Cycles kernels.
 # - /opt/3d: Python and the locked environment (pyproject.toml, uv.lock), with
-#   gsplat's CUDA extension compiled here for the L4 (8.9) and Blackwell (12.0,
-#   plus PTX), so no session compiles it.
+#   gsplat's CUDA extension compiled here for every GPU in TORCH_CUDA_ARCH_LIST
+#   (base-gpu's), so no session compiles it.
+#
+# log, die and install_apt are install-toolset.sh's.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly here
 readonly root=/opt/3d
 readonly colmap_packages=/opt/colmap/share/colmap/runtime-packages.txt
-
-log() { printf '==> 3d: %s\n' "$*"; }
-die() {
-	printf '==> 3d: %s\n' "$*" >&2
-	exit 1
-}
-apt() { sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get -q "$@"; }
+: "${TORCH_CUDA_ARCH_LIST:?the GPU types build on base-gpu, which sets TORCH_CUDA_ARCH_LIST (images/cloud/docker-bake.hcl)}"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 [[ -s "$colmap_packages" ]] || die "no $colmap_packages: the builder stage's COLMAP isn't in this image"
-mapfile -t packages <"$colmap_packages"
-log "COLMAP's runtime libraries: ${packages[*]}"
-apt update
-# --allow-downgrades: a pin from an older snapshot (images/cloud/base/apt-pins.sh)
-# can be below what an earlier toolset installed.
-apt install -y --no-install-recommends --allow-downgrades "${packages[@]}"
-apt clean
-if [[ "${APT_DROP_LISTS:-false}" == "true" ]]; then
-	sudo rm -rf /var/lib/apt/lists/*
-fi
+log "COLMAP's runtime libraries: $(paste -sd ' ' "$colmap_packages")"
+install_apt "$colmap_packages"
 /opt/colmap/bin/colmap -h >/dev/null || die "colmap doesn't run with those libraries"
 
 # BLENDER_VERSION: a version (the lock's, scripts/cloud/lock.sh, or a pin), else
@@ -86,8 +74,8 @@ mkdir "$work/gsplat"
 tar -xzf "$work/gsplat.tar.gz" -C "$work/gsplat" --strip-components=1
 grep -q '"-std=c++17"' "$work/gsplat/setup.py" || die "gsplat's setup.py no longer sets -std=c++17: drop the patch"
 sed -i 's/"-std=c++17"/"-std=c++20"/' "$work/gsplat/setup.py"
-log "compiling gsplat for compute capability 8.9 and 12.0"
-CUDA_HOME=/usr/local/cuda PATH="/usr/local/cuda/bin:$PATH" TORCH_CUDA_ARCH_LIST="8.9;12.0+PTX" \
+log "compiling gsplat for $TORCH_CUDA_ARCH_LIST"
+CUDA_HOME=/usr/local/cuda PATH="/usr/local/cuda/bin:$PATH" \
 	MAX_JOBS="$(nproc)" uv pip install --python "$root/.venv" --no-build-isolation --no-deps "$work/gsplat" 2>&1
 uv cache clean 2>&1
 # The extension has to be in the environment, built, not left for a session's

@@ -129,6 +129,29 @@ class BakeTests(unittest.TestCase):
         self.assertIn("--load orchestrator", every)
         self.assertEqual(len(every), len(run_types()) + 1)
 
+    def test_every_gpu_type_builds_on_base_gpu(self):
+        """A type that installs the gpu toolset builds on base's gpu stage, which
+        sets the driver capabilities and the CUDA targets (r4.f9, r4.f14); a type
+        that doesn't, doesn't. Read from the bake graph and the Dockerfiles, so a
+        new type is covered the day it lands."""
+        gpu_types = []
+        for type_ in run_types():
+            toolsets = subprocess.run(
+                ["bash", "-c", 'source scripts/cloud/lib.sh && cloud_toolsets "$1"', "-", type_],
+                cwd=REPO, check=True, capture_output=True, text=True,
+            ).stdout.split()
+            stages = [target.get("target") for target in bake_print(type_).values()
+                      if target["dockerfile"] == "images/cloud/base/Dockerfile"]
+            with self.subTest(type=type_):
+                self.assertEqual(stages, ["gpu"] if "gpu" in toolsets else ["base"])
+            if "gpu" in toolsets:
+                gpu_types.append(type_)
+        self.assertIn("linux-gpu", gpu_types)
+
+    def test_base_gpu_hands_the_cuda_targets_to_cmake_and_pytorch(self):
+        args = bake_print("base-gpu")["base-gpu"]["args"]
+        self.assertEqual((args["CUDAARCHS"], args["TORCH_CUDA_ARCH_LIST"]), ("89-real;120", "8.9;12.0+PTX"))
+
     def test_the_orchestrator_has_its_target(self):
         self.assertEqual(bake_print("orchestrator")["orchestrator"]["tags"], ["agent-orchestrator:local"])
 

@@ -80,5 +80,104 @@ class InstallToolsetTests(unittest.TestCase):
         self.assertIn("no toolset nope", result.stderr)
 
 
+class SharedHelpersTests(unittest.TestCase):
+    """A toolset's install.sh, and a script that sources install-toolset.sh, use its
+    log, die and apt helpers rather than their own copies (r4.f13)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.toolsets = self.tmp / "toolsets"
+        self.toolsets.mkdir()
+        self.script = self.toolsets / "install-toolset.sh"
+        shutil.copy(SCRIPT, self.script)
+        self.bin = self.tmp / "bin"
+        self.calls = self.tmp / "apt-calls"
+        write_executable(
+            self.bin / "sudo",
+            '(($# > 0)) || { echo "usage: sudo command" >&2; exit 1; }\nexec "$@"\n',
+        )
+        # apt-get as the helpers call it: -q, then a known operation; install
+        # wants -y and at least one package, as the real one does.
+        write_executable(
+            self.bin / "apt-get",
+            '[[ "$1" == -q ]] || { echo "E: expected -q first" >&2; exit 100; }\n'
+            "shift\n"
+            'case "$1" in\n'
+            "update | clean) ;;\n"
+            "install)\n"
+            '\t[[ " $* " == *" -y "* ]] || { echo "E: would prompt" >&2; exit 1; }\n'
+            '\t[[ -n "$(printf \'%s\\n\' "${@:2}" | grep -v \'^-\')" ]] || { echo "E: nothing to install" >&2; exit 100; } ;;\n'
+            '*) echo "E: Invalid operation $1" >&2; exit 100 ;;\n'
+            "esac\n"
+            'printf \'%s\\n\' "$*" >>"$APT_CALLS"\n',
+        )
+
+    def run_bash(self, *args):
+        return subprocess.run(
+            ["bash", *args],
+            env=base_env(self.tmp, self.bin, AGENT_TOOLSETS_DIR=str(self.tmp / "record"), APT_CALLS=str(self.calls)),
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30,
+        )
+
+    def apt_calls(self):
+        return self.calls.read_text().splitlines() if self.calls.exists() else []
+
+    def test_a_toolsets_install_sh_gets_the_helpers_under_its_name(self):
+        directory = self.toolsets / "demo"
+        directory.mkdir()
+        (directory / "list.txt").write_text("# a comment\nalpha\nbeta=1.0  # pinned\n\n")
+        (directory / "install.sh").write_text(
+            'set -euo pipefail\nlog "hello"\ninstall_apt "$(dirname "$0")/list.txt"\n'
+            'install_apt_packages /tmp/x.deb\napt clean\n'
+        )
+        result = self.run_bash(str(self.script), "demo")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("==> demo: hello\n", result.stdout)
+        self.assertEqual(self.apt_calls(), [
+            "update", "install -y --no-install-recommends --allow-downgrades alpha beta=1.0", "clean",
+            "update", "install -y --no-install-recommends --allow-downgrades /tmp/x.deb", "clean",
+            "clean",
+        ])
+
+    def test_die_stops_a_toolsets_install_sh_under_its_name(self):
+        directory = self.toolsets / "demo"
+        directory.mkdir()
+        (directory / "install.sh").write_text('die "broken"\necho "after die"\n')
+        result = self.run_bash(str(self.script), "demo")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("==> demo: broken\n", result.stderr)
+        self.assertNotIn("after die", result.stdout)
+
+    def test_no_toolset_script_restates_them(self):
+        """Each install.sh, and each script that sources install-toolset.sh, uses
+        its helpers rather than defining its own."""
+        import re
+        users = [path for path in SCRIPT.parent.rglob("*.sh")
+                 if path.name == "install.sh" or "install-toolset.sh\"" in path.read_text()]
+        self.assertGreaterEqual(len(users), 5, users)  # 3d, gpu, gis, android, build-colmap.sh at least
+        restated = [
+            f"{path.relative_to(REPO)}:{number}"
+            for path in users
+            for number, line in enumerate(path.read_text().splitlines(), 1)
+            if re.match(r"\s*(log|die|apt|install_apt|install_apt_packages)\s*\(\)", line)
+        ]
+        self.assertEqual(restated, [])
+
+    def test_sourcing_defines_the_helpers_and_runs_nothing(self):
+        caller = self.tmp / "caller.sh"
+        (self.tmp / "list.txt").write_text("gamma\n")
+        caller.write_text(
+            f'TOOLSET_LOG_NAME=caller\nsource "{self.script}"\nlog "ready"\n'
+            f'install_apt "{self.tmp / "list.txt"}"\ndie "done"\n'
+        )
+        result = self.run_bash(str(caller))
+        # No usage error from install-toolset.sh's own main, and the caller's die.
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertNotIn("usage", result.stderr)
+        self.assertEqual((result.stdout.splitlines()[0], result.stderr), ("==> caller: ready", "==> caller: done\n"))
+        self.assertIn("install -y --no-install-recommends --allow-downgrades gamma", self.apt_calls())
+
+
 if __name__ == "__main__":
     unittest.main()

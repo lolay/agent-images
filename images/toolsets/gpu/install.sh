@@ -8,16 +8,17 @@
 #   where Cloud Run mounts them. Docker's NVIDIA runtime writes these itself;
 #   Cloud Run documents only the library mount, so the image carries them. If the
 #   mount has no graphics libraries, both fall back to Mesa (llvmpipe, lavapipe).
-# - agent-cuda-probe, the smoke check's CUDA kernel, for the L4 and Blackwell,
-#   and agent-gpu-libs, which reports which driver libraries the host mounted.
+# - agent-cuda-probe, the smoke check's CUDA kernel, for every GPU in CUDAARCHS
+#   (base-gpu's), and agent-gpu-libs, which reports which driver libraries the
+#   host mounted.
+#
+# log, die and install_apt_packages are install-toolset.sh's.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly here
 readonly nvidia_lib=/usr/local/nvidia/lib64
-
-log() { printf '==> gpu: %s\n' "$*"; }
-apt() { sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get -q "$@"; }
+: "${CUDAARCHS:?the GPU types build on base-gpu, which sets CUDAARCHS (images/cloud/docker-bake.hcl)}"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -29,19 +30,11 @@ if [[ "$version" == latest ]]; then
 	latest="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/VirtualGL/virtualgl/releases/latest)"
 	version="${latest##*/}"
 fi
-[[ "$version" =~ ^[0-9]+(\.[0-9]+)+$ ]] || {
-	printf '==> gpu: unexpected VirtualGL release %s\n' "$version" >&2
-	exit 1
-}
+[[ "$version" =~ ^[0-9]+(\.[0-9]+)+$ ]] || die "unexpected VirtualGL release $version"
 log "VirtualGL $version"
 curl -fsSL -o "$work/virtualgl.deb" \
 	"https://github.com/VirtualGL/virtualgl/releases/download/$version/virtualgl_${version}_amd64.deb"
-apt update
-apt install -y --no-install-recommends "$work/virtualgl.deb"
-apt clean
-if [[ "${APT_DROP_LISTS:-false}" == "true" ]]; then
-	sudo rm -rf /var/lib/apt/lists/*
-fi
+install_apt_packages "$work/virtualgl.deb"
 
 # GLVND tries EGL vendors in file-name order and skips one whose library won't
 # load, so 10_nvidia comes before Mesa's 50_mesa. Full paths: ldconfig's cache
@@ -53,13 +46,17 @@ printf '{\n  "file_format_version": "1.0.0",\n  "ICD": {"library_path": "%s/libE
 printf '{\n  "file_format_version": "1.0.1",\n  "ICD": {"library_path": "%s/libGLX_nvidia.so.0", "api_version": "1.4.0"}\n}\n' \
 	"$nvidia_lib" | sudo tee /usr/share/vulkan/icd.d/nvidia_icd.json >/dev/null
 
-# The probe: SASS for the L4 (sm_89) and Blackwell (sm_120), and PTX for
-# compute_120 so a newer GPU can still JIT it.
-log "building agent-cuda-probe"
-/usr/local/cuda/bin/nvcc -O2 \
-	-gencode arch=compute_89,code=sm_89 \
-	-gencode arch=compute_120,code=sm_120 \
-	-gencode arch=compute_120,code=compute_120 \
-	-o "$work/agent-cuda-probe" "$here/cuda-probe.cu"
+# The probe, for CUDAARCHS in nvcc's terms: <cc>-real is SASS for that GPU,
+# <cc>-virtual PTX, and a plain <cc> both, so a newer GPU can still JIT it.
+gencode=()
+IFS=';' read -ra archs <<<"$CUDAARCHS"
+for arch in "${archs[@]}"; do
+	cc="${arch%-*}"
+	[[ "$cc" =~ ^[0-9]+$ ]] || die "unexpected CUDAARCHS entry '$arch' in '$CUDAARCHS'"
+	[[ "$arch" == *-virtual ]] || gencode+=(-gencode "arch=compute_$cc,code=sm_$cc")
+	[[ "$arch" == *-real ]] || gencode+=(-gencode "arch=compute_$cc,code=compute_$cc")
+done
+log "building agent-cuda-probe: ${gencode[*]}"
+/usr/local/cuda/bin/nvcc -O2 "${gencode[@]}" -o "$work/agent-cuda-probe" "$here/cuda-probe.cu"
 sudo install -m 755 "$work/agent-cuda-probe" /usr/local/bin/agent-cuda-probe
 sudo install -m 755 "$here/agent-gpu-libs.sh" /usr/local/bin/agent-gpu-libs

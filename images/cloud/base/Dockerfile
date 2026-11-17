@@ -11,8 +11,9 @@
 # BASE_IMAGE comes from docker-bake.hcl, the one place it's declared: Ubuntu
 # through Google's mirror for base, CUDA's devel image (on the same Ubuntu) for
 # base-gpu. The build passes the lock's digest for it (scripts/cloud/lock.sh).
+# base is the stage of that name; base-gpu is the gpu stage at the end, on CUDA.
 ARG BASE_IMAGE
-FROM ${BASE_IMAGE}
+FROM ${BASE_IMAGE} AS base
 
 # apt reads Ubuntu's archive as it was at APT_SNAPSHOT, the type's locked
 # snapshot (specs/gcp.md, "The lock"), in this layer and every toolset's after
@@ -57,3 +58,21 @@ ARG APT_DROP_LISTS=true
 RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
 	--mount=type=bind,source=images/toolsets/core,target=/tmp/toolsets/core \
 	bash /tmp/toolsets/install-toolset.sh core
+
+# agent-base-gpu (bake target base-gpu): what every GPU type needs beyond CUDA's
+# image, set once here rather than in each GPU type's Dockerfile.
+# - NVIDIA_DRIVER_CAPABILITIES=all: CUDA's image asks the container runtime for
+#   compute and utility only, which under NVIDIA's container toolkit leaves the
+#   graphics libraries (EGL, GLX, Vulkan), NVENC and OptiX out of the driver
+#   mount the gpu toolset routes to. Cloud Run documents mounting all of them
+#   anyway, so at worst this changes nothing.
+# - CUDAARCHS (CMake) and TORCH_CUDA_ARCH_LIST (PyTorch): the GPUs every CUDA
+#   build here targets, from docker-bake.hcl's CUDA_CAPABILITIES, the one place
+#   that list lives. The toolsets' builds read them (and die without them), and
+#   so do a session's.
+FROM base AS gpu
+ARG CUDAARCHS
+ARG TORCH_CUDA_ARCH_LIST
+ENV NVIDIA_DRIVER_CAPABILITIES=all \
+	CUDAARCHS=${CUDAARCHS} \
+	TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}
