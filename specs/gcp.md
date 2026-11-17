@@ -329,8 +329,15 @@ the URL the first word of its list line's `# pinned:` comment (`-` if it names n
 | Claude Code | Version | `CLAUDE_VERSION` in `docker-bake.hcl` (`latest`, `stable`, or a version) | `https://downloads.claude.ai/claude-code-releases/<channel>` |
 | Rust toolchain | Version | `RUST_TOOLCHAIN` in `images/toolsets/rust/install.sh` (`stable`, a minor line, or a version) | rustup's channel manifest |
 | Terraform | Version | `TERRAFORM_VERSION` in `images/toolsets/terraform/install.sh` (`latest`, `~> x.y`, or a version) | HashiCorp's release index, newest stable on that line |
-| tflint, VirtualGL, COLMAP | Release tag | `TFLINT_VERSION`, `VIRTUALGL_VERSION` in their toolsets' `install.sh`; `COLMAP_VERSION` in `images/toolsets/3d/build-colmap.sh` | The tag GitHub redirects `/releases/latest` to |
-| Blender | Release version | `BLENDER_VERSION` in `images/toolsets/3d/install.sh` | The newest `blender-x.y.z-linux-x64.tar.xz` in the newest series on download.blender.org's release index, read by `images/toolsets/3d/blender.sh` (below) |
+| tflint, VirtualGL, COLMAP | Release tag | `TFLINT_VERSION`, `VIRTUALGL_VERSION` in their toolsets' `install.sh`; `COLMAP_VERSION` in `images/toolsets/3d/build-colmap.sh`; each beside its `*_RELEASES`, the GitHub releases URL | The tag GitHub redirects `/releases/latest` to |
+| Blender | Release version | `BLENDER_VERSION` in `images/toolsets/3d/install.sh`, beside `BLENDER_RELEASES=blender.sh` | The newest `blender-x.y.z-linux-x64.tar.xz` in the newest series on download.blender.org's release index, read by `images/toolsets/3d/blender.sh latest` (below) |
+
+A release tool is declared once, in the toolset script that reads it:
+`${NAME_VERSION:-latest}` and beside it `NAME_RELEASES=<source>`, a GitHub releases
+URL or a script beside it whose `latest` prints the newest release. The script's
+own downloads use the same source, and `lock.sh`'s `release_tools` reads both from
+the type's toolsets, so adding one is that edit; the lock line is `release <name>`,
+NAME in lower case.
 
 The build consumes the lock (`scripts/cloud/bake.sh` locally and on pull requests,
 the deploy's bake from `lock.sh bake-args`): `BASE_IMAGE` at the locked digest,
@@ -692,7 +699,7 @@ it's fixed. How, per source:
 | Claude Code | `CLAUDE_VERSION=2.1.317` (a version) or `stable` (the channel) | The watch then skips Claude. `nightly` types already run with `CLAUDE_UPGRADE=false`; a `weekly` type still updates itself at start, past the pin, and has no setting to stop it yet: add one (an env file key read by `gcp_runner_settings`) if a weekly pin is ever needed |
 | Rust toolchain | `RUST_TOOLCHAIN=1.91.0` (a version) or `1.91` (a minor line) in `images/toolsets/rust/install.sh` | The watch resolves within it: a minor line still takes patch releases |
 | Terraform | `TERRAFORM_VERSION=1.14.2` or `~> 1.14` in `images/toolsets/terraform/install.sh` | tenv takes the constraint as is |
-| Type tool from a release | Its `*_VERSION` default in the script that reads it (the release rows of the lock table) | |
+| Type tool from a release | Its `*_VERSION` default in the script that reads it, beside its `*_RELEASES` (the release rows of the lock table) | |
 
 Pins live where the dependency is declared, each with `# pinned: <issue URL>`, and the
 lock marks them pinned. The watch lists every pin in the job summary next to

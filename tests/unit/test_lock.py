@@ -835,7 +835,8 @@ class BlenderTests(unittest.TestCase):
                               capture_output=True, text=True, timeout=60)
 
     def test_lock_reads_blender_through_the_helper(self):
-        # lock.sh's resolve and pins share release_latest; pins needs no Docker.
+        # lock.sh's resolve and pins share release_latest, which asks the source
+        # the 3d toolset declares (BLENDER_RELEASES); pins needs no Docker.
         self.refuse(f"{BLENDER}/", 1)
         result = self.lock_pins()
         self.assertEqual(result.returncode, 0, result.stderr)
