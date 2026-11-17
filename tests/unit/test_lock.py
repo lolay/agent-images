@@ -846,7 +846,74 @@ class BlenderTests(unittest.TestCase):
         self.urls = {}
         result = self.lock_pins()
         self.assertEqual(result.returncode, 1)
-        self.assertIn("lock: couldn't read Blender's newest release", result.stderr)
+        self.assertIn("lock: couldn't read the newest release from images/toolsets/3d/blender.sh", result.stderr)
+
+
+class ReleaseToolTests(unittest.TestCase):
+    """lock.sh's release tools come from the toolset scripts that read them: a
+    `NAME_RELEASES=<source>` line beside `${NAME_VERSION:-...}` (r4.f12). Run in
+    a tree of one type and one toolset, so a tool lock.sh has never heard of
+    shows that adding one is that declaration and nothing in lock.sh."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.repo = self.tmp / "repo"
+        (self.repo / "images/cloud/demo").mkdir(parents=True)
+        (self.repo / "images/cloud/base").mkdir()
+        (self.repo / "images/cloud/base/Dockerfile").write_text("FROM mirror.gcr.io/library/ubuntu:24.04\n")
+        (self.repo / "images/cloud/demo/Dockerfile").write_text(
+            "FROM agent-base\nRUN bash /tmp/toolsets/install-toolset.sh widgets\n")
+        self.toolset = self.repo / "images/toolsets/widgets"
+        self.toolset.mkdir(parents=True)
+        (self.toolset / "latest.sh").write_text('#!/bin/bash\n[[ "$1" == latest ]] && echo 7.1.0\n')
+        (self.tmp / "bin").mkdir()
+        executable(self.tmp / "bin/curl", FAKE_CURL)
+        (self.tmp / "urls.json").write_text(json.dumps({
+            "redirect https://github.com/acme/gizmo/releases/latest": "https://github.com/acme/gizmo/releases/tag/v2.0.0",
+        }))
+        self.locks = self.tmp / "locks"
+        (self.locks / "demo").mkdir(parents=True)
+
+    def declare(self, text):
+        (self.toolset / "install.sh").write_text("#!/bin/bash\n" + text)
+
+    def pins(self, lock):
+        (self.locks / "demo/versions.lock").write_text(lock)
+        return subprocess.run(
+            ["bash", str(SCRIPT), "pins", "demo"], cwd=self.repo, capture_output=True, text=True, timeout=30,
+            env={**os.environ, "PATH": f"{self.tmp / 'bin'}:{os.environ['PATH']}", "LOCK_DIR": str(self.locks),
+                 "FAKE_URLS": str(self.tmp / "urls.json"), "FAKE_LOG": str(self.tmp / "log")})
+
+    def test_a_new_tool_is_one_declaration_in_its_toolset(self):
+        self.declare('gizmo="${GIZMO_VERSION:-latest}"\n'
+                     "readonly GIZMO_RELEASES=https://github.com/acme/gizmo/releases\n"
+                     'thing="${WIDGET_THING_VERSION:-latest}"\n'
+                     "WIDGET_THING_RELEASES=latest.sh\n")
+        result = self.pins("release gizmo v1.0.0\npinned gizmo -\nrelease widget-thing 7.0.0\npinned widget-thing -\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "gizmo\tv1.0.0\tv2.0.0\t-\nwidget-thing\t7.0.0\t7.1.0\t-\n")
+
+    def test_a_pinned_tool_no_toolset_declares_fails(self):
+        self.declare('gizmo="${GIZMO_VERSION:-latest}"\n')
+        result = self.pins("release gizmo v1.0.0\npinned gizmo -\n")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("lock: pinned 'gizmo': no upstream known", result.stderr)
+
+    def test_a_source_without_its_constraint_fails(self):
+        self.declare("readonly GIZMO_RELEASES=https://github.com/acme/gizmo/releases\n")
+        result = self.pins("release gizmo v1.0.0\npinned gizmo -\n")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("lock: no ${GIZMO_VERSION:-...} in images/toolsets/widgets/install.sh", result.stderr)
+
+    def test_an_unknown_source_fails(self):
+        for source, error in (("https://gitlab.com/acme/gizmo/-/releases", "unknown release source"),
+                              ("missing.sh", "release source 'missing.sh' isn't a script beside it")):
+            with self.subTest(source):
+                self.declare(f'gizmo="${{GIZMO_VERSION:-latest}}"\nreadonly GIZMO_RELEASES={source}\n')
+                result = self.pins("release gizmo v1.0.0\npinned gizmo -\n")
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(f"lock: images/toolsets/widgets/install.sh: {error}", result.stderr)
 
 
 class PinBakeArgsTests(unittest.TestCase):

@@ -325,10 +325,18 @@ class PinsTests(Base):
             "https://static.rust-lang.org/dist/channel-rust-stable.toml": '[pkg.rust]\nversion = "1.99.1 (x 2026-10-13)"\n',
             "redirect https://github.com/terraform-linters/tflint/releases/latest":
                 "https://github.com/terraform-linters/tflint/releases/tag/v0.66.0",
+            "redirect https://github.com/colmap/colmap/releases/latest":
+                "https://github.com/colmap/colmap/releases/tag/4.2.1",
+            # blender.org's index pages: the newest series, then its newest Linux build.
+            "https://download.blender.org/release/":
+                '<a href="Blender5.3/">Blender5.3/</a>\n<a href="Blender5.10/">Blender5.10/</a>\n',
+            "https://download.blender.org/release/Blender5.10/":
+                '<a href="blender-5.10.0-linux-x64.tar.xz">x</a>\n<a href="blender-5.10.1-linux-x64.tar.xz">x</a>\n',
         }))
         self.env = {"FAKE_URLS": str(self.tmp / "urls.json"), "FAKE_LOG": str(self.tmp / "log"),
                     "FAKE_ISSUES": json.dumps({"repos/anthropics/claude-code/issues/9": "closed",
-                                               "repos/rust-lang/rust/issues/1": "open"})}
+                                               "repos/rust-lang/rust/issues/1": "open",
+                                               "repos/colmap/colmap/issues/7": "open"})}
 
     def pins(self, locks):
         result = self.run_watch("pins", str(self.tree("t", locks)), env=self.env)
@@ -342,11 +350,19 @@ class PinsTests(Base):
             + "pinned rust https://github.com/rust-lang/rust/issues/1\n"
             + "release tflint v0.60.0\npinned tflint -\n"
             + "pinned apt/cmake https://bugs.launchpad.net/ubuntu/+bug/1\n",
+            # Each release tool is a row of lock.sh's release_tools table, read
+            # from where its toolset declares it (r4.f5, r4.f12): dropping one
+            # loses its locked value or fails the whole list.
+            "3d-gpu": LOCK
+            + "release blender 5.3.0\npinned blender -\n"
+            + "release colmap 3.12.0\npinned colmap https://github.com/colmap/colmap/issues/7\n",
         })
         self.assertIn("| linux | claude | `2.1.318` | `2.1.320` | https://github.com/anthropics/claude-code/issues/9 **closed**: remove the pin? |", out)
         self.assertIn("| linux | rust | `1.91.0` | `1.99.1` | https://github.com/rust-lang/rust/issues/1 open |", out)
         self.assertIn("| linux | tflint | `v0.60.0` | `v0.66.0` |  no issue named |", out)
         self.assertIn("| linux | apt/cmake | `3.28.3-1build7` | `-` | https://bugs.launchpad.net/ubuntu/+bug/1 not a GitHub issue |", out)
+        self.assertIn("| 3d-gpu | blender | `5.3.0` | `5.10.1` |  no issue named |", out)
+        self.assertIn("| 3d-gpu | colmap | `3.12.0` | `4.2.1` | https://github.com/colmap/colmap/issues/7 open |", out)
 
     def test_an_unreadable_issue_says_so(self):
         out = self.pins({"linux": LOCK + "pinned claude https://github.com/anthropics/claude-code/issues/404\n"})

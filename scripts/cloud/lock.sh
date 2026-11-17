@@ -35,9 +35,9 @@
 #   claude - <version>               Claude Code
 #   rust - <version>                 the Rust toolchain, if the type has rust
 #   terraform - <version>            Terraform, if the type has terraform
-#   release <name> <tag>             a tool from an upstream release (tflint,
-#                                    virtualgl, colmap from GitHub; blender
-#                                    from blender.org)
+#   release <name> <tag>             a tool from an upstream release: each
+#                                    one a toolset script declares a source
+#                                    for (release_tools below)
 #   brew <formula> <version>         Homebrew, dependencies included: a record
 #                                    and a build trigger, never a pin (owner,
 #                                    2026-11-06)
@@ -50,10 +50,11 @@
 # Each value is resolved within the constraint declared where the dependency
 # lives: BASE_IMAGE and CLAUDE_VERSION in docker-bake.hcl, packages.txt and
 # build-packages.txt lines (name=version pins one, and `snapshot=<id>` in its
-# `# pinned:` comment takes that version from that snapshot), RUST_TOOLCHAIN, TERRAFORM_VERSION, TFLINT_VERSION,
-# VIRTUALGL_VERSION and BLENDER_VERSION in their toolsets' install.sh, and
-# COLMAP_VERSION in the 3d toolset's build-colmap.sh. The apt snapshot moves only
-# when what apt resolves today differs from what the lock recorded.
+# `# pinned:` comment takes that version from that snapshot), RUST_TOOLCHAIN and
+# TERRAFORM_VERSION in their toolsets' install.sh, and each release tool's
+# NAME_VERSION in the toolset script that reads it, beside NAME_RELEASES, where
+# its releases come from (release_tools). The apt snapshot moves only when what
+# apt resolves today differs from what the lock recorded.
 #
 #   LOCK_NOW       the snapshot id to use if apt moved (default: now, UTC)
 #   LOCK_DIR       where the current locks are (default images/cloud)
@@ -74,7 +75,6 @@ readonly lock_dir="${LOCK_DIR:-images/cloud}"
 readonly claude_releases=https://downloads.claude.ai/claude-code-releases
 readonly rust_dist=https://static.rust-lang.org/dist
 readonly terraform_index=https://releases.hashicorp.com/terraform/index.json
-readonly blender_sh=images/toolsets/3d/blender.sh
 readonly registry_waits="${LOCK_REGISTRY_WAITS:-30 60 120 180 240}"
 
 die() {
@@ -125,12 +125,12 @@ bake_print() {
 # 43715897836 failed on a bare "curl: (22) ... 403"), so the failure does.
 fetch() { curl -fsSL --retry 3 "$1" || die "couldn't fetch $1"; }
 
-# github_latest <owner/repo>: the tag GitHub redirects /releases/latest to (no
-# API call, so no rate limit).
+# github_latest <https://github.com/owner/repo/releases>: the tag GitHub
+# redirects /releases/latest to (no API call, so no rate limit).
 github_latest() {
-	local url latest="https://github.com/$1/releases/latest"
+	local url latest="$1/latest"
 	url="$(curl -fsSLI --retry 3 -o /dev/null -w '%{url_effective}' "$latest")" || die "couldn't fetch $latest"
-	[[ "$url" == */releases/tag/* ]] || die "no latest release for $1 ($url)"
+	[[ "$url" == */releases/tag/* ]] || die "no latest release in $1 ($url)"
 	printf '%s' "${url##*/}"
 }
 
@@ -229,44 +229,60 @@ resolve_terraform() {
 		[[ "$constraint" == latest ]] || printf 'pinned terraform %s\n' "$(pin_note "$file" 'TERRAFORM_VERSION:-')"
 		printf 'terraform - %s\n' "$version"
 	fi
-	resolve_release tflint "$file" TFLINT_VERSION
 }
 
-# release_repo <name>: the GitHub repository a `release` line's tool comes from.
-release_repo() {
-	case "$1" in
-	tflint) printf 'terraform-linters/tflint' ;;
-	virtualgl) printf 'VirtualGL/virtualgl' ;;
-	colmap) printf 'colmap/colmap' ;;
-	*) die "no GitHub repository known for release '$1'" ;;
-	esac
+# release_tools <type>: the table of tools the type's toolsets install from an
+# upstream release, one `<name> <file> <NAME>_VERSION <source>` line each. Each
+# tool is declared in the toolset script that reads it: its constraint,
+# `${NAME_VERSION:-...}`, and beside it `NAME_RELEASES=<source>`, which the
+# script's own downloads use too. So adding a release tool is that one edit, and
+# nothing here names one. <name> is NAME in lower case with - for _, the lock's
+# `release <name>` line, which bake-args turns back into NAME_VERSION. A source
+# is one of:
+#
+#   https://github.com/<owner>/<repo>/releases
+#                  the tag GitHub redirects /releases/latest to
+#   <script>.sh    a script beside the declaring one whose `latest` prints the
+#                  newest release (the 3d toolset's blender.sh)
+release_tools() {
+	local toolset file var source
+	while read -r toolset; do
+		for file in "images/toolsets/$toolset"/*.sh; do
+			[[ -f "$file" ]] || continue
+			while read -r var source; do
+				# The constraint must be there too: a source alone resolves nothing.
+				declared "$file" "${var}_VERSION" >/dev/null
+				printf '%s %s %s_VERSION %s\n' "$(tr '[:upper:]_' '[:lower:]-' <<<"$var")" "$file" "$var" "$source"
+			done < <(sed -n -E 's/^[[:space:]]*(readonly[[:space:]]+)?([A-Z][A-Z0-9_]*)_RELEASES=([^[:space:]#;]+).*/\2 \3/p' "$file")
+		done
+	done < <(cloud_toolsets "$1")
 }
 
-# blender_latest: the newest release in blender.org's index, read by the 3d
-# toolset's blender.sh, which the build's own fallback uses too: one copy of the
-# index's URL, its mirrors and its patterns.
-blender_latest() {
-	local version
-	version="$(bash "$blender_sh" latest)" || die "couldn't read Blender's newest release"
-	[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "blender.sh latest gave '$version'"
-	printf '%s' "$version"
-}
-
-# release_latest <name>: upstream's newest release of a `release` line's tool.
+# release_latest <file> <source>: upstream's newest release from a source that
+# <file> declares (release_tools).
 release_latest() {
-	case "$1" in
-	blender) blender_latest ;;
-	*) github_latest "$(release_repo "$1")" ;;
+	local file="$1" source="$2" tag
+	case "$source" in
+	https://github.com/*/*/releases) tag="$(github_latest "$source")" ;;
+	*.sh)
+		[[ "$source" =~ ^[a-z0-9][a-z0-9-]*\.sh$ && -f "$(dirname "$file")/$source" ]] ||
+			die "$file: release source '$source' isn't a script beside it"
+		tag="$(bash "$(dirname "$file")/$source" latest)" || die "couldn't read the newest release from $(dirname "$file")/$source"
+		;;
+	*) die "$file: unknown release source '$source' (a GitHub releases URL or a script beside it)" ;;
 	esac
+	[[ "$tag" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || die "$source gave '$tag' as its newest release"
+	printf '%s' "$tag"
 }
 
-# resolve_release <name> <file> <NAME>: a tool from a GitHub release.
+# resolve_release <name> <file> <NAME_VERSION> <source>: a release_tools row,
+# from its source or its pin.
 resolve_release() {
-	local name="$1" file="$2" var="$3" constraint tag
+	local name="$1" file="$2" var="$3" source="$4" constraint tag
 	constraint="$(declared "$file" "$var")"
 	if [[ "$constraint" == latest ]]; then
 		# Assigned first: a failed substitution in printf's arguments wouldn't fail.
-		tag="$(release_latest "$name")"
+		tag="$(release_latest "$file" "$source")"
 		printf 'release %s %s\n' "$name" "$tag"
 	else
 		printf 'release %s %s\npinned %s %s\n' "$name" "$constraint" "$name" "$(pin_note "$file" "$var:-")"
@@ -450,7 +466,7 @@ prepare_brew() {
 }
 
 cmd_resolve() {
-	local type="$1" graph base base_lines claude old toolsets body
+	local type="$1" graph base base_lines claude old toolsets releases body name file var source
 	[[ "$(uname -s)" == Linux ]] || die "resolve needs Linux: Homebrew resolves dependencies for the OS it runs on"
 	[[ -f "infra/gcp/$type.env" && "$(gcp_backend "$type")" == run ]] || die "$type isn't a Cloud Run type in infra/gcp"
 	graph="$(bake_print "$type")" || die "docker buildx bake --print $type failed"
@@ -461,6 +477,7 @@ cmd_resolve() {
 	old="$(lock_file "$type")"
 	[[ -f "$old" ]] || old=""
 	mapfile -t toolsets < <(cloud_toolsets "$type")
+	releases="$(release_tools "$type")"
 	prepare_brew
 
 	base_lines="$(resolve_base "$base")"
@@ -472,13 +489,10 @@ cmd_resolve() {
 		resolve_apt "$type" "$(awk '$1 == "base" {print $3}' <<<"$base_lines")" "$old"
 		if [[ " ${toolsets[*]} " == *" rust "* ]]; then resolve_rust; fi
 		if [[ " ${toolsets[*]} " == *" terraform "* ]]; then resolve_terraform; fi
-		if [[ " ${toolsets[*]} " == *" gpu "* ]]; then
-			resolve_release virtualgl images/toolsets/gpu/install.sh VIRTUALGL_VERSION
-		fi
-		if [[ " ${toolsets[*]} " == *" 3d "* ]]; then
-			resolve_release colmap images/toolsets/3d/build-colmap.sh COLMAP_VERSION
-			resolve_release blender images/toolsets/3d/install.sh BLENDER_VERSION
-		fi
+		while read -r name file var source; do
+			[[ -n "$name" ]] || continue
+			resolve_release "$name" "$file" "$var" "$source"
+		done <<<"$releases"
 		resolve_brew "$type"
 	)"
 	printf '# %s: what agent-%s is built from (specs/gcp.md, "The lock").\n' "$(lock_file "$type")" "$type"
@@ -562,8 +576,13 @@ cmd_summary() {
 		}'
 }
 
-# pinned_value <file> <what>: the locked value a `pinned <what>` line holds. An
-# apt pin the base image already satisfies has no apt line; its
+# release_row <releases> <what>: the release_tools row for a `pinned <what>`
+# line, or nothing.
+release_row() { awk -v name="$2" '$1 == name' <<<"$1"; }
+
+# pinned_value <file> <what> <releases>: the locked value a `pinned <what>` line
+# holds: a release tool's on its `release` line (the release_tools table in
+# <releases>). An apt pin the base image already satisfies has no apt line; its
 # apt-pin-snapshot line holds the version.
 pinned_value() {
 	local value
@@ -573,36 +592,47 @@ pinned_value() {
 		[[ -n "$value" ]] || value="$(lock_value "$1" apt-pin-snapshot "${2#apt/}")"
 		printf '%s' "${value%@*}"
 		;;
-	tflint | virtualgl | colmap | blender) lock_value "$1" release "$2" ;;
-	*) lock_value "$1" "$2" ;;
+	*)
+		if [[ -n "$(release_row "$3" "$2")" ]]; then
+			lock_value "$1" release "$2"
+		else
+			lock_value "$1" "$2"
+		fi
+		;;
 	esac
 }
 
-# upstream_newest <what> <locked value>: what upstream would give with no pin,
-# now. apt's needs a container at the base, so it isn't resolved here (-).
+# upstream_newest <what> <locked value> <releases>: what upstream would give
+# with no pin, now. apt's needs a container at the base, so it isn't resolved
+# here (-).
 upstream_newest() {
-	local digest
+	local digest row file source
 	case "$1" in
 	claude) claude_channel latest ;;
 	rust) rust_channel stable ;;
 	terraform) terraform_newest ;;
-	tflint | virtualgl | colmap | blender) release_latest "$1" ;;
 	base)
 		digest="$(image_digest "${2%@*}")"
 		printf '%s@%s' "${2%@*}" "$digest"
 		;;
 	apt/*) printf '%s' - ;;
-	*) die "pinned '$1': no upstream known" ;;
+	*)
+		row="$(release_row "$3" "$1")"
+		[[ -n "$row" ]] || die "pinned '$1': no upstream known"
+		read -r _ file _ source <<<"$row"
+		release_latest "$file" "$source"
+		;;
 	esac
 }
 
 cmd_pins() {
-	local file what issue value newest
+	local file what issue value newest releases
 	file="$(lock_file "$1")"
 	[[ -f "$file" ]] || die "no lock for $1 ($file)"
+	releases="$(release_tools "$1")"
 	while read -r _ what issue; do
-		value="$(pinned_value "$file" "$what")"
-		newest="$(upstream_newest "$what" "$value")"
+		value="$(pinned_value "$file" "$what" "$releases")"
+		newest="$(upstream_newest "$what" "$value" "$releases")"
 		printf '%s\t%s\t%s\t%s\n' "$what" "${value:--}" "${newest:--}" "$issue"
 	done < <(awk '$1 == "pinned"' "$file")
 }

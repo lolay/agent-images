@@ -43,17 +43,20 @@ fi
 /opt/colmap/bin/colmap -h >/dev/null || die "colmap doesn't run with those libraries"
 
 # BLENDER_VERSION: a version (the lock's, scripts/cloud/lock.sh, or a pin), else
-# the newest in blender.org's release index. blender.sh knows where the files
-# come from (blender.org, then its mirrors) and says which served each.
+# the newest in blender.org's release index. BLENDER_RELEASES, blender.sh beside
+# this script, knows where the files come from (blender.org, then its mirrors)
+# and says which served each; the lock reads it here (release_tools) and asks
+# the same script for the newest.
 version="${BLENDER_VERSION:-latest}"
+readonly BLENDER_RELEASES=blender.sh
 if [[ "$version" == latest ]]; then
-	version="$(bash "$here/blender.sh" latest)"
+	version="$(bash "$here/$BLENDER_RELEASES" latest)"
 fi
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "unexpected Blender release '$version'"
 series="${version%.*}"
 log "Blender $version"
-bash "$here/blender.sh" get "Blender$series/blender-$version-linux-x64.tar.xz" "$work/blender.tar.xz"
-bash "$here/blender.sh" get "Blender$series/blender-$version.sha256" "$work/blender.sha256"
+bash "$here/$BLENDER_RELEASES" get "Blender$series/blender-$version-linux-x64.tar.xz" "$work/blender.tar.xz"
+bash "$here/$BLENDER_RELEASES" get "Blender$series/blender-$version.sha256" "$work/blender.sha256"
 sum="$(awk -v f="blender-$version-linux-x64.tar.xz" '$2 == f {print $1}' "$work/blender.sha256")"
 [[ -n "$sum" ]] || die "no checksum for blender-$version-linux-x64.tar.xz in blender-$version.sha256"
 printf '%s  %s\n' "$sum" "$work/blender.tar.xz" | sha256sum -c --quiet -
