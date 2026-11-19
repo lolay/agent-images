@@ -11,6 +11,21 @@ from test_lock import FAKE_CURL, executable
 
 SCRIPT = REPO / "images/toolsets/install-toolset.sh"
 
+# apt-get as the helpers call it: -q, then a known operation; install wants -y
+# and at least one package, as the real one does. Each call goes to $APT_CALLS.
+FAKE_APT_GET = (
+    '[[ "$1" == -q ]] || { echo "E: expected -q first" >&2; exit 100; }\n'
+    "shift\n"
+    'case "$1" in\n'
+    "update | clean) ;;\n"
+    "install)\n"
+    '\t[[ " $* " == *" -y "* ]] || { echo "E: would prompt" >&2; exit 1; }\n'
+    '\t[[ -n "$(printf \'%s\\n\' "${@:2}" | grep -v \'^-\')" ]] || { echo "E: nothing to install" >&2; exit 100; } ;;\n'
+    '*) echo "E: Invalid operation $1" >&2; exit 100 ;;\n'
+    "esac\n"
+    'printf \'%s\\n\' "$*" >>"$APT_CALLS"\n'
+)
+
 FILES = {
     "CLAUDE.md": "md",
     "check.txt": "check",
@@ -98,21 +113,7 @@ class SharedHelpersTests(unittest.TestCase):
             self.bin / "sudo",
             '(($# > 0)) || { echo "usage: sudo command" >&2; exit 1; }\nexec "$@"\n',
         )
-        # apt-get as the helpers call it: -q, then a known operation; install
-        # wants -y and at least one package, as the real one does.
-        write_executable(
-            self.bin / "apt-get",
-            '[[ "$1" == -q ]] || { echo "E: expected -q first" >&2; exit 100; }\n'
-            "shift\n"
-            'case "$1" in\n'
-            "update | clean) ;;\n"
-            "install)\n"
-            '\t[[ " $* " == *" -y "* ]] || { echo "E: would prompt" >&2; exit 1; }\n'
-            '\t[[ -n "$(printf \'%s\\n\' "${@:2}" | grep -v \'^-\')" ]] || { echo "E: nothing to install" >&2; exit 100; } ;;\n'
-            '*) echo "E: Invalid operation $1" >&2; exit 100 ;;\n'
-            "esac\n"
-            'printf \'%s\\n\' "$*" >>"$APT_CALLS"\n',
-        )
+        write_executable(self.bin / "apt-get", FAKE_APT_GET)
 
     def run_bash(self, *args):
         return subprocess.run(
@@ -202,32 +203,35 @@ class SharedHelpersTests(unittest.TestCase):
         self.assertEqual(restated, [])
 
     def test_only_github_latest_reads_a_release_redirect(self):
-        """The /releases/latest lookup is github_latest's alone: no toolset script
-        or cloud script does its own (#125's review)."""
-        scripts = [*SCRIPT.parent.rglob("*.sh"), *(REPO / "scripts").rglob("*.sh")]
+        """The /releases/latest lookup is github_latest's alone: no other script in
+        the repo, and no workflow, does its own (#125's review)."""
+        tracked = subprocess.run(["git", "ls-files", "*.sh", ".github/workflows/*.yml"], cwd=REPO,
+                                 check=True, capture_output=True, text=True).stdout.split()
+        self.assertGreater(len(tracked), 20, tracked)
         lookups = [
-            f"{path.relative_to(REPO)}:{number}"
-            for path in scripts
-            for number, line in enumerate(path.read_text().splitlines(), 1)
+            f"{name}:{number}"
+            for name in tracked
+            for number, line in enumerate((REPO / name).read_text().splitlines(), 1)
             if "url_effective" in line and not line.lstrip().startswith("#")
         ]
         self.assertEqual(lookups, ["images/toolsets/install-toolset.sh:" + str(next(
             n for n, line in enumerate(SCRIPT.read_text().splitlines(), 1) if "url_effective" in line))])
 
-    def test_sourcing_defines_the_helpers_and_runs_nothing(self):
-        caller = self.tmp / "caller.sh"
-        (self.tmp / "list.txt").write_text("gamma\n")
-        caller.write_text(
-            f'TOOLSET_LOG_NAME=caller\nsource "{self.script}"\nlog "ready"\n'
-            f'install_apt "{self.tmp / "list.txt"}"\ndie "done"\n'
+    def test_sourcing_it_only_defines_functions(self):
+        """lock.sh sources it in the lock watch and the deploy, so above its return
+        there is nothing but function definitions: no variable, and no cd."""
+        probe = self.tmp / "probe.sh"
+        probe.write_text(
+            'before="$(compgen -v | LC_ALL=C sort)"\nstart="$PWD"\n'
+            f'source "{self.script}"\n'
+            'after="$(compgen -v | LC_ALL=C sort)"\n'
+            'LC_ALL=C comm -13 <(printf "%s\\n" "$before") <(printf "%s\\n" "$after") | grep -vxE "before|start|BASH_.*|PIPESTATUS|_" || true\n'
+            '[[ "$PWD" == "$start" ]] || echo "cd to $PWD"\n'
+            'declare -F | sed "s/^declare -f //" | LC_ALL=C sort | tr "\\n" " "\n'
         )
-        result = self.run_bash(str(caller))
-        # No usage error from install-toolset.sh's own main, and the caller's die.
-        self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertNotIn("usage", result.stderr)
-        self.assertEqual((result.stdout.splitlines()[0], result.stderr), ("==> caller: ready", "==> caller: done\n"))
-        self.assertIn("install -y --no-install-recommends --allow-downgrades gamma", self.apt_calls())
-
+        result = self.run_bash(str(probe))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "apt die github_latest install_apt install_apt_packages log ")
 
 class GithubLatestTests(unittest.TestCase):
     """install-toolset.sh's github_latest, which a toolset's install.sh gets
@@ -248,7 +252,6 @@ class GithubLatestTests(unittest.TestCase):
         self.bin.mkdir()
         executable(self.bin / "curl", FAKE_CURL)  # Python: not write_executable's bash
         write_executable(self.bin / "sudo", 'exec "$@"\n')
-        write_executable(self.bin / "apt-get", 'exit 0\n')  # the gpu toolset's packages.txt
         self.urls = {f"redirect {self.VGL}/latest": f"{self.VGL}/tag/3.1.5"}
         self.log = self.tmp / "curl-log"
 

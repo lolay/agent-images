@@ -22,10 +22,10 @@
 # die, apt (apt-get as root, no prompts), install_apt <file> (a packages.txt),
 # install_apt_packages <package|.deb>... and github_latest <releases URL> (the
 # newest release's tag; scripts/cloud/lock.sh sources this file for it too, so
-# the build and the lock read a release the same way). A toolset's install.sh gets them
-# exported, with TOOLSET_LOG_NAME, their log prefix, set to the toolset's name.
-# A toolset script a Dockerfile runs itself (3d's build-colmap.sh) sources this
-# file, which then defines them and returns.
+# the build and the lock read a release the same way). A toolset's install.sh
+# gets them exported, with TOOLSET_LOG_NAME, their log prefix, set to the
+# toolset's name. A toolset script a Dockerfile runs itself (3d's
+# build-colmap.sh) sources this file, which then defines them and returns.
 #
 # APT_DROP_LISTS=true deletes apt's package lists after each toolset's install.
 # The cloud Dockerfiles set it: every toolset is its own layer, so each kept
@@ -74,7 +74,10 @@ github_latest() {
 	printf '%s' "${url##*/}"
 }
 
-# Sourced: the helpers are all the caller wanted.
+# Sourced: the helpers are all the caller wanted. Everything above this line
+# runs in every sourcing script, scripts/cloud/lock.sh included (the lock watch,
+# the deploy's bake-args), so it holds only function definitions: no variable,
+# command or cd (test_install_toolset.py checks).
 [[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
 
 toolsets_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

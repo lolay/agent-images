@@ -9,8 +9,8 @@
 # against, pins included), and those the base image already had by name, since
 # a later toolset may move them within the snapshot.
 #
-# log, die, install_apt and github_latest are install-toolset.sh's, which the stage mounts
-# beside the toolset.
+# log, die, install_apt and github_latest are install-toolset.sh's, which the
+# stage mounts beside the toolset.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
