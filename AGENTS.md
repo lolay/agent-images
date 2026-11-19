@@ -72,6 +72,14 @@ A test fake rejects what the real API would reject: a malformed body, a failed
 operation, an unknown flag. A fake that accepts anything lets a broken error path
 pass every test (r1.f10, f11, f14; r2.f4, an unknown subcommand).
 
+A fake has to be the command that runs. `install-toolset.sh` puts Homebrew's bin
+first on `PATH` wherever Homebrew is installed (CI's runners, sessions), so a test
+that drives a toolset's `install.sh` through it reaches Homebrew's `curl`, not the
+fake one in front of it, and calls the real service. Put the fake bin back in
+front inside the script under test, or source `install-toolset.sh` for its helpers
+instead of running it. Faking `apt-get` or `sudo` is safe, since Homebrew doesn't
+ship them (#133).
+
 ## Tests that can fail
 
 A test for a guard fails when the guard is gone. Before landing one, delete or
