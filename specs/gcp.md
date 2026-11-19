@@ -336,7 +336,7 @@ the URL the first word of its list line's `# pinned:` comment (`-` if it names n
 | Claude Code | Version | `CLAUDE_VERSION` in `docker-bake.hcl` (`latest`, `stable`, or a version) | `https://downloads.claude.ai/claude-code-releases/<channel>` |
 | Rust toolchain | Version | `RUST_TOOLCHAIN` in `images/toolsets/rust/install.sh` (`stable`, a minor line, or a version) | rustup's channel manifest |
 | Terraform | Version | `TERRAFORM_VERSION` in `images/toolsets/terraform/install.sh` (`latest`, `~> x.y`, or a version) | HashiCorp's release index, newest stable on that line |
-| tflint, VirtualGL, COLMAP | Release tag | `TFLINT_VERSION`, `VIRTUALGL_VERSION` in their toolsets' `install.sh`; `COLMAP_VERSION` in `images/toolsets/3d/build-colmap.sh`; each beside its `*_RELEASES`, the GitHub releases URL | The tag GitHub redirects `/releases/latest` to |
+| tflint, VirtualGL, COLMAP | Release tag | `TFLINT_VERSION`, `VIRTUALGL_VERSION` in their toolsets' `install.sh`; `COLMAP_VERSION` in `images/toolsets/3d/build-colmap.sh`; each beside its `*_RELEASES`, the GitHub releases URL | The tag GitHub redirects `/releases/latest` to, read by `github_latest` in `images/toolsets/install-toolset.sh`, which a `latest` build reads it with too |
 | Blender | Release version | `BLENDER_VERSION` in `images/toolsets/3d/install.sh`, beside `BLENDER_RELEASES=blender.sh` | The newest `blender-x.y.z-linux-x64.tar.xz` in the newest series on download.blender.org's release index, read by `images/toolsets/3d/blender.sh latest` (below) |
 
 A release tool is declared once, in the toolset script that reads it:
