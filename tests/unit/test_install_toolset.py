@@ -261,7 +261,8 @@ class SharedHelpersTests(unittest.TestCase):
         )
         result = self.run_bash(str(probe))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "apt brew_env brew_path die github_latest install_apt install_apt_packages log ")
+        self.assertEqual(result.stdout, "apt apt_install_options brew_env brew_path die github_latest "
+                         "install_apt install_apt_packages log ")
 
 class GithubLatestTests(unittest.TestCase):
     """install-toolset.sh's github_latest, which a toolset's install.sh gets
@@ -329,7 +330,7 @@ class GithubLatestTests(unittest.TestCase):
         runner = self.tmp / "run-gpu.sh"
         runner.write_text(
             f'TOOLSET_LOG_NAME=gpu\nsource "{self.script}"\n'
-            "export -f log die apt install_apt install_apt_packages github_latest\n"
+            "export -f log die apt apt_install_options install_apt install_apt_packages github_latest\n"
             f'TOOLSET_LOG_NAME=gpu bash "{REPO / "images/toolsets/gpu/install.sh"}"\n'
         )
         result = self.run_bash(str(runner), CUDAARCHS="89-real;120")
@@ -357,7 +358,7 @@ class GithubLatestTests(unittest.TestCase):
         runner = self.tmp / "run-terraform.sh"
         runner.write_text(
             f'source "{self.script}"\n'
-            "export -f log die apt install_apt install_apt_packages github_latest\n"
+            "export -f log die apt apt_install_options install_apt install_apt_packages github_latest\n"
             f'TOOLSET_LOG_NAME=terraform bash "{REPO / "images/toolsets/terraform/install.sh"}"\n'
         )
         result = self.run_bash(str(runner))

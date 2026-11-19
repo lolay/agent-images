@@ -103,21 +103,19 @@ class AptPinsTests(unittest.TestCase):
 
 
 class BuildUsesPinsTests(unittest.TestCase):
-    """The base sets the pins up before the snapshot's first update, the runner
-    stage removes them, and every apt install of a package list in a cloud
-    build allows the downgrade a pin from an older snapshot can need."""
+    """The base sets the pins up (through apt-prepare.sh, whose order
+    test_apt_prepare checks), the runner stage removes them, and every apt
+    install of a package list in a cloud build allows the downgrade a pin from
+    an older snapshot can need."""
 
     def text(self, path):
         return (REPO / path).read_text()
 
-    def test_the_base_installs_them_before_the_snapshots_update(self):
+    def test_the_base_takes_them_and_mounts_the_script(self):
         base = self.text("images/cloud/base/Dockerfile")
         self.assertIn("source=images/cloud/base/apt-pins.sh,target=/tmp/apt-pins.sh", base)
         self.assertRegex(base, r"(?m)^ARG APT_PINS$")
-        pins = base.find('APT_SNAPSHOT="$APT_SNAPSHOT" bash /tmp/apt-pins.sh install $APT_PINS')
-        self.assertNotEqual(pins, -1)
-        self.assertLess(base.index("/etc/apt/apt.conf.d/50agent-snapshot"), pins)
-        self.assertNotEqual(base.find("apt-get update", pins), -1, "no update after the pins")
+        self.assertIn('read -ra pins <<<"${APT_PINS:-}"', self.text("images/cloud/base/apt-prepare.sh"))
 
     def test_the_runner_stage_removes_them(self):
         runner = self.text("images/cloud/runner/Dockerfile")
@@ -125,25 +123,37 @@ class BuildUsesPinsTests(unittest.TestCase):
         self.assertIn("sudo bash /tmp/images/apt-pins.sh remove\n", runner)
 
     def test_every_package_list_install_allows_a_pins_downgrade(self):
-        # Every cloud Dockerfile but the orchestrator's (no snapshot, no pins)
-        # and every script under images/toolsets. Exempt: the base's
-        # ca-certificates, before any pin, and a local .deb.
+        # Every cloud Dockerfile but the orchestrator's (no snapshot, no pins),
+        # every script beside the base's, and every script under
+        # images/toolsets: each install takes apt_install_options, the one
+        # place the options are written.
         files = [p for p in (REPO / "images/cloud").glob("*/Dockerfile") if p.parent.name != "orchestrator"]
+        files += list((REPO / "images/cloud/base").glob("*.sh"))
         files += list((REPO / "images/toolsets").rglob("*.sh"))
-        installs = []
+        installs, options = [], []
         for path in files:
-            for number, line in enumerate(path.read_text().splitlines(), 1):
-                if line.lstrip().startswith("#") or not re.search(r"\bapt(-get)? (-q )?install -", line):
+            text = path.read_text()
+            for number, line in enumerate(text.splitlines(), 1):
+                if line.lstrip().startswith("#"):
                     continue
-                if line.rstrip(" \\").endswith((" ca-certificates", '.deb"')):
+                if "--allow-downgrades" in line:
+                    options.append(f"{path.relative_to(REPO)}:{number}")
+                if not re.search(r"\bapt(-get)? (-q )?install\b", line):
                     continue
                 installs.append(f"{path.relative_to(REPO)}:{number}")
                 with self.subTest(f"{path.relative_to(REPO)}:{number}"):
-                    self.assertIn("--allow-downgrades", line)
-        # Not vacuous: the base's install and install-toolset.sh's helper, which
-        # every toolset script uses rather than its own apt install (r4.f13).
+                    self.assertIn('install "${options[@]}" ', line)
+                    self.assertIn("mapfile -t options < <(apt_install_options)", text)
+        # Not vacuous: install-toolset.sh's helper, which every toolset script
+        # uses rather than its own apt install (r4.f13), and apt-prepare.sh's
+        # (the base's, and the lock's simulation).
         self.assertEqual({install.split(":")[0] for install in installs},
-                         {"images/cloud/base/Dockerfile", "images/toolsets/install-toolset.sh"}, installs)
+                         {"images/cloud/base/apt-prepare.sh", "images/toolsets/install-toolset.sh"}, installs)
+        self.assertEqual(options, ["images/toolsets/install-toolset.sh:" + str(next(
+            n for n, line in enumerate(self.text("images/toolsets/install-toolset.sh").splitlines(), 1)
+            if line.startswith("apt_install_options()")))])
+        self.assertIn("printf '%s\\n' -y --no-install-recommends --allow-downgrades;",
+                      self.text("images/toolsets/install-toolset.sh"))
 
 
 if __name__ == "__main__":

@@ -259,10 +259,16 @@ class AptBuildConfTests(unittest.TestCase):
         self.assertIn('\nAPT::Update::Error-Mode "any";\n', self.text(self.CONF))
 
     def test_the_base_installs_it_before_its_first_update(self):
+        # Through apt-prepare.sh, which reads it from beside itself; that the
+        # install comes before every update is test_apt_prepare's (its apt-get
+        # fails an update without the file).
         base = self.text("images/cloud/base/Dockerfile")
         self.assertIn(f"source={self.CONF},target=/tmp/apt-build.conf", base)
-        installed = base.index(f"cp /tmp/apt-build.conf {self.INSTALLED}")
-        self.assertLess(installed, base.index("apt-get update"))
+        prepare = self.text("images/cloud/base/apt-prepare.sh")
+        self.assertIn('readonly conf_dir="$root/etc/apt/apt.conf.d"', prepare)
+        installed = prepare.index('step install -D -m 644 "$here/apt-build.conf" "$conf_dir/40agent-build"')
+        self.assertLess(installed, prepare.index("step apt-get update"))
+        self.assertEqual(self.INSTALLED, "/etc/apt/apt.conf.d/40agent-build")
 
     def test_the_orchestrator_passes_it_for_its_update(self):
         orchestrator = self.text("images/cloud/orchestrator/Dockerfile")
