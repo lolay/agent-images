@@ -73,15 +73,19 @@ def direct_runs(dockerfiles):
 def fed_by(toolset, variables, script="install.sh", declaring=frozenset(), direct=frozenset(), root=TOOLSETS):
     """The locked variables a toolset's script reads. For install.sh that is its
     own and those of every other script lock.sh reads in the toolset (declaring),
-    except the ones a Dockerfile runs in a stage of their own (direct): a helper
-    install.sh runs reads its variable in install.sh's stage."""
+    except the ones a Dockerfile runs in a stage of their own (direct) and
+    install.sh doesn't call: a helper install.sh runs reads its variable in
+    install.sh's stage, even when a builder stage runs it too."""
+    def read(name):
+        path = root / toolset / name  # optional: not every toolset has an install.sh
+        return path.read_text() if path.exists() else ""
+
     scripts = {script}
     if script == "install.sh":
-        scripts |= {name for tool, name in declaring - direct if tool == toolset}
-    text = ""
-    for name in scripts:
-        path = root / toolset / name  # optional: not every toolset has an install.sh
-        text += path.read_text() if path.exists() else ""
+        install_code = "".join(line for line in read(script).splitlines(True) if not line.lstrip().startswith("#"))
+        scripts |= {name for tool, name in declaring
+                    if tool == toolset and ((tool, name) not in direct or name in install_code)}
+    text = "".join(read(name) for name in scripts)
     return {name for name in variables if re.search(r"\$\{%s:-" % name, text)}
 
 
@@ -176,10 +180,10 @@ class HelperScriptTests(unittest.TestCase):
         self.toolset.mkdir(parents=True)
         self.root = self.tmp / "images/toolsets"
 
-    def violations(self, dockerfile_text, declare_in):
+    def violations(self, dockerfile_text, declare_in, install_text='bash "$here/fetch-xtool.sh"\n'):
         """The ARGs missing with the declaration in <declare_in>, a script of the toolset."""
         self.dockerfile.write_text(dockerfile_text)
-        (self.toolset / "install.sh").write_text('#!/bin/bash\nbash "$here/fetch-xtool.sh"\n')
+        (self.toolset / "install.sh").write_text("#!/bin/bash\n" + install_text)
         (self.toolset / "fetch-xtool.sh").write_text("#!/bin/bash\n")
         (self.toolset / declare_in).write_text("#!/bin/bash\n" + self.DECLARATION)
         declaring = declaring_scripts(["demo"], repo=self.tmp)
@@ -204,11 +208,29 @@ class HelperScriptTests(unittest.TestCase):
             "fetch-xtool.sh")
         self.assertEqual(missing, [])
 
+    def test_a_script_run_in_its_own_stage_and_by_install_sh_is_read_by_both(self):
+        # Copilot's review of #142: the builder stage has its ARG, the final
+        # stage doesn't, and install.sh calls the same script.
+        dockerfile = ("FROM agent-base AS build\nARG XTOOL_VERSION\n"
+                      "RUN bash /tmp/toolsets/widgets/fetch-xtool.sh\n"
+                      "FROM agent-base\nRUN bash /tmp/toolsets/install-toolset.sh widgets\n")
+        _, missing = self.violations(dockerfile, "fetch-xtool.sh")
+        self.assertEqual(missing, ["widgets needs ARG XTOOL_VERSION before it"])
+
+    def test_install_sh_only_mentioning_the_script_in_a_comment_doesnt_count(self):
+        # build-colmap.sh's own case: 3d/install.sh may name it in a comment.
+        dockerfile = ("FROM agent-base AS build\nARG XTOOL_VERSION\n"
+                      "RUN bash /tmp/toolsets/widgets/fetch-xtool.sh\n"
+                      "FROM agent-base\nRUN bash /tmp/toolsets/install-toolset.sh widgets\n")
+        _, missing = self.violations(dockerfile, "fetch-xtool.sh",
+                                     install_text="# fetch-xtool.sh builds it elsewhere\n")
+        self.assertEqual(missing, [])
+
     def test_a_script_run_in_its_own_stage_is_not_read_by_installs(self):
         # 3d's build-colmap.sh: the install stage doesn't need its ARG, the builder does.
         dockerfile = ("FROM agent-base AS build\nRUN bash /tmp/toolsets/widgets/fetch-xtool.sh\n"
                       "FROM agent-base\nRUN bash /tmp/toolsets/install-toolset.sh widgets\n")
-        _, missing = self.violations(dockerfile, "fetch-xtool.sh")
+        _, missing = self.violations(dockerfile, "fetch-xtool.sh", install_text="log hello\n")
         self.assertEqual(missing, ["widgets/fetch-xtool.sh needs ARG XTOOL_VERSION before it"])
 
 
