@@ -280,6 +280,30 @@ class OneSequenceTests(unittest.TestCase):
         ]
         self.assertEqual(restated, [])
 
+    # The steps only the bootstrap takes: a toolset's own apt-get update and
+    # install are its layer's, not a copy of the sequence.
+    BOOTSTRAP_ONLY = re.compile(r"apt-pins\.sh install|APT::Snapshot|APT_CONFIG=|"
+                                r"apt\.conf\.d/40agent-build|apt\.conf\.d/50agent-snapshot")
+
+    def test_no_script_a_dockerfile_runs_restates_it(self):
+        # Every script the images run (AGENTS.md "Tests that can fail"): the
+        # toolsets, the shared files and each type's own, apt-prepare.sh and
+        # the apt-pins.sh it calls aside.
+        files = sorted(
+            path
+            for pattern in ("images/toolsets/**/*.sh", "images/shared/**/*.sh", "images/cloud/*/*.sh")
+            for path in REPO.glob(pattern)
+            if path not in (SCRIPT, SCRIPT.parent / "apt-pins.sh")
+        )
+        self.assertIn(REPO / "images/toolsets/install-toolset.sh", files)
+        restated = [
+            f"{path.relative_to(REPO)}: {line.strip()}"
+            for path in files
+            for line in code_lines(path)
+            if self.BOOTSTRAP_ONLY.search(line)
+        ]
+        self.assertEqual(restated, [])
+
 
 if __name__ == "__main__":
     unittest.main()
