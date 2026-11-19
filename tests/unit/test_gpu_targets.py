@@ -101,6 +101,25 @@ class CudaTargetsTests(unittest.TestCase):
         self.assertRegex(bake, r"CUDAARCHS\s+= cmake_cuda_archs\([^\n]*\bCUDA_CAPABILITIES\)\)")
         self.assertRegex(bake, r"TORCH_CUDA_ARCH_LIST\s+= torch_cuda_arch_list\([^\n]*\bCUDA_CAPABILITIES\)\)")
 
+    def test_both_forms_put_ptx_on_the_newest_capability(self):
+        """CUDAARCHS and TORCH_CUDA_ARCH_LIST each give the last entry of their
+        list the PTX, so each reads the capabilities through oldest_first, which
+        sorts them: "12.0 8.9" would otherwise put PTX on compute_89 and lose it
+        for Blackwell (r5.f3). Read as text, so it runs without Docker;
+        test_bake.py hands the real bake an unsorted list and reads the result."""
+        bake = BAKE.read_text()
+        self.assertRegex(bake, r'function "oldest_first" \{[^}]*\bvalues\(')
+        functions = re.findall(r'function "(\w+)" \{\s*params = \[caps\]\s*result = ([^\n]+)', bake)
+        users = {name: result for name, result in functions if name != "oldest_first"}
+        self.assertEqual(sorted(users), ["cmake_cuda_archs", "torch_cuda_arch_list"])
+        for name, result in users.items():
+            with self.subTest(name=name):
+                self.assertIn("oldest_first(caps)", result)
+                # No other use of the list as given, which would order by position
+                # again (its length is the one other thing a form needs).
+                rest = result.replace("oldest_first(caps)", "").replace("length(caps)", "")
+                self.assertNotRegex(rest, r"\bcaps\b")
+
     def test_every_checked_binary_is_checked_for_every_gpu(self):
         ccs = capabilities()
         problems, binaries = {}, set()

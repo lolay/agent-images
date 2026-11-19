@@ -95,14 +95,15 @@ target "versions-linux" {
   output   = versions_output("linux")
 }
 
-# The GPUs the GPU images build CUDA code for, as compute capabilities, oldest
-# first: the L4 (8.9) and the RTX PRO 6000 (Blackwell, 12.0). Every CUDA build in
-# them (COLMAP, gsplat, agent-cuda-probe) carries machine code (SASS) for each
-# and PTX for the newest, which a newer GPU's driver compiles. base-gpu hands it
-# to the builds as the variables they read: CMake's CUDAARCHS ("89-real;120")
-# and PyTorch's TORCH_CUDA_ARCH_LIST ("8.9;12.0+PTX"); the gpu toolset builds
-# nvcc's flags from CUDAARCHS. The toolsets' check.txt checks each binary for
-# every one, so adding a GPU here is the image side of a new GPU type.
+# The GPUs the GPU images build CUDA code for, as compute capabilities: the L4
+# (8.9) and the RTX PRO 6000 (Blackwell, 12.0). Every CUDA build in them (COLMAP,
+# gsplat, agent-cuda-probe) carries machine code (SASS) for each and PTX for the
+# newest, which a newer GPU's driver compiles. Any order: oldest_first below
+# sorts it. base-gpu hands it to the builds as the variables they read: CMake's
+# CUDAARCHS ("89-real;120") and PyTorch's TORCH_CUDA_ARCH_LIST ("8.9;12.0+PTX");
+# the gpu toolset builds nvcc's flags from CUDAARCHS. The toolsets' check.txt
+# checks each binary for every one, so adding a GPU here is the image side of a
+# new GPU type.
 # Like TAG and REGISTRY, a CUDA_CAPABILITIES in the environment replaces it. It
 # must be dotted capabilities separated by spaces: anything else fails the bake
 # rather than build without a GPU.
@@ -114,17 +115,27 @@ variable "CUDA_CAPABILITIES" {
   }
 }
 
+# The capabilities, oldest first, whatever order CUDA_CAPABILITIES gives them:
+# both forms below put PTX on the last one, so the order is the list's meaning,
+# not its spelling. Keyed by zero-padded major and minor, because sort() is
+# lexicographic ("12.0" before "8.9") and values() of a map reads in key order.
+# A capability listed twice fails the bake (a duplicate key).
+function "oldest_first" {
+  params = [caps]
+  result = values({ for cap in caps : format("%04d.%04d", split(".", cap)[0], split(".", cap)[1]) => cap })
+}
+
 # CMake's form: <cc>-real (SASS only) for each, and plain <cc> (SASS and PTX)
 # for the newest.
 function "cmake_cuda_archs" {
   params = [caps]
-  result = join(";", [for i, cap in caps : "${replace(cap, ".", "")}${i < length(caps) - 1 ? "-real" : ""}"])
+  result = join(";", [for i, cap in oldest_first(caps) : "${replace(cap, ".", "")}${i < length(caps) - 1 ? "-real" : ""}"])
 }
 
 # PyTorch's form: dotted, with +PTX on the newest.
 function "torch_cuda_arch_list" {
   params = [caps]
-  result = "${join(";", caps)}+PTX"
+  result = "${join(";", oldest_first(caps))}+PTX"
 }
 
 # The GPU types' parent: base on CUDA's devel image, then base's gpu stage, which
