@@ -5,15 +5,14 @@
 #
 # Sessions don't activate the environment themselves: this records its bin for
 # the front of PATH (gis.path) and what activation sets (GDAL_DATA, PROJ_DATA and
-# the rest) as gis.profile.sh, which the cloud profile sources.
+# the rest) as gis.profile.sh, which the cloud profile sources. log is
+# install-toolset.sh's.
 set -euo pipefail
 
 : "${TOOLSET_RECORD_DIR:?}"
 
 readonly root=/opt/gis
 readonly env="$root/.pixi/envs/default"
-
-log() { printf '==> gis: %s\n' "$*"; }
 
 sudo install -d -o "$(id -un)" -g "$(id -gn)" -m 755 "$root"
 install -m 644 "$(dirname "${BASH_SOURCE[0]}")/pixi.toml" "$root/pixi.toml"

@@ -140,7 +140,10 @@ class BuildUsesPinsTests(unittest.TestCase):
                 installs.append(f"{path.relative_to(REPO)}:{number}")
                 with self.subTest(f"{path.relative_to(REPO)}:{number}"):
                     self.assertIn("--allow-downgrades", line)
-        self.assertGreaterEqual(len(installs), 4, installs)
+        # Not vacuous: the base's install and install-toolset.sh's helper, which
+        # every toolset script uses rather than its own apt install (r4.f13).
+        self.assertEqual({install.split(":")[0] for install in installs},
+                         {"images/cloud/base/Dockerfile", "images/toolsets/install-toolset.sh"}, installs)
 
 
 if __name__ == "__main__":

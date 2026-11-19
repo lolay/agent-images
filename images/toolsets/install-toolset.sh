@@ -12,10 +12,18 @@
 #   path.txt     directories for the front of every session's PATH, after ~/bin
 #                and before Homebrew's.
 # Each installed toolset is recorded in record_dir with those files. install.sh
-# gets TOOLSET_RECORD_DIR, and writes generated ones (<name>.profile.sh) there. Runs as the image's user, who has sudo, from
-# the cloud Dockerfiles and the Android image's install-packages.sh.
+# gets TOOLSET_RECORD_DIR, and writes generated ones (<name>.profile.sh) there.
+# Runs as the image's user, who has sudo, from the cloud Dockerfiles and the
+# Android image's install-packages.sh.
 #
 # Usage: install-toolset.sh <name>...
+#
+# Its helpers are the toolsets' too, so no toolset script restates them: log,
+# die, apt (apt-get as root, no prompts), install_apt <file> (a packages.txt)
+# and install_apt_packages <package|.deb>.... A toolset's install.sh gets them
+# exported, with TOOLSET_LOG_NAME, their log prefix, set to the toolset's name.
+# A toolset script a Dockerfile runs itself (3d's build-colmap.sh) sources this
+# file, which then defines them and returns.
 #
 # APT_DROP_LISTS=true deletes apt's package lists after each toolset's install.
 # The cloud Dockerfiles set it: every toolset is its own layer, so each kept
@@ -26,35 +34,44 @@
 # macOS image doesn't run softwareupdate. needrestart stays out of the build.
 set -euo pipefail
 
+log() { printf '==> %s: %s\n' "${TOOLSET_LOG_NAME:-install-toolset}" "$*"; }
+die() {
+	printf '==> %s: %s\n' "${TOOLSET_LOG_NAME:-install-toolset}" "$*" >&2
+	exit 1
+}
+apt() { sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get -q "$@"; }
+
+# install_apt_packages <package|.deb>...: one apt install from the snapshot.
+install_apt_packages() {
+	(($# > 0)) || return 0
+	log "installing $# apt packages"
+	apt update
+	# --allow-downgrades: a pin from an older snapshot can be below what's
+	# installed (images/cloud/base/apt-pins.sh).
+	apt install -y --no-install-recommends --allow-downgrades "$@"
+	apt clean
+	if [[ "${APT_DROP_LISTS:-false}" == "true" ]]; then
+		sudo rm -rf /var/lib/apt/lists/*
+	fi
+}
+
+# install_apt <file>: the packages a list names, one per line, with # comments.
+install_apt() {
+	local packages
+	mapfile -t packages < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$1")
+	install_apt_packages "${packages[@]}"
+}
+
+# Sourced: the helpers are all the caller wanted.
+[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
+
 toolsets_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly toolsets_dir
 readonly brew=/home/linuxbrew/.linuxbrew/bin/brew
 # AGENT_TOOLSETS_DIR is the same variable toolset-checks.sh reads (tests set it).
 readonly record_dir="${AGENT_TOOLSETS_DIR:-/etc/agent-images/toolsets}"
 
-log() { printf '==> install-toolset: %s\n' "$*"; }
-die() {
-	printf '==> install-toolset: %s\n' "$*" >&2
-	exit 1
-}
-apt() { sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get -q "$@"; }
-
 (($# > 0)) || die "usage: install-toolset.sh <name>..."
-
-install_apt() {
-	local packages
-	mapfile -t packages < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$1")
-	((${#packages[@]} > 0)) || return 0
-	log "installing ${#packages[@]} apt packages"
-	apt update
-	# --allow-downgrades: a pin from an older snapshot can be below what's
-	# installed (images/cloud/base/apt-pins.sh).
-	apt install -y --no-install-recommends --allow-downgrades "${packages[@]}"
-	apt clean
-	if [[ "${APT_DROP_LISTS:-false}" == "true" ]]; then
-		sudo rm -rf /var/lib/apt/lists/*
-	fi
-}
 
 # Records an installed toolset: its name once in toolsets.txt, in install order,
 # and its CLAUDE.md, check.txt, smoke.sh, profile.sh and path.txt as <name>.md,
@@ -136,7 +153,12 @@ for name in "$@"; do
 		# A toolset's own steps can use any formula installed so far.
 		[[ ! -x "$brew" ]] || brew_env
 		sudo install -d -m 755 "$record_dir"
-		TOOLSET_RECORD_DIR="$record_dir" bash "$dir/install.sh"
+		# Exported in a subshell, so they reach this install.sh and what it runs,
+		# but not the later toolsets' Homebrew and installers.
+		(
+			export -f log die apt install_apt install_apt_packages
+			TOOLSET_LOG_NAME="$name" TOOLSET_RECORD_DIR="$record_dir" bash "$dir/install.sh"
+		)
 		# Any brew command it ran refilled Homebrew's cache.
 		[[ ! -x "$brew" ]] || rm -rf "$("$brew" --cache)"
 	fi

@@ -51,6 +51,7 @@ function "versions_output" {
 target "base" {
   context    = "."
   dockerfile = "images/cloud/base/Dockerfile"
+  target     = "base"
   args = {
     BASE_IMAGE = "mirror.gcr.io/library/ubuntu:24.04"
   }
@@ -94,13 +95,50 @@ target "versions-linux" {
   output   = versions_output("linux")
 }
 
-# The GPU types' parent: base on CUDA's devel image. CUDA 13.0 to match the
-# driver Cloud Run mounts (580.x, CUDA 13.0); a newer CUDA would need NVIDIA's
-# forward-compatibility package. The newest 13.0 patch on the mirror.
+# The GPUs the GPU images build CUDA code for, as compute capabilities, oldest
+# first: the L4 (8.9) and the RTX PRO 6000 (Blackwell, 12.0). Every CUDA build in
+# them (COLMAP, gsplat, agent-cuda-probe) carries machine code (SASS) for each
+# and PTX for the newest, which a newer GPU's driver compiles. base-gpu hands it
+# to the builds as the variables they read: CMake's CUDAARCHS ("89-real;120")
+# and PyTorch's TORCH_CUDA_ARCH_LIST ("8.9;12.0+PTX"); the gpu toolset builds
+# nvcc's flags from CUDAARCHS. The toolsets' check.txt checks each binary for
+# every one, so adding a GPU here is the image side of a new GPU type.
+# Like TAG and REGISTRY, a CUDA_CAPABILITIES in the environment replaces it. It
+# must be dotted capabilities separated by spaces: anything else fails the bake
+# rather than build without a GPU.
+variable "CUDA_CAPABILITIES" {
+  default = "8.9 12.0"
+  validation {
+    condition     = length(regexall("^ *[0-9]+\\.[0-9]+( +[0-9]+\\.[0-9]+)* *$", CUDA_CAPABILITIES)) == 1
+    error_message = "CUDA_CAPABILITIES is compute capabilities separated by spaces, such as \"8.9 12.0\"."
+  }
+}
+
+# CMake's form: <cc>-real (SASS only) for each, and plain <cc> (SASS and PTX)
+# for the newest.
+function "cmake_cuda_archs" {
+  params = [caps]
+  result = join(";", [for i, cap in caps : "${replace(cap, ".", "")}${i < length(caps) - 1 ? "-real" : ""}"])
+}
+
+# PyTorch's form: dotted, with +PTX on the newest.
+function "torch_cuda_arch_list" {
+  params = [caps]
+  result = "${join(";", caps)}+PTX"
+}
+
+# The GPU types' parent: base on CUDA's devel image, then base's gpu stage, which
+# sets what every GPU image needs (the driver capabilities and the CUDA targets
+# above). CUDA 13.0 to match the driver Cloud Run mounts (580.x, CUDA 13.0); a
+# newer CUDA would need NVIDIA's forward-compatibility package. The newest 13.0
+# patch on the mirror.
 target "base-gpu" {
   inherits = ["base"]
+  target   = "gpu"
   args = {
-    BASE_IMAGE = "mirror.gcr.io/nvidia/cuda:13.0.3-devel-ubuntu24.04"
+    BASE_IMAGE           = "mirror.gcr.io/nvidia/cuda:13.0.3-devel-ubuntu24.04"
+    CUDAARCHS            = cmake_cuda_archs(regexall("[0-9]+\\.[0-9]+", CUDA_CAPABILITIES))
+    TORCH_CUDA_ARCH_LIST = torch_cuda_arch_list(regexall("[0-9]+\\.[0-9]+", CUDA_CAPABILITIES))
   }
 }
 

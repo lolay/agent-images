@@ -2,7 +2,9 @@
 # "3d"): 3D reconstruction on the GPU, on agent-base-gpu (CUDA's devel image):
 # core, native, display, 3d, then gpu last as in linux-gpu. No Go, Rust,
 # Terraform, JDK or Chromium libraries: a session that needs one installs it.
-# images/cloud/runner then adds the runner files and Claude Code. Build it with
+# base-gpu sets the driver capabilities and the CUDA targets every build here
+# reads (images/cloud/base/Dockerfile, its gpu stage). images/cloud/runner then
+# adds the runner files and Claude Code. Build it with
 # images/cloud/docker-bake.hcl, which supplies agent-base (base-gpu).
 
 # COLMAP from source with CUDA (images/toolsets/3d/build-colmap.sh), from the
@@ -11,7 +13,8 @@
 # built against), which the 3d toolset installs. COLMAP_VERSION is the lock's.
 FROM agent-base AS colmap
 ARG COLMAP_VERSION
-RUN --mount=type=bind,source=images/toolsets/3d,target=/tmp/toolsets/3d \
+RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
+	--mount=type=bind,source=images/toolsets/3d,target=/tmp/toolsets/3d \
 	bash /tmp/toolsets/3d/build-colmap.sh
 
 FROM agent-base
@@ -29,10 +32,6 @@ ARG BLENDER_VERSION
 RUN --mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/toolsets/install-toolset.sh \
 	--mount=type=bind,source=images/toolsets/3d,target=/tmp/toolsets/3d \
 	bash /tmp/toolsets/install-toolset.sh 3d
-
-# As in linux-gpu: ask the container runtime for every driver capability, so the
-# graphics libraries (EGL, GLX, Vulkan) and NVENC are mounted with compute.
-ENV NVIDIA_DRIVER_CAPABILITIES=all
 
 # The locked VirtualGL release (scripts/cloud/lock.sh bake-args).
 ARG VIRTUALGL_VERSION

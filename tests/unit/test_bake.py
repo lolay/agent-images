@@ -6,6 +6,7 @@ env file without its targets would pass CI and fail the deploy on main (r1.f2).
 """
 
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -128,6 +129,58 @@ class BakeTests(unittest.TestCase):
             self.assertIn(f"{name} versions-{name}", every)
         self.assertIn("--load orchestrator", every)
         self.assertEqual(len(every), len(run_types()) + 1)
+
+    def test_every_gpu_type_builds_on_base_gpu(self):
+        """A type that installs the gpu toolset builds on base's gpu stage, which
+        sets the driver capabilities and the CUDA targets (r4.f9, r4.f14); a type
+        that doesn't, doesn't. Read from the bake graph and the Dockerfiles, so a
+        new type is covered the day it lands."""
+        gpu_types = []
+        for type_ in run_types():
+            toolsets = subprocess.run(
+                ["bash", "-c", 'source scripts/cloud/lib.sh && cloud_toolsets "$1"', "-", type_],
+                cwd=REPO, check=True, capture_output=True, text=True,
+            ).stdout.split()
+            stages = [target.get("target") for target in bake_print(type_).values()
+                      if target["dockerfile"] == "images/cloud/base/Dockerfile"]
+            with self.subTest(type=type_):
+                self.assertEqual(stages, ["gpu"] if "gpu" in toolsets else ["base"])
+            if "gpu" in toolsets:
+                gpu_types.append(type_)
+        self.assertIn("linux-gpu", gpu_types)
+
+    def test_base_gpu_hands_the_cuda_targets_to_cmake_and_pytorch(self):
+        # SASS for each GPU and PTX for the newest, in each tool's spelling, from
+        # the list itself (test_gpu_targets.py pins the list), including a value
+        # with stray spaces, which must not make an empty entry.
+        from test_gpu_targets import BAKE as HCL, dotted_capabilities
+        default = re.search(r'variable "CUDA_CAPABILITIES" \{\s*default = "([^"]+)"', HCL.read_text())[1]
+        for value in (default, "  7.5  8.9 12.0 "):
+            caps = dotted_capabilities(value)
+            numbers = [cap.replace(".", "") for cap in caps]
+            expected = (";".join([f"{n}-real" for n in numbers[:-1]] + numbers[-1:]), ";".join(caps) + "+PTX")
+            with self.subTest(value=value):
+                result = subprocess.run(
+                    ["docker", "buildx", "bake", "-f", BAKE_FILE, "--print", "base-gpu"],
+                    cwd=REPO, capture_output=True, text=True, timeout=60,
+                    env={**os.environ, "CUDA_CAPABILITIES": value},
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                args = json.loads(result.stdout)["target"]["base-gpu"]["args"]
+                self.assertEqual((args["CUDAARCHS"], args["TORCH_CUDA_ARCH_LIST"]), expected)
+
+    def test_a_malformed_gpu_list_fails_the_bake(self):
+        # An entry the derivation can't read must stop the build, not drop out
+        # of it: "12" alone would build every GPU image without Blackwell.
+        for value in ("8.9 12", "89 120", "8.9,12.0", " "):
+            with self.subTest(value=value):
+                result = subprocess.run(
+                    ["docker", "buildx", "bake", "-f", BAKE_FILE, "--print", "base-gpu"],
+                    cwd=REPO, capture_output=True, text=True, timeout=60,
+                    env={**os.environ, "CUDA_CAPABILITIES": value},
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("CUDA_CAPABILITIES is compute capabilities", result.stderr)
 
     def test_the_orchestrator_has_its_target(self):
         self.assertEqual(bake_print("orchestrator")["orchestrator"]["tags"], ["agent-orchestrator:local"])

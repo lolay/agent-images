@@ -11,7 +11,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/../../hooks/gcp/lib.sh"
 # cloud_parent_of <dir>: the build parent's directory under images/cloud that a
 # Dockerfile names (FROM agent-<parent>), if any. agent-base-gpu has no
 # directory of its own: it's bake target base-gpu, base's Dockerfile on CUDA
-# (docker-bake.hcl), so its directory is base. test_bake.py checks this chain
+# to its gpu stage (docker-bake.hcl), so its directory is base. test_bake.py checks this chain
 # against the bake file's.
 cloud_parent_of() {
 	sed -n -E 's/^FROM[[:space:]]+agent-([a-z0-9-]+).*/\1/p' "images/cloud/$1/Dockerfile" 2>/dev/null |
