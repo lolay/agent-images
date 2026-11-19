@@ -28,11 +28,18 @@ SM_CHECK = re.compile(r"^(?P<binary>[^:#]+?) sm_(?P<cc>\d+):", re.M)
 
 
 def capabilities():
-    """The compute capabilities docker-bake.hcl declares, as sm_ numbers."""
+    """The compute capabilities docker-bake.hcl declares, as sm_ numbers. The one
+    place a test spells the list out is test_the_list_is_the_l4_and_blackwell."""
     block = re.search(r'variable "CUDA_CAPABILITIES" \{\s*default = "([^"]+)"', BAKE.read_text())
     if block is None:
         raise AssertionError("no CUDA_CAPABILITIES variable with a default in docker-bake.hcl")
-    return {cap.replace(".", "") for cap in block.group(1).split()}
+    return {cap.replace(".", "") for cap in dotted_capabilities(block.group(1))}
+
+
+def dotted_capabilities(value):
+    """The capabilities in a CUDA_CAPABILITIES value, in order: what bake's
+    regexall finds, so stray spaces make no empty entry."""
+    return re.findall(r"[0-9]+\.[0-9]+", value)
 
 
 def literal_targets(paths):
@@ -54,8 +61,10 @@ def unchecked(check_txt, ccs):
 
 
 def build_files():
-    """Every script a cloud build runs and every cloud Dockerfile."""
-    return sorted(TOOLSETS.rglob("*.sh")) + sorted(CLOUD.glob("*/Dockerfile"))
+    """Every script and build config a cloud build reads, and every cloud
+    Dockerfile: a toolset's shell and Python scripts and its pyproject.toml."""
+    toolset_files = [p for pattern in ("*.sh", "*.py", "*.toml") for p in TOOLSETS.rglob(pattern)]
+    return sorted(toolset_files) + sorted(CLOUD.glob("*/Dockerfile"))
 
 
 class CudaTargetsTests(unittest.TestCase):
@@ -88,8 +97,9 @@ class CudaTargetsTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertRegex(gpu_stage, rf"(?m)^ARG {name}$")
                 self.assertRegex(gpu_stage, rf"\b{name}=\$\{{{name}\}}")
-        self.assertIn("cmake_cuda_archs(split(\" \", CUDA_CAPABILITIES))", BAKE.read_text())
-        self.assertIn("torch_cuda_arch_list(split(\" \", CUDA_CAPABILITIES))", BAKE.read_text())
+        bake = BAKE.read_text()
+        self.assertRegex(bake, r"CUDAARCHS\s+= cmake_cuda_archs\([^\n]*\bCUDA_CAPABILITIES\)\)")
+        self.assertRegex(bake, r"TORCH_CUDA_ARCH_LIST\s+= torch_cuda_arch_list\([^\n]*\bCUDA_CAPABILITIES\)\)")
 
     def test_every_checked_binary_is_checked_for_every_gpu(self):
         ccs = capabilities()

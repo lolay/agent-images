@@ -39,6 +39,7 @@ fi
 # shellcheck disable=SC2016 # dpkg-query's own ${field} syntax, not the shell's
 installed() { dpkg-query -W -f='${Package}=${Version}\n' | LC_ALL=C sort; }
 before="$(installed)"
+grep -qvE '^[[:space:]]*(#|$)' "$here/build-packages.txt" || die "no packages in $here/build-packages.txt"
 install_apt "$here/build-packages.txt"
 from_build_list="$(LC_ALL=C comm -13 <(printf '%s\n' "$before") <(installed))"
 # Ubuntu's OpenImageIO CMake config wants OpenCV's include directory to exist,

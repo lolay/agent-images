@@ -6,6 +6,7 @@ env file without its targets would pass CI and fail the deploy on main (r1.f2).
 """
 
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -149,8 +150,24 @@ class BakeTests(unittest.TestCase):
         self.assertIn("linux-gpu", gpu_types)
 
     def test_base_gpu_hands_the_cuda_targets_to_cmake_and_pytorch(self):
-        args = bake_print("base-gpu")["base-gpu"]["args"]
-        self.assertEqual((args["CUDAARCHS"], args["TORCH_CUDA_ARCH_LIST"]), ("89-real;120", "8.9;12.0+PTX"))
+        # SASS for each GPU and PTX for the newest, in each tool's spelling, from
+        # the list itself (test_gpu_targets.py pins the list), including a value
+        # with stray spaces, which must not make an empty entry.
+        from test_gpu_targets import BAKE as HCL, dotted_capabilities
+        default = re.search(r'variable "CUDA_CAPABILITIES" \{\s*default = "([^"]+)"', HCL.read_text())[1]
+        for value in (default, "  7.5  8.9 12.0 "):
+            caps = dotted_capabilities(value)
+            numbers = [cap.replace(".", "") for cap in caps]
+            expected = (";".join([f"{n}-real" for n in numbers[:-1]] + numbers[-1:]), ";".join(caps) + "+PTX")
+            with self.subTest(value=value):
+                result = subprocess.run(
+                    ["docker", "buildx", "bake", "-f", BAKE_FILE, "--print", "base-gpu"],
+                    cwd=REPO, capture_output=True, text=True, timeout=60,
+                    env={**os.environ, "CUDA_CAPABILITIES": value},
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                args = json.loads(result.stdout)["target"]["base-gpu"]["args"]
+                self.assertEqual((args["CUDAARCHS"], args["TORCH_CUDA_ARCH_LIST"]), expected)
 
     def test_the_orchestrator_has_its_target(self):
         self.assertEqual(bake_print("orchestrator")["orchestrator"]["tags"], ["agent-orchestrator:local"])

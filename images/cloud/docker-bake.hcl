@@ -103,6 +103,7 @@ target "versions-linux" {
 # and PyTorch's TORCH_CUDA_ARCH_LIST ("8.9;12.0+PTX"); the gpu toolset builds
 # nvcc's flags from CUDAARCHS. The toolsets' check.txt checks each binary for
 # every one, so adding a GPU here is the image side of a new GPU type.
+# Like TAG and REGISTRY, a CUDA_CAPABILITIES in the environment replaces it.
 variable "CUDA_CAPABILITIES" {
   default = "8.9 12.0"
 }
@@ -130,8 +131,8 @@ target "base-gpu" {
   target   = "gpu"
   args = {
     BASE_IMAGE           = "mirror.gcr.io/nvidia/cuda:13.0.3-devel-ubuntu24.04"
-    CUDAARCHS            = cmake_cuda_archs(split(" ", CUDA_CAPABILITIES))
-    TORCH_CUDA_ARCH_LIST = torch_cuda_arch_list(split(" ", CUDA_CAPABILITIES))
+    CUDAARCHS            = cmake_cuda_archs(regexall("[0-9]+\\.[0-9]+", CUDA_CAPABILITIES))
+    TORCH_CUDA_ARCH_LIST = torch_cuda_arch_list(regexall("[0-9]+\\.[0-9]+", CUDA_CAPABILITIES))
   }
 }
 

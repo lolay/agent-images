@@ -153,8 +153,12 @@ for name in "$@"; do
 		# A toolset's own steps can use any formula installed so far.
 		[[ ! -x "$brew" ]] || brew_env
 		sudo install -d -m 755 "$record_dir"
-		export -f log die apt install_apt install_apt_packages
-		TOOLSET_LOG_NAME="$name" TOOLSET_RECORD_DIR="$record_dir" bash "$dir/install.sh"
+		# Exported in a subshell, so they reach this install.sh and what it runs,
+		# but not the later toolsets' Homebrew and installers.
+		(
+			export -f log die apt install_apt install_apt_packages
+			TOOLSET_LOG_NAME="$name" TOOLSET_RECORD_DIR="$record_dir" bash "$dir/install.sh"
+		)
 		# Any brew command it ran refilled Homebrew's cache.
 		[[ ! -x "$brew" ]] || rm -rf "$("$brew" --cache)"
 	fi

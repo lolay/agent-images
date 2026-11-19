@@ -149,6 +149,40 @@ class SharedHelpersTests(unittest.TestCase):
         self.assertIn("==> demo: broken\n", result.stderr)
         self.assertNotIn("after die", result.stdout)
 
+    def test_the_helpers_reach_only_the_toolsets_install_sh(self):
+        # A later toolset's apt install (and Homebrew, and any installer) runs
+        # without them: an exported apt would shadow the real command there.
+        first = self.toolsets / "first"
+        first.mkdir()
+        (first / "install.sh").write_text('log "ran"\n')
+        second = self.toolsets / "second"
+        second.mkdir()
+        (second / "packages.txt").write_text("delta\n")
+        probe = self.tmp / "probe"
+        write_executable(self.bin / "apt-get",
+                         f'declare -F log apt die >>"{probe}" || true\nexit 0\n')
+        result = self.run_bash(str(self.script), "first", "second")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("==> first: ran\n", result.stdout)
+        self.assertEqual(probe.read_text() if probe.exists() else "", "")
+
+    def test_build_colmap_refuses_an_empty_build_list(self):
+        # build-colmap.sh sources the helpers; an empty list stops it before apt.
+        three_d = self.toolsets / "3d"
+        three_d.mkdir()
+        shutil.copy(REPO / "images/toolsets/3d/build-colmap.sh", three_d / "build-colmap.sh")
+        (three_d / "build-packages.txt").write_text("# nothing yet\n\n")
+        write_executable(self.bin / "dpkg-query", "exit 0\n")
+        result = subprocess.run(
+            ["bash", str(three_d / "build-colmap.sh")],
+            env=base_env(self.tmp, self.bin, APT_CALLS=str(self.calls), CUDAARCHS="89-real;120",
+                         COLMAP_VERSION="4.2.1"),
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f"==> build-colmap: no packages in {three_d}/build-packages.txt", result.stderr)
+        self.assertEqual(self.apt_calls(), [])
+
     def test_no_toolset_script_restates_them(self):
         """Each install.sh, and each script that sources install-toolset.sh, uses
         its helpers rather than defining its own."""
