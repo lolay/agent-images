@@ -398,7 +398,9 @@ apt_pins_of() {
 		package="${line%%#*}"
 		package="${package//[[:space:]]/}"
 		[[ -n "$package" ]] || continue
-		[[ "${line#*#}" =~ (^|[[:space:]])snapshot=([^[:space:]]*) ]] ||
+		# A word of its own, or the note's first word straight after `pinned:`,
+		# which pin_issue accepts too (`#pinned:snapshot=<id>`).
+		[[ "${line#*#}" =~ (^|[[:space:]]|pinned:)snapshot=([^[:space:]]*) ]] ||
 			die "$1: '$line': snapshot= is a word of its own in the comment"
 		snapshot="${BASH_REMATCH[2]}"
 		[[ "$package" =~ ^[a-z0-9][a-z0-9.+-]*=[^=@]+$ ]] ||

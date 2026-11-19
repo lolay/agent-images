@@ -1122,6 +1122,25 @@ class PinBakeArgsTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("*.args.APT_PINS=curl=8.5.0-2ubuntu10.1@20260101T000000Z", result.stdout.splitlines())
 
+    def test_a_snapshot_straight_after_pinned_reaches_the_build(self):
+        # pin_issue reads `#pinned:snapshot=<id>` as a note naming no issue
+        # (gcp.md, "Pinning a dependency"), so the pin itself must parse too.
+        self.add("images/toolsets/core/packages.txt", "git\n",
+                 "git\nopenssl=3.0.13-0ubuntu3.6 #pinned:snapshot=20260101T000000Z\n")
+        self.add("images/toolsets/native/packages.txt", "cmake\n",
+                 "cmake=3.28.3-1build7 # pinned:\tsnapshot=20250601T120000Z\n")
+        result = self.bake_args()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("*.args.APT_PINS=cmake=3.28.3-1build7@20250601T120000Z "
+                      "openssl=3.0.13-0ubuntu3.6@20260101T000000Z", result.stdout.splitlines())
+
+    def test_a_snapshot_glued_to_a_word_still_fails(self):
+        self.add("images/toolsets/core/packages.txt", "git\n",
+                 "git\nopenssl=3.0.13-0ubuntu3.6 # pinned: https://x/1,snapshot=20260101T000000Z\n")
+        result = self.bake_args()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("snapshot= is a word of its own", result.stderr)
+
     def test_a_pin_without_a_snapshot_adds_nothing(self):
         self.add("images/toolsets/native/packages.txt", "cmake\n", "cmake=3.28.3-1build7\n")
         result = self.bake_args()
