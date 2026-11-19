@@ -72,6 +72,11 @@ shopt -s inherit_errexit
 # shellcheck source=scripts/cloud/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 AGENT_GCP_ENV_DIR=infra/gcp
+# github_latest: the release lookup the toolsets' builds use, so the lock reads
+# a GitHub release as the build does. Before die below, which replaces its die
+# with the lock's own.
+# shellcheck source=images/toolsets/install-toolset.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../../images/toolsets/install-toolset.sh"
 
 readonly bake_file=images/cloud/docker-bake.hcl
 readonly lock_dir="${LOCK_DIR:-images/cloud}"
@@ -159,15 +164,6 @@ bake_print() {
 # fetch <url>: its body. curl's own error doesn't name the URL (lock-watch run
 # 43715897836 failed on a bare "curl: (22) ... 403"), so the failure does.
 fetch() { curl -fsSL --retry 3 "$1" || die "couldn't fetch $1"; }
-
-# github_latest <https://github.com/owner/repo/releases>: the tag GitHub
-# redirects /releases/latest to (no API call, so no rate limit).
-github_latest() {
-	local url latest="$1/latest"
-	url="$(curl -fsSLI --retry 3 -o /dev/null -w '%{url_effective}' "$latest")" || die "couldn't fetch $latest"
-	[[ "$url" == */releases/tag/* ]] || die "no latest release in $1 ($url)"
-	printf '%s' "${url##*/}"
-}
 
 # image_digest <ref>: the digest a tag names now. mirror.gcr.io answers 429
 # when Google's quota on its reads from Docker Hub runs out (lock-watch run

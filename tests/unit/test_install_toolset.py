@@ -7,8 +7,24 @@ import unittest
 from pathlib import Path
 
 from support import REPO, base_env, write_executable
+from test_lock import FAKE_CURL, executable
 
 SCRIPT = REPO / "images/toolsets/install-toolset.sh"
+
+# apt-get as the helpers call it: -q, then a known operation; install wants -y
+# and at least one package, as the real one does. Each call goes to $APT_CALLS.
+FAKE_APT_GET = (
+    '[[ "$1" == -q ]] || { echo "E: expected -q first" >&2; exit 100; }\n'
+    "shift\n"
+    'case "$1" in\n'
+    "update | clean) ;;\n"
+    "install)\n"
+    '\t[[ " $* " == *" -y "* ]] || { echo "E: would prompt" >&2; exit 1; }\n'
+    '\t[[ -n "$(printf \'%s\\n\' "${@:2}" | grep -v \'^-\')" ]] || { echo "E: nothing to install" >&2; exit 100; } ;;\n'
+    '*) echo "E: Invalid operation $1" >&2; exit 100 ;;\n'
+    "esac\n"
+    'printf \'%s\\n\' "$*" >>"$APT_CALLS"\n'
+)
 
 FILES = {
     "CLAUDE.md": "md",
@@ -97,21 +113,7 @@ class SharedHelpersTests(unittest.TestCase):
             self.bin / "sudo",
             '(($# > 0)) || { echo "usage: sudo command" >&2; exit 1; }\nexec "$@"\n',
         )
-        # apt-get as the helpers call it: -q, then a known operation; install
-        # wants -y and at least one package, as the real one does.
-        write_executable(
-            self.bin / "apt-get",
-            '[[ "$1" == -q ]] || { echo "E: expected -q first" >&2; exit 100; }\n'
-            "shift\n"
-            'case "$1" in\n'
-            "update | clean) ;;\n"
-            "install)\n"
-            '\t[[ " $* " == *" -y "* ]] || { echo "E: would prompt" >&2; exit 1; }\n'
-            '\t[[ -n "$(printf \'%s\\n\' "${@:2}" | grep -v \'^-\')" ]] || { echo "E: nothing to install" >&2; exit 100; } ;;\n'
-            '*) echo "E: Invalid operation $1" >&2; exit 100 ;;\n'
-            "esac\n"
-            'printf \'%s\\n\' "$*" >>"$APT_CALLS"\n',
-        )
+        write_executable(self.bin / "apt-get", FAKE_APT_GET)
 
     def run_bash(self, *args):
         return subprocess.run(
@@ -190,27 +192,132 @@ class SharedHelpersTests(unittest.TestCase):
         users = [path for path in SCRIPT.parent.rglob("*.sh")
                  if path.name == "install.sh" or "install-toolset.sh\"" in path.read_text()]
         self.assertGreaterEqual(len(users), 5, users)  # 3d, gpu, gis, android, build-colmap.sh at least
+        users.append(REPO / "scripts/cloud/lock.sh")  # sources it for github_latest
         restated = [
             f"{path.relative_to(REPO)}:{number}"
             for path in users
             for number, line in enumerate(path.read_text().splitlines(), 1)
-            if re.match(r"\s*(log|die|apt|install_apt|install_apt_packages)\s*\(\)", line)
+            if re.match(r"\s*(log|apt|install_apt|install_apt_packages|github_latest)\s*\(\)", line)
+            or (path.name != "lock.sh" and re.match(r"\s*die\s*\(\)", line))
         ]
         self.assertEqual(restated, [])
 
-    def test_sourcing_defines_the_helpers_and_runs_nothing(self):
-        caller = self.tmp / "caller.sh"
-        (self.tmp / "list.txt").write_text("gamma\n")
-        caller.write_text(
-            f'TOOLSET_LOG_NAME=caller\nsource "{self.script}"\nlog "ready"\n'
-            f'install_apt "{self.tmp / "list.txt"}"\ndie "done"\n'
+    def test_only_github_latest_reads_a_release_redirect(self):
+        """The /releases/latest lookup is github_latest's alone: no other script in
+        the repo, and no workflow, does its own (#125's review)."""
+        tracked = subprocess.run(["git", "ls-files", "*.sh", ".github/workflows/*.yml"], cwd=REPO,
+                                 check=True, capture_output=True, text=True).stdout.split()
+        self.assertGreater(len(tracked), 20, tracked)
+        lookups = [
+            f"{name}:{number}"
+            for name in tracked
+            for number, line in enumerate((REPO / name).read_text().splitlines(), 1)
+            if "url_effective" in line and not line.lstrip().startswith("#")
+        ]
+        self.assertEqual(lookups, ["images/toolsets/install-toolset.sh:" + str(next(
+            n for n, line in enumerate(SCRIPT.read_text().splitlines(), 1) if "url_effective" in line))])
+
+    def test_sourcing_it_only_defines_functions(self):
+        """lock.sh sources it in the lock watch and the deploy, so above its return
+        there is nothing but function definitions: no variable, and no cd."""
+        probe = self.tmp / "probe.sh"
+        probe.write_text(
+            'before="$(compgen -v | LC_ALL=C sort)"\nstart="$PWD"\n'
+            f'source "{self.script}"\n'
+            'after="$(compgen -v | LC_ALL=C sort)"\n'
+            'LC_ALL=C comm -13 <(printf "%s\\n" "$before") <(printf "%s\\n" "$after") | grep -vxE "before|start|BASH_.*|PIPESTATUS|_" || true\n'
+            '[[ "$PWD" == "$start" ]] || echo "cd to $PWD"\n'
+            'declare -F | sed "s/^declare -f //" | LC_ALL=C sort | tr "\\n" " "\n'
         )
-        result = self.run_bash(str(caller))
-        # No usage error from install-toolset.sh's own main, and the caller's die.
-        self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertNotIn("usage", result.stderr)
-        self.assertEqual((result.stdout.splitlines()[0], result.stderr), ("==> caller: ready", "==> caller: done\n"))
-        self.assertIn("install -y --no-install-recommends --allow-downgrades gamma", self.apt_calls())
+        result = self.run_bash(str(probe))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "apt die github_latest install_apt install_apt_packages log ")
+
+class GithubLatestTests(unittest.TestCase):
+    """install-toolset.sh's github_latest, which a toolset's install.sh gets
+    exported, a builder script gets by sourcing, and lock.sh shares, against the
+    fake curl test_lock uses (it refuses flags curl wouldn't take)."""
+
+    VGL = "https://github.com/VirtualGL/virtualgl/releases"
+    COLMAP = "https://github.com/colmap/colmap/releases"
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.toolsets = self.tmp / "toolsets"
+        self.toolsets.mkdir()
+        self.script = self.toolsets / "install-toolset.sh"
+        shutil.copy(SCRIPT, self.script)
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        executable(self.bin / "curl", FAKE_CURL)  # Python: not write_executable's bash
+        write_executable(self.bin / "sudo", 'exec "$@"\n')
+        self.urls = {f"redirect {self.VGL}/latest": f"{self.VGL}/tag/3.1.5"}
+        self.log = self.tmp / "curl-log"
+
+    def run_bash(self, *args, **env):
+        (self.tmp / "urls.json").write_text(__import__("json").dumps(self.urls))
+        return subprocess.run(
+            ["bash", *args],
+            env=base_env(self.tmp, self.bin, AGENT_TOOLSETS_DIR=str(self.tmp / "record"), FAKE_BIN=str(self.bin),
+                         FAKE_URLS=str(self.tmp / "urls.json"), FAKE_LOG=str(self.log), **env),
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30,
+        )
+
+    def demo(self, body):
+        # install-toolset.sh puts Homebrew first on PATH where it's installed (a
+        # runner, a session), whose curl would reach GitHub: the fakes go back in front.
+        directory = self.toolsets / "demo"
+        directory.mkdir(exist_ok=True)
+        (directory / "install.sh").write_text('set -euo pipefail\nPATH="$FAKE_BIN:$PATH"\n' + body)
+        return self.run_bash(str(self.script), "demo")
+
+    def test_a_toolsets_install_sh_reads_the_newest_tag(self):
+        result = self.demo(f'version="$(github_latest {self.VGL})"\nlog "VirtualGL $version"\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("==> demo: VirtualGL 3.1.5\n", result.stdout)
+
+    def test_a_repository_with_no_release_fails(self):
+        # GitHub redirects /releases/latest to /releases when there's none.
+        self.urls[f"redirect {self.VGL}/latest"] = self.VGL
+        result = self.demo(f'version="$(github_latest {self.VGL})"\nlog "after: $version"\n')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f"==> demo: no latest release in {self.VGL} ({self.VGL})\n", result.stderr)
+        self.assertNotIn("after", result.stdout)
+
+    def test_a_failed_lookup_names_its_url_after_retrying(self):
+        self.urls[f"status {self.VGL}/latest"] = [503] * 9
+        result = self.demo(f'version="$(github_latest {self.VGL})"\n')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f"==> demo: couldn't fetch {self.VGL}/latest\n", result.stderr)
+        self.assertEqual(self.log.read_text().splitlines().count(f"attempt {self.VGL}/latest"), 4)
+
+    def test_the_gpu_toolset_reads_virtualgl_through_it(self):
+        # Its install.sh with the helpers exported as install-toolset.sh exports
+        # them, without the Homebrew PATH (see demo).
+        self.urls.pop(f"redirect {self.VGL}/latest")
+        runner = self.tmp / "run-gpu.sh"
+        runner.write_text(
+            f'TOOLSET_LOG_NAME=gpu\nsource "{self.script}"\n'
+            "export -f log die apt install_apt install_apt_packages github_latest\n"
+            f'TOOLSET_LOG_NAME=gpu bash "{REPO / "images/toolsets/gpu/install.sh"}"\n'
+        )
+        result = self.run_bash(str(runner), CUDAARCHS="89-real;120")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f"==> gpu: couldn't fetch {self.VGL}/latest\n", result.stderr)
+        self.assertIn(f"attempt {self.VGL}/latest", self.log.read_text())
+
+    def test_build_colmap_reads_colmap_through_it(self):
+        three_d = self.toolsets / "3d"
+        three_d.mkdir()
+        shutil.copy(REPO / "images/toolsets/3d/build-colmap.sh", three_d / "build-colmap.sh")
+        (three_d / "build-packages.txt").write_text("# nothing yet\n")
+        self.urls[f"redirect {self.COLMAP}/latest"] = f"{self.COLMAP}/tag/4.2.1"
+        result = self.run_bash(str(three_d / "build-colmap.sh"), CUDAARCHS="89-real;120")
+        # The newest tag read, it goes on to the (empty) build list and stops.
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f"head {self.COLMAP}/latest", self.log.read_text())
+        self.assertIn(f"==> build-colmap: no packages in {three_d}/build-packages.txt", result.stderr)
 
 
 if __name__ == "__main__":

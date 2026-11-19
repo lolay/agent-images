@@ -19,11 +19,13 @@
 # Usage: install-toolset.sh <name>...
 #
 # Its helpers are the toolsets' too, so no toolset script restates them: log,
-# die, apt (apt-get as root, no prompts), install_apt <file> (a packages.txt)
-# and install_apt_packages <package|.deb>.... A toolset's install.sh gets them
-# exported, with TOOLSET_LOG_NAME, their log prefix, set to the toolset's name.
-# A toolset script a Dockerfile runs itself (3d's build-colmap.sh) sources this
-# file, which then defines them and returns.
+# die, apt (apt-get as root, no prompts), install_apt <file> (a packages.txt),
+# install_apt_packages <package|.deb>... and github_latest <releases URL> (the
+# newest release's tag; scripts/cloud/lock.sh sources this file for it too, so
+# the build and the lock read a release the same way). A toolset's install.sh
+# gets them exported, with TOOLSET_LOG_NAME, their log prefix, set to the
+# toolset's name. A toolset script a Dockerfile runs itself (3d's
+# build-colmap.sh) sources this file, which then defines them and returns.
 #
 # APT_DROP_LISTS=true deletes apt's package lists after each toolset's install.
 # The cloud Dockerfiles set it: every toolset is its own layer, so each kept
@@ -62,7 +64,20 @@ install_apt() {
 	install_apt_packages "${packages[@]}"
 }
 
-# Sourced: the helpers are all the caller wanted.
+# github_latest <https://github.com/<owner>/<repo>/releases>: the tag GitHub
+# redirects /releases/latest to (no API call, so no rate limit). A release
+# tool's `latest` at build, and the lock's resolve and pins (release_tools).
+github_latest() {
+	local url latest="$1/latest"
+	url="$(curl -fsSLI --retry 3 -o /dev/null -w '%{url_effective}' "$latest")" || die "couldn't fetch $latest"
+	[[ "$url" == */releases/tag/* ]] || die "no latest release in $1 ($url)"
+	printf '%s' "${url##*/}"
+}
+
+# Sourced: the helpers are all the caller wanted. Everything above this line
+# runs in every sourcing script, scripts/cloud/lock.sh included (the lock watch,
+# the deploy's bake-args), so it holds only function definitions: no variable,
+# command or cd (test_install_toolset.py checks).
 [[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
 
 toolsets_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -156,7 +171,7 @@ for name in "$@"; do
 		# Exported in a subshell, so they reach this install.sh and what it runs,
 		# but not the later toolsets' Homebrew and installers.
 		(
-			export -f log die apt install_apt install_apt_packages
+			export -f log die apt install_apt install_apt_packages github_latest
 			TOOLSET_LOG_NAME="$name" TOOLSET_RECORD_DIR="$record_dir" bash "$dir/install.sh"
 		)
 		# Any brew command it ran refilled Homebrew's cache.

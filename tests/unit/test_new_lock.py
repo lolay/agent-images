@@ -47,11 +47,14 @@ class NewLockTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp)
-        # The script and lib.sh (which real-lock.sh sources) under their repo
-        # paths, so `dirname`/../../hooks resolves as in the repo.
+        # The script and what real-lock.sh sources (lib.sh, and install-toolset.sh
+        # for github_latest) under their repo paths, so `dirname`/../.. resolves
+        # as in the repo.
         scripts = self.tmp / "repo/scripts/cloud"
         shutil.copytree(REPO / "scripts/cloud", scripts)
         shutil.copytree(REPO / "hooks/gcp", self.tmp / "repo/hooks/gcp")
+        (self.tmp / "repo/images/toolsets").mkdir(parents=True)
+        shutil.copy(REPO / "images/toolsets/install-toolset.sh", self.tmp / "repo/images/toolsets")
         (scripts / "lock.sh").rename(scripts / "real-lock.sh")
         fake = scripts / "lock.sh"
         fake.write_text(FAKE_LOCK_SH)

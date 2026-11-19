@@ -12,7 +12,7 @@
 #   (base-gpu's), and agent-gpu-libs, which reports which driver libraries the
 #   host mounted.
 #
-# log, die and install_apt_packages are install-toolset.sh's.
+# log, die, install_apt_packages and github_latest are install-toolset.sh's.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,15 +23,13 @@ readonly nvidia_lib=/usr/local/nvidia/lib64
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-# VirtualGL's amd64 .deb for that version. latest is the tag GitHub redirects
-# /releases/latest to (no API call, so no rate limit).
+# VirtualGL's amd64 .deb for that version; latest is its newest release.
 version="${VIRTUALGL_VERSION:-latest}"
 # Where its releases are, for the downloads here and for the lock, which reads
 # it here (scripts/cloud/lock.sh, release_tools).
 readonly VIRTUALGL_RELEASES=https://github.com/VirtualGL/virtualgl/releases
 if [[ "$version" == latest ]]; then
-	latest="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$VIRTUALGL_RELEASES/latest")"
-	version="${latest##*/}"
+	version="$(github_latest "$VIRTUALGL_RELEASES")"
 fi
 [[ "$version" =~ ^[0-9]+(\.[0-9]+)+$ ]] || die "unexpected VirtualGL release $version"
 log "VirtualGL $version"
