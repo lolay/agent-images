@@ -103,9 +103,15 @@ target "versions-linux" {
 # and PyTorch's TORCH_CUDA_ARCH_LIST ("8.9;12.0+PTX"); the gpu toolset builds
 # nvcc's flags from CUDAARCHS. The toolsets' check.txt checks each binary for
 # every one, so adding a GPU here is the image side of a new GPU type.
-# Like TAG and REGISTRY, a CUDA_CAPABILITIES in the environment replaces it.
+# Like TAG and REGISTRY, a CUDA_CAPABILITIES in the environment replaces it. It
+# must be dotted capabilities separated by spaces: anything else fails the bake
+# rather than build without a GPU.
 variable "CUDA_CAPABILITIES" {
   default = "8.9 12.0"
+  validation {
+    condition     = length(regexall("^ *[0-9]+\\.[0-9]+( +[0-9]+\\.[0-9]+)* *$", CUDA_CAPABILITIES)) == 1
+    error_message = "CUDA_CAPABILITIES is compute capabilities separated by spaces, such as \"8.9 12.0\"."
+  }
 }
 
 # CMake's form: <cc>-real (SASS only) for each, and plain <cc> (SASS and PTX)

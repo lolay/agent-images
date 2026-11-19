@@ -169,6 +169,19 @@ class BakeTests(unittest.TestCase):
                 args = json.loads(result.stdout)["target"]["base-gpu"]["args"]
                 self.assertEqual((args["CUDAARCHS"], args["TORCH_CUDA_ARCH_LIST"]), expected)
 
+    def test_a_malformed_gpu_list_fails_the_bake(self):
+        # An entry the derivation can't read must stop the build, not drop out
+        # of it: "12" alone would build every GPU image without Blackwell.
+        for value in ("8.9 12", "89 120", "8.9,12.0", " "):
+            with self.subTest(value=value):
+                result = subprocess.run(
+                    ["docker", "buildx", "bake", "-f", BAKE_FILE, "--print", "base-gpu"],
+                    cwd=REPO, capture_output=True, text=True, timeout=60,
+                    env={**os.environ, "CUDA_CAPABILITIES": value},
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("CUDA_CAPABILITIES is compute capabilities", result.stderr)
+
     def test_the_orchestrator_has_its_target(self):
         self.assertEqual(bake_print("orchestrator")["orchestrator"]["tags"], ["agent-orchestrator:local"])
 
