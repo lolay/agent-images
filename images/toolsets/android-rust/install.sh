@@ -13,4 +13,4 @@ PATH="/home/linuxbrew/.linuxbrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH"
 rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android 2>&1
 # Not in Homebrew; cargo builds it (about a minute) into ~/.cargo/bin.
 cargo install --locked --quiet cargo-ndk 2>&1
-printf '==> install-toolset: %s\n' "$(cargo ndk --version)"
+log "$(cargo ndk --version)"

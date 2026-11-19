@@ -1,5 +1,6 @@
 """images/toolsets/install-toolset.sh: what `record` leaves in the record directory."""
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -10,6 +11,12 @@ from support import REPO, base_env, write_executable
 from test_lock import FAKE_CURL, executable
 
 SCRIPT = REPO / "images/toolsets/install-toolset.sh"
+
+# A releases base followed by /latest, in code that reads one: a URL
+# (github.com/o/r/releases/latest) or a variable holding the base
+# ("$TFLINT_RELEASES/latest/download"). claude-code-releases/latest, a download
+# channel, is neither.
+LATEST_URL = re.compile(r"(?:/releases|_RELEASES\}?\"?)/latest\b")
 
 # apt-get as the helpers call it: -q, then a known operation; install wants -y
 # and at least one package, as the real one does. Each call goes to $APT_CALLS.
@@ -188,7 +195,6 @@ class SharedHelpersTests(unittest.TestCase):
     def test_no_toolset_script_restates_them(self):
         """Each install.sh, and each script that sources install-toolset.sh, uses
         its helpers rather than defining its own."""
-        import re
         users = [path for path in SCRIPT.parent.rglob("*.sh")
                  if path.name == "install.sh" or "install-toolset.sh\"" in path.read_text()]
         self.assertGreaterEqual(len(users), 5, users)  # 3d, gpu, gis, android, build-colmap.sh at least
@@ -201,21 +207,45 @@ class SharedHelpersTests(unittest.TestCase):
             or (path.name != "lock.sh" and re.match(r"\s*die\s*\(\)", line))
         ]
         self.assertEqual(restated, [])
+        # Nor its output format, whatever name it prints: log's prefix, by hand
+        # (r5.f15). Every toolset script, not only the ones that use the helpers.
+        prefixed = [
+            f"{path.relative_to(REPO)}:{number}"
+            for path in sorted(SCRIPT.parent.rglob("*.sh"))
+            if path != SCRIPT
+            for number, line in enumerate(path.read_text().splitlines(), 1)
+            if re.search(r"""['"]==> """, line) and not line.lstrip().startswith("#")
+        ]
+        self.assertEqual(prefixed, [])
 
     def test_only_github_latest_reads_a_release_redirect(self):
         """The /releases/latest lookup is github_latest's alone: no other script in
-        the repo, and no workflow, does its own (#125's review)."""
+        the repo, and no workflow, does its own (#125's review), and none builds a
+        URL under a releases base's /latest, whatever the base is called (r5.f14:
+        "$TFLINT_RELEASES/latest/download" has no "/releases/" in it)."""
         tracked = subprocess.run(["git", "ls-files", "*.sh", ".github/workflows/*.yml"], cwd=REPO,
                                  check=True, capture_output=True, text=True).stdout.split()
         self.assertGreater(len(tracked), 20, tracked)
-        lookups = [
-            f"{name}:{number}"
-            for name in tracked
-            for number, line in enumerate((REPO / name).read_text().splitlines(), 1)
-            if "url_effective" in line and not line.lstrip().startswith("#")
-        ]
-        self.assertEqual(lookups, ["images/toolsets/install-toolset.sh:" + str(next(
-            n for n, line in enumerate(SCRIPT.read_text().splitlines(), 1) if "url_effective" in line))])
+        own = SCRIPT.relative_to(REPO).as_posix()
+        def code_lines(name):
+            for number, line in enumerate((REPO / name).read_text().splitlines(), 1):
+                if not line.lstrip().startswith("#"):
+                    yield number, line
+
+        lookups = [f"{name}:{number}" for name in tracked if name != own
+                   for number, line in code_lines(name) if "url_effective" in line or LATEST_URL.search(line)]
+        self.assertEqual(lookups, [])
+        # And it is still there, so the check above isn't looking at nothing.
+        self.assertEqual(len([line for _, line in code_lines(own) if "url_effective" in line]), 1)
+
+    def test_the_latest_url_check_sees_each_spelling(self):
+        # The pattern itself, on the spellings found so far.
+        for line in ('release="$TFLINT_RELEASES/latest/download"',
+                     'curl -fsSL "${TFLINT_RELEASES}/latest/download/x"',
+                     "curl https://github.com/o/r/releases/latest/download/x"):
+            with self.subTest(line=line):
+                self.assertTrue(LATEST_URL.search(line))
+        self.assertFalse(LATEST_URL.search("curl https://downloads.claude.ai/claude-code-releases/latest"))
 
     def test_sourcing_it_only_defines_functions(self):
         """lock.sh sources it in the lock watch and the deploy, so above its return
@@ -231,7 +261,7 @@ class SharedHelpersTests(unittest.TestCase):
         )
         result = self.run_bash(str(probe))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "apt die github_latest install_apt install_apt_packages log ")
+        self.assertEqual(result.stdout, "apt brew_env brew_path die github_latest install_apt install_apt_packages log ")
 
 class GithubLatestTests(unittest.TestCase):
     """install-toolset.sh's github_latest, which a toolset's install.sh gets
@@ -306,6 +336,37 @@ class GithubLatestTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn(f"==> gpu: couldn't fetch {self.VGL}/latest\n", result.stderr)
         self.assertIn(f"attempt {self.VGL}/latest", self.log.read_text())
+
+    def test_the_terraform_toolset_downloads_the_one_release_latest_resolved_to(self):
+        # tflint's latest is read once, through github_latest, and both downloads
+        # (the zip and its checksums) are of that tag: a release landing between
+        # two /latest/download fetches would pair a zip with the wrong checksums
+        # (r5.f14). The fakes take only the calls install.sh makes.
+        tflint = "https://github.com/terraform-linters/tflint/releases"
+        self.urls = {
+            f"redirect {tflint}/latest": f"{tflint}/tag/v0.65.0",
+            f"{tflint}/download/v0.65.0/tflint_linux_amd64.zip": "zip",
+            f"{tflint}/download/v0.65.0/checksums.txt": "sums",
+        }
+        write_executable(self.bin / "tenv", '[[ "$1 $2" == "tf install" || "$1 $2" == "tf use" ]] && (($# == 3)) || exit 2\n')
+        write_executable(self.bin / "sha256sum", '[[ "$*" == "--check --ignore-missing --quiet checksums.txt" && -f checksums.txt ]] || exit 2\n')
+        write_executable(self.bin / "unzip", '[[ "$1 $2 $4 $5" == "-q -o tflint -d" && -f "$3" ]] || exit 2\ntouch "$6/tflint"\n')
+        write_executable(self.bin / "sudo", '[[ "$1 $2 $3 $5" == "install -m 755 /usr/local/bin/tflint" && -f "$4" ]] || exit 2\necho "$*" >>"$FAKE_LOG.sudo"\n')
+        write_executable(self.bin / "terraform", 'echo "Terraform v1.17.1"\n')
+        write_executable(self.bin / "tflint", 'echo "TFLint version 0.65.0"\n')
+        runner = self.tmp / "run-terraform.sh"
+        runner.write_text(
+            f'source "{self.script}"\n'
+            "export -f log die apt install_apt install_apt_packages github_latest\n"
+            f'TOOLSET_LOG_NAME=terraform bash "{REPO / "images/toolsets/terraform/install.sh"}"\n'
+        )
+        result = self.run_bash(str(runner))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("==> terraform: Terraform v1.17.1, TFLint version 0.65.0\n", result.stdout)
+        self.assertEqual(
+            [line for line in self.log.read_text().splitlines() if line.startswith(("head ", "get "))],
+            [f"head {tflint}/latest", f"get {tflint}/download/v0.65.0/tflint_linux_amd64.zip",
+             f"get {tflint}/download/v0.65.0/checksums.txt"])
 
     def test_build_colmap_reads_colmap_through_it(self):
         three_d = self.toolsets / "3d"

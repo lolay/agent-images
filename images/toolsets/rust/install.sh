@@ -18,4 +18,4 @@ PATH="$(brew --prefix)/opt/rustup/bin:$PATH"
 # which a green build doesn't allow, so it goes to the log with the rest.
 rustup toolchain install "$toolchain" --profile minimal --component clippy,rustfmt 2>&1
 rustup default "$toolchain" 2>&1
-printf '==> install-toolset: %s\n' "$(cargo --version)"
+log "$(cargo --version)"
