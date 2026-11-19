@@ -46,6 +46,16 @@ die() {
 	printf '==> %s: %s\n' "${TOOLSET_LOG_NAME:-install-toolset}" "$*" >&2
 	exit 1
 }
+# brew_path: where Homebrew installs on Linux, for ensure_brew below and for a
+# script that sources this file and finds brew off PATH (lock.sh's prepare_brew,
+# in a workflow's shell). AGENT_BREW replaces it, as AGENT_TOOLSETS_DIR does the
+# record directory: tests set it.
+brew_path() { printf '%s' "${AGENT_BREW:-/home/linuxbrew/.linuxbrew/bin/brew}"; }
+# brew_env: Homebrew on PATH, and quiet.
+brew_env() {
+	eval "$("$(brew_path)" shellenv)"
+	export HOMEBREW_NO_ENV_HINTS=1 HOMEBREW_NO_ANALYTICS=1
+}
 # As root (the base's bootstrap, the orchestrator's build) there's no sudo to
 # call: the stock Ubuntu image doesn't have it.
 apt() {
@@ -139,7 +149,8 @@ github_latest() {
 
 toolsets_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly toolsets_dir
-readonly brew=/home/linuxbrew/.linuxbrew/bin/brew
+brew="$(brew_path)"
+readonly brew
 # AGENT_TOOLSETS_DIR is the same variable toolset-checks.sh reads (tests set it).
 readonly record_dir="${AGENT_TOOLSETS_DIR:-/etc/agent-images/toolsets}"
 
@@ -179,11 +190,6 @@ ensure_brew() {
 		[[ -x "$brew" ]] || die "the Homebrew installer finished, but $brew isn't there"
 	fi
 	brew_env
-}
-
-brew_env() {
-	eval "$("$brew" shellenv)"
-	export HOMEBREW_NO_ENV_HINTS=1 HOMEBREW_NO_ANALYTICS=1
 }
 
 install_brewfile() {

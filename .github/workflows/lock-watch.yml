@@ -79,8 +79,6 @@ jobs:
           CLASS: ${{ steps.class.outputs.class }}
         run: |
           set -euo pipefail
-          # The hosted runner's Homebrew isn't on PATH by default.
-          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
           # The candidate tree starts as main's locks; each resolved type
           # replaces its own. A type that fails keeps main's and doesn't stop
           # the others; the unresolved job fails the run after propose.

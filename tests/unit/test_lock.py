@@ -208,6 +208,10 @@ data = json.load(open(os.environ["FAKE_BREW_DATA"]))
 def log(line):
     with open(os.environ["FAKE_LOG"], "a") as f:
         f.write(line + "\n")
+if args == ["shellenv"]:
+    # What Homebrew prints, with this fake's own directory for its prefix.
+    log("brew shellenv")
+    print('export PATH="' + os.path.dirname(os.path.abspath(sys.argv[0])) + ':$PATH"'); sys.exit(0)
 if args == ["update", "--quiet"]:
     log("brew update"); sys.exit(0)
 if len(args) == 2 and args[0] == "tap":
@@ -352,6 +356,34 @@ class ResolveTests(unittest.TestCase):
         result = self.run_lock("resolve", type_, **env)
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
+
+    def test_a_brew_on_path_is_used_where_it_is(self):
+        self.resolve()
+        self.assertNotIn("brew shellenv", self.log.read_text().splitlines())
+
+    def test_a_brew_off_path_is_found_where_homebrew_installs(self):
+        # A hosted runner has Homebrew installed but not on PATH, and no workflow
+        # puts it there (r5.f16): prepare_brew does. PATH is the fakes and the
+        # system's, which have no brew.
+        system = "/usr/bin:/bin"
+        if shutil.which("brew", path=system):
+            self.skipTest("this system has a brew of its own in " + system)
+        installed = self.tmp / "linuxbrew/bin"
+        installed.mkdir(parents=True)
+        shutil.move(self.bin / "brew", installed / "brew")
+        lock = self.resolve(PATH=f"{self.bin}:{system}", AGENT_BREW=str(installed / "brew"))
+        self.assertIn("brew go 1.27.3", lock)
+        self.assertIn("brew shellenv", self.log.read_text().splitlines())
+
+    def test_no_brew_anywhere_fails_before_anything_resolves(self):
+        system = "/usr/bin:/bin"
+        if shutil.which("brew", path=system):
+            self.skipTest("this system has a brew of its own in " + system)
+        (self.bin / "brew").unlink()
+        missing = self.tmp / "nowhere/brew"
+        result = self.run_lock("resolve", "linux", PATH=f"{self.bin}:{system}", AGENT_BREW=str(missing))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f"lock: no brew on PATH or at {missing}", result.stderr)
 
     def entries(self, lock):
         return [line for line in lock.splitlines() if not line.startswith("#")]
