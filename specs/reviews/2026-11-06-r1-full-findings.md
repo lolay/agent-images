@@ -423,4 +423,4 @@
 - Verified: confirmed.
 - Recommendation: derive the list from the Dockerfiles as `toolsets_of` does, and add `scripts/anthropic/*.sh` to `SHELL_SCRIPTS`.
 - Status: open
-- Resolution: still open (r5): `scripts/anthropic/setup.sh:19` could derive its list from `cloud_toolsets_of` (`scripts/cloud/lib.sh:23`); `scripts/anthropic` is still in neither lint glob (`Makefile:101-124`)
+- Resolution: still open (r5): `scripts/anthropic/setup.sh:19` could derive its list from `cloud_toolsets linux` (`scripts/cloud/lib.sh:40`), which follows the build chain and so includes base's `core`; `cloud_toolsets_of` (:23) reads one Dockerfile and would drop it; `scripts/anthropic` is still in neither lint glob (`Makefile:101-124`)
