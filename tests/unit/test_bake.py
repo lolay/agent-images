@@ -152,11 +152,13 @@ class BakeTests(unittest.TestCase):
     def test_base_gpu_hands_the_cuda_targets_to_cmake_and_pytorch(self):
         # SASS for each GPU and PTX for the newest, in each tool's spelling, from
         # the list itself (test_gpu_targets.py pins the list), including a value
-        # with stray spaces, which must not make an empty entry.
+        # with stray spaces, which must not make an empty entry, and values out of
+        # order: the newest is the highest capability, not the last one written
+        # (r5.f3), and "12.0" sorts after "8.9" though not as text.
         from test_gpu_targets import BAKE as HCL, dotted_capabilities
         default = re.search(r'variable "CUDA_CAPABILITIES" \{\s*default = "([^"]+)"', HCL.read_text())[1]
-        for value in (default, "  7.5  8.9 12.0 "):
-            caps = dotted_capabilities(value)
+        for value in (default, "  7.5  8.9 12.0 ", "12.0 8.9", " 8.9 12.0 7.5", "8.9"):
+            caps = sorted(dotted_capabilities(value), key=lambda cap: tuple(map(int, cap.split("."))))
             numbers = [cap.replace(".", "") for cap in caps]
             expected = (";".join([f"{n}-real" for n in numbers[:-1]] + numbers[-1:]), ";".join(caps) + "+PTX")
             with self.subTest(value=value):
@@ -168,6 +170,17 @@ class BakeTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 args = json.loads(result.stdout)["target"]["base-gpu"]["args"]
                 self.assertEqual((args["CUDAARCHS"], args["TORCH_CUDA_ARCH_LIST"]), expected)
+
+    def test_a_gpu_listed_twice_fails_the_bake(self):
+        # oldest_first keys a map by capability; a repeat must stop the build, not
+        # collapse into one entry the author didn't ask for.
+        result = subprocess.run(
+            ["docker", "buildx", "bake", "-f", BAKE_FILE, "--print", "base-gpu"],
+            cwd=REPO, capture_output=True, text=True, timeout=60,
+            env={**os.environ, "CUDA_CAPABILITIES": "8.9 12.0 8.9"},
+        )
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("Duplicate object key", result.stderr)
 
     def test_a_malformed_gpu_list_fails_the_bake(self):
         # An entry the derivation can't read must stop the build, not drop out

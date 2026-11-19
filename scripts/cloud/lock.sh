@@ -508,10 +508,15 @@ resolve_brew() {
 		jq -er '.formulae[] | "brew \(.full_name) \(.versions.stable)\(if .revision > 0 then "_\(.revision)" else "" end)"'
 }
 
-# Taps the Brewfiles name, trusted the way install-toolset.sh trusts them, and
-# Homebrew's formula data brought up to date.
+# Homebrew on PATH (a hosted runner has it installed but not on PATH, so the
+# workflows needn't), the taps the Brewfiles name trusted the way
+# install-toolset.sh trusts them, and its formula data brought up to date.
 prepare_brew() {
 	local tap
+	if ! command -v brew >/dev/null; then
+		[[ -x "$(brew_path)" ]] || die "no brew on PATH or at $(brew_path)"
+		brew_env
+	fi
 	export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_ENV_HINTS=1
 	brew update --quiet >&2 2>&1
 	sed -n 's/^tap "\([^"]*\)".*/\1/p' images/toolsets/*/Brewfile | sort -u | while read -r tap; do

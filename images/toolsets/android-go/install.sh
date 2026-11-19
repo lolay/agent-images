@@ -15,4 +15,4 @@ PATH="/home/linuxbrew/.linuxbrew/bin:$(go env GOPATH)/bin:$PATH"
 # Into $(go env GOPATH)/bin (~/go/bin), which the image's profile puts on PATH.
 go install golang.org/x/mobile/cmd/gomobile@latest golang.org/x/mobile/cmd/gobind@latest 2>&1
 gomobile init 2>&1
-printf '==> install-toolset: gomobile %s\n' "$(go version -m "$(command -v gomobile)" | awk '$1 == "mod" { print $3 }')"
+log "gomobile $(go version -m "$(command -v gomobile)" | awk '$1 == "mod" { print $3 }')"
