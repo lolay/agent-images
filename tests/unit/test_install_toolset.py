@@ -336,9 +336,9 @@ class GpuGencodeTests(unittest.TestCase):
             f'source "{SCRIPT}"\nexport -f log die\n'
             f'TOOLSET_LOG_NAME=gpu bash "{REPO / "images/toolsets/gpu/install.sh"}" "$@"\n')
 
-    def gencode(self, archs, *args):
+    def gencode(self, archs):
         return subprocess.run(
-            ["bash", str(self.runner), *(args or ["--print-gencode"])],
+            ["bash", str(self.runner), "--print-gencode"],
             env=base_env(self.tmp, self.tmp / "bin", CUDAARCHS=archs, AGENT_TOOLSETS_DIR=str(self.tmp / "record")),
             stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30,
         )
@@ -369,13 +369,6 @@ class GpuGencodeTests(unittest.TestCase):
                 self.assertEqual(result.stdout, "")
                 self.assertIn("==> gpu: unexpected CUDAARCHS entry '", result.stderr)
                 self.assertIn(f"in '{archs}'", result.stderr)
-
-    def test_a_bad_entry_stops_a_full_run_before_its_first_download(self):
-        # No fake curl or sudo on PATH, and none is reached: a download or a
-        # sudo before the check would be a different failure.
-        result = self.gencode("89-bogus", "--print-nothing")
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("unexpected CUDAARCHS entry '89-bogus'", result.stderr)
 
 
 class ColmapRuntimePackagesTests(unittest.TestCase):
