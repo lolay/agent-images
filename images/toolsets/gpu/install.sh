@@ -26,14 +26,17 @@ trap 'rm -rf "$work"' EXIT
 # VirtualGL's amd64 .deb for that version. latest is the tag GitHub redirects
 # /releases/latest to (no API call, so no rate limit).
 version="${VIRTUALGL_VERSION:-latest}"
+# Where its releases are, for the downloads here and for the lock, which reads
+# it here (scripts/cloud/lock.sh, release_tools).
+readonly VIRTUALGL_RELEASES=https://github.com/VirtualGL/virtualgl/releases
 if [[ "$version" == latest ]]; then
-	latest="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/VirtualGL/virtualgl/releases/latest)"
+	latest="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$VIRTUALGL_RELEASES/latest")"
 	version="${latest##*/}"
 fi
 [[ "$version" =~ ^[0-9]+(\.[0-9]+)+$ ]] || die "unexpected VirtualGL release $version"
 log "VirtualGL $version"
 curl -fsSL -o "$work/virtualgl.deb" \
-	"https://github.com/VirtualGL/virtualgl/releases/download/$version/virtualgl_${version}_amd64.deb"
+	"$VIRTUALGL_RELEASES/download/$version/virtualgl_${version}_amd64.deb"
 install_apt_packages "$work/virtualgl.deb"
 
 # GLVND tries EGL vendors in file-name order and skips one whose library won't

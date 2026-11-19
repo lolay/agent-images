@@ -247,8 +247,8 @@ apt mesa-utils 9.0.0-2
 apt mesa-utils-bin 9.0.0-2
 apt netbase 6.4
 apt ninja-build 1.11.1-2
-apt openjdk-21-jdk-headless 21.0.13.0.3+1-1~24.04.1
-apt openjdk-21-jre-headless 21.0.13.0.3+1-1~24.04.1
+apt openjdk-21-jdk-headless 21.0.13.1+2-1~24.04.1
+apt openjdk-21-jre-headless 21.0.13.1+2-1~24.04.1
 apt openssl 3.0.13-0ubuntu3.16
 apt patch 2.7.6-7build3
 apt perl 5.38.2-3.2ubuntu0.7
@@ -282,7 +282,7 @@ apt xvfb 2:21.1.12-1ubuntu1.9
 apt xz-utils 5.6.1+really5.4.5-1ubuntu0.4
 apt zip 3.0-13ubuntu0.2
 apt zlib1g-dev 1:1.3.dfsg-3.1ubuntu2.3
-apt-snapshot - 20261117T162358Z
+apt-snapshot - 20261119T004156Z
 base - mirror.gcr.io/library/ubuntu:24.04@sha256:73b999393d07f2bf65a40373778a44dc9a6d54ad7718d29247d8ff9413c4d6a8
 brew abseil 20260817.0
 brew actionlint 1.7.12
@@ -297,7 +297,7 @@ brew curl 8.23.0
 brew cyrus-sasl 2.1.28_4
 brew expat 2.10.0
 brew fmt 12.2.1
-brew gh 2.104.0
+brew gh 2.105.0
 brew gmp 6.3.0
 brew go 1.27.4
 brew grpcurl 1.9.4
@@ -344,7 +344,7 @@ brew simdjson 5.2.0
 brew simdutf 9.4.0
 brew sops 3.13.3
 brew sqlite 3.54.1
-brew tenv 4.16.3
+brew tenv 4.16.9
 brew tmux 3.8
 brew utf8proc 2.12.0
 brew util-linux 2.42.4
@@ -353,7 +353,7 @@ brew uvwasi 0.0.23
 brew xz 5.8.4
 brew zlib-ng-compat 2.3.3_1
 brew zstd 1.5.7_1
-claude - 2.1.326
+claude - 2.1.328
 release tflint v0.66.0
 rust - 1.100.0
 terraform - 1.17.2
