@@ -467,9 +467,12 @@ from two of Blender's official mirrors (OCF Berkeley, NLUUG) in order. Every fil
 logs which source served it. A mirror only ever stands in for the same path. The
 install checks the tarball against the release's SHA-256 file, which catches a
 corrupt download, not a modified one: when blender.org refuses, both files can come
-from the same mirror, a risk the Owner accepted (#138, r5.f1). A
-mirror that trails a new release can make a resolve lock the previous one for a
-run; the next run that reaches download.blender.org moves it on. Found on
+from the same mirror, a risk the Owner accepted (#138, r5.f1). The index `latest`
+reads may not come from a mirror (r5.f2): a mirror that hasn't synced lists an
+older Blender, and the lock watch would propose that as the newest, a downgrade
+that auto-merges and is undone by the next run that reaches the primary. `latest`
+reads download.blender.org alone, and when it refuses, the resolve fails, which
+skips only that type (#114). Found on
 2026-11-15: a cloud-build of #110 got the 403 on the 5.3.0 tarball, and lock-watch
 run 43715897836 got a 403 while resolving `3d-gpu` (its log has only curl's bare
 "(22) ... 403", so the URL isn't certain; `lock.sh` now names the URL of any

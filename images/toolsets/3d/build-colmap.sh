@@ -3,11 +3,8 @@
 # whose install tree is all the image keeps. CUDA for every GPU in CUDAARCHS
 # (base-gpu's); headless, so SIFT runs on CUDA rather than OpenGL.
 # Its Ubuntu packages are build-packages.txt beside it, which the lock resolves.
-# It ends by listing the packages the binary links in runtime-packages.txt,
-# which the 3d toolset's install.sh installs: those the build list installed at
-# the version installed here (so the image runs COLMAP with what it was built
-# against, pins included), and those the base image already had by name, since
-# a later toolset may move them within the snapshot.
+# It ends by listing the packages the binary links in runtime-packages.txt
+# (runtime-packages.sh beside it), which the 3d toolset's install.sh installs.
 #
 # log, die, install_apt and github_latest are install-toolset.sh's, which the
 # stage mounts beside the toolset.
@@ -21,6 +18,8 @@ readonly src=/tmp/colmap
 TOOLSET_LOG_NAME=build-colmap
 # shellcheck source=images/toolsets/install-toolset.sh
 source "$here/../install-toolset.sh"
+# shellcheck source=images/toolsets/3d/runtime-packages.sh
+source "$here/runtime-packages.sh"
 : "${CUDAARCHS:?the GPU types build on base-gpu, which sets CUDAARCHS (images/cloud/docker-bake.hcl)}"
 
 # COLMAP_VERSION: a release tag (the lock's, or a pin), else the newest release.
@@ -34,12 +33,10 @@ fi
 [[ "$version" =~ ^[0-9]+(\.[0-9]+)+$ ]] || die "unexpected COLMAP release '$version'"
 
 # What the install adds or changes: the build list's packages and dependencies.
-# shellcheck disable=SC2016 # dpkg-query's own ${field} syntax, not the shell's
-installed() { dpkg-query -W -f='${Package}=${Version}\n' | LC_ALL=C sort; }
-before="$(installed)"
+before="$(installed_packages)"
 grep -qvE '^[[:space:]]*(#|$)' "$here/build-packages.txt" || die "no packages in $here/build-packages.txt"
 install_apt "$here/build-packages.txt"
-from_build_list="$(LC_ALL=C comm -13 <(printf '%s\n' "$before") <(installed))"
+from_build_list="$(packages_changed_since "$before")"
 # Ubuntu's OpenImageIO CMake config wants OpenCV's include directory to exist,
 # though COLMAP uses none of it (the install guide's workaround).
 sudo mkdir -p /usr/include/opencv4
@@ -60,32 +57,4 @@ sudo cmake --install "$src/build"
 rm -rf "$src"
 
 bin="$prefix/bin/colmap"
-if ldd "$bin" | grep -q 'not found'; then
-	ldd "$bin" >&2
-	die "colmap links a library that isn't installed"
-fi
-# The package that owns each library: dpkg records some under /usr/lib and
-# some under /lib, and ldd's path can be either.
-owner() {
-	local real
-	real="$(readlink -f "$1")"
-	dpkg -S "$real" 2>/dev/null || dpkg -S "${real#/usr}" 2>/dev/null ||
-		die "no package owns $1 ($real)"
-}
-list="$prefix/share/colmap/runtime-packages.txt"
-sudo install -d -m 755 "$(dirname "$list")"
-# Through a file, not <(...): owner's die has to stop the build (pipefail).
-owners_file="$(mktemp)"
-ldd "$bin" | awk '/=> \// {print $3}' | while read -r lib; do
-	owner "$lib"
-done | cut -d: -f1 | LC_ALL=C sort -u >"$owners_file"
-mapfile -t owners <"$owners_file"
-rm -f "$owners_file"
-((${#owners[@]} > 0)) || die "found no packages for $bin's libraries"
-# Pinned to the built version if the build list installed it; by name if the
-# base image had it (that version may not be in the snapshot at all).
-for package in "${owners[@]}"; do
-	built="$(awk -F= -v name="$package" '$1 == name {print; exit}' <<<"$from_build_list")"
-	printf '%s\n' "${built:-$package}"
-done | sudo tee "$list" >/dev/null
-log "runtime packages: $(paste -sd ' ' "$list")"
+write_runtime_packages "$bin" "$prefix/share/colmap/runtime-packages.txt" "$from_build_list"
