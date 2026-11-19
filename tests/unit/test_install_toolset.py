@@ -1,5 +1,6 @@
 """images/toolsets/install-toolset.sh: what `record` leaves in the record directory."""
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -172,7 +173,8 @@ class SharedHelpersTests(unittest.TestCase):
         # build-colmap.sh sources the helpers; an empty list stops it before apt.
         three_d = self.toolsets / "3d"
         three_d.mkdir()
-        shutil.copy(REPO / "images/toolsets/3d/build-colmap.sh", three_d / "build-colmap.sh")
+        for script in ("build-colmap.sh", "runtime-packages.sh"):
+            shutil.copy(REPO / "images/toolsets/3d" / script, three_d / script)
         (three_d / "build-packages.txt").write_text("# nothing yet\n\n")
         write_executable(self.bin / "dpkg-query", "exit 0\n")
         result = subprocess.run(
@@ -310,7 +312,8 @@ class GithubLatestTests(unittest.TestCase):
     def test_build_colmap_reads_colmap_through_it(self):
         three_d = self.toolsets / "3d"
         three_d.mkdir()
-        shutil.copy(REPO / "images/toolsets/3d/build-colmap.sh", three_d / "build-colmap.sh")
+        for script in ("build-colmap.sh", "runtime-packages.sh"):
+            shutil.copy(REPO / "images/toolsets/3d" / script, three_d / script)
         (three_d / "build-packages.txt").write_text("# nothing yet\n")
         self.urls[f"redirect {self.COLMAP}/latest"] = f"{self.COLMAP}/tag/4.2.1"
         result = self.run_bash(str(three_d / "build-colmap.sh"), CUDAARCHS="89-real;120")
@@ -318,6 +321,189 @@ class GithubLatestTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn(f"head {self.COLMAP}/latest", self.log.read_text())
         self.assertIn(f"==> build-colmap: no packages in {three_d}/build-packages.txt", result.stderr)
+
+
+class GpuGencodeTests(unittest.TestCase):
+    """gpu/install.sh's CUDAARCHS to nvcc -gencode translation, through its
+    --print-gencode mode, which installs nothing (r5.f6). The helpers come
+    exported, as install-toolset.sh exports them."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.runner = self.tmp / "run.sh"
+        self.runner.write_text(
+            f'source "{SCRIPT}"\nexport -f log die\n'
+            f'TOOLSET_LOG_NAME=gpu bash "{REPO / "images/toolsets/gpu/install.sh"}" "$@"\n')
+
+    def gencode(self, archs, *args):
+        return subprocess.run(
+            ["bash", str(self.runner), *(args or ["--print-gencode"])],
+            env=base_env(self.tmp, self.tmp / "bin", CUDAARCHS=archs, AGENT_TOOLSETS_DIR=str(self.tmp / "record")),
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30,
+        )
+
+    @staticmethod
+    def flags(*pairs):
+        return " ".join(f"-gencode arch=compute_{cc},code={code}" for cc, code in pairs) + "\n"
+
+    def test_real_is_sass_and_the_plain_entry_is_sass_and_ptx(self):
+        result = self.gencode("89-real;120")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, self.flags(("89", "sm_89"), ("120", "sm_120"), ("120", "compute_120")))
+
+    def test_virtual_is_ptx_alone(self):
+        result = self.gencode("89-real;120-virtual")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, self.flags(("89", "sm_89"), ("120", "compute_120")))
+
+    def test_a_plain_entry_is_both(self):
+        result = self.gencode("89")
+        self.assertEqual(result.stdout, self.flags(("89", "sm_89"), ("89", "compute_89")))
+
+    def test_a_bad_entry_dies_before_anything_is_installed(self):
+        for archs in ("abc", "89-bogus", "8.9", ";89", "-real", "89-real;12x"):
+            with self.subTest(archs):
+                result = self.gencode(archs)
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("==> gpu: unexpected CUDAARCHS entry '", result.stderr)
+                self.assertIn(f"in '{archs}'", result.stderr)
+
+    def test_a_bad_entry_stops_a_full_run_before_its_first_download(self):
+        # No fake curl or sudo on PATH, and none is reached: a download or a
+        # sudo before the check would be a different failure.
+        result = self.gencode("89-bogus", "--print-nothing")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("unexpected CUDAARCHS entry '89-bogus'", result.stderr)
+
+
+class ColmapRuntimePackagesTests(unittest.TestCase):
+    """3d/runtime-packages.sh, the end of build-colmap.sh: the packages the
+    built binary links, as the image's install will install them (r5.f6), with
+    fakes for ldd and dpkg that refuse what the real ones would."""
+
+    FAKE_LDD = r'''[[ $# -eq 1 && "$1" == "$LDD_BIN" ]] || { echo "ldd: $*: No such file or directory" >&2; exit 1; }
+cat "$LDD_OUT"
+'''
+    FAKE_DPKG = r'''case "$*" in
+-S\ *) ;;
+*) echo "dpkg: error: unknown option $*" >&2; exit 2 ;;
+esac
+path="$2"
+while IFS=' ' read -r known package; do
+	[[ "$known" == "$path" ]] && { printf '%s: %s\n' "$package" "$path"; exit 0; }
+done <"$DPKG_OWNERS"
+echo "dpkg-query: no path found matching pattern $path" >&2
+exit 1
+'''
+    FAKE_DPKG_QUERY = r'''[[ "$*" == '-W -f=${Package}=${Version}\n' ]] || { echo "dpkg-query: error: bad invocation $*" >&2; exit 2; }
+cat "$DPKG_STATE"
+'''
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.bin = self.tmp / "bin"
+        write_executable(self.bin / "sudo", 'exec "$@"\n')
+        write_executable(self.bin / "ldd", self.FAKE_LDD)
+        write_executable(self.bin / "dpkg", self.FAKE_DPKG)
+        write_executable(self.bin / "dpkg-query", self.FAKE_DPKG_QUERY)
+        self.colmap = self.tmp / "colmap"
+        self.colmap.write_text("")
+        self.libs = {}
+        for name in ("libfoo.so.1", "libbar.so.2", "libfoo-extra.so.1"):
+            (self.tmp / name).write_text("")
+            self.libs[name] = os.path.realpath(self.tmp / name)
+        self.ldd = ""
+        self.owners = {}
+        self.list = self.tmp / "share/colmap/runtime-packages.txt"
+
+    def run_list(self, from_build_list, body=None):
+        (self.tmp / "ldd-out").write_text(self.ldd)
+        (self.tmp / "owners").write_text("".join(f"{path} {package}:amd64\n" for path, package in self.owners.items()))
+        runner = self.tmp / "run.sh"
+        runner.write_text(
+            "set -euo pipefail\n"
+            f'source "{SCRIPT}"\nsource "{REPO / "images/toolsets/3d/runtime-packages.sh"}"\n'
+            + (body or f'write_runtime_packages "{self.colmap}" "{self.list}" "$FROM_BUILD_LIST"\n'))
+        return subprocess.run(
+            ["bash", str(runner)],
+            env=base_env(self.tmp, self.bin, TOOLSET_LOG_NAME="build-colmap", FROM_BUILD_LIST=from_build_list,
+                         LDD_BIN=str(self.colmap), LDD_OUT=str(self.tmp / "ldd-out"),
+                         DPKG_OWNERS=str(self.tmp / "owners"), DPKG_STATE=str(self.tmp / "dpkg-state")),
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30,
+        )
+
+    def link(self, *names):
+        self.ldd = "\tlinux-vdso.so.1 (0x00007ffc)\n" + "".join(
+            f"\t{name} => {self.libs[name]} (0x00007f00)\n" for name in names
+        ) + "\t/lib64/ld-linux-x86-64.so.2 (0x00007f01)\n"
+
+    def test_built_packages_are_pinned_and_the_bases_are_by_name(self):
+        self.link("libfoo.so.1", "libbar.so.2", "libfoo-extra.so.1")
+        self.owners = {self.libs["libfoo.so.1"]: "libfoo1", self.libs["libbar.so.2"]: "libbar2",
+                       self.libs["libfoo-extra.so.1"]: "libfoo1"}  # two libraries, one package
+        # libfoo1 was installed by the build list; a package that merely starts
+        # with the same name was too, and is no match.
+        result = self.run_list("libfoo1=1.2-3\nlibfoo10=9\nunrelated=1\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.list.read_text(), "libbar2\nlibfoo1=1.2-3\n")
+        self.assertIn("==> build-colmap: runtime packages: libbar2 libfoo1=1.2-3\n", result.stdout)
+
+    def test_a_package_the_build_list_didnt_install_stays_a_bare_name(self):
+        self.link("libbar.so.2")
+        self.owners = {self.libs["libbar.so.2"]: "libbar2"}
+        result = self.run_list("")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.list.read_text(), "libbar2\n")
+
+    def test_a_library_linked_under_usr_is_found_under_lib(self):
+        # dpkg records some libraries under /lib while ldd names /usr/lib.
+        real = os.path.realpath("/usr/bin/env")
+        self.assertTrue(real.startswith("/usr/"), real)
+        self.libs["libusr.so"] = real
+        self.link("libusr.so")
+        self.owners = {real[len("/usr"):]: "coreutils"}
+        result = self.run_list("")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.list.read_text(), "coreutils\n")
+
+    def test_a_library_no_package_owns_stops_the_build(self):
+        self.link("libfoo.so.1", "libbar.so.2")
+        self.owners = {self.libs["libbar.so.2"]: "libbar2"}
+        result = self.run_list("")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f"==> build-colmap: no package owns {self.libs['libfoo.so.1']}", result.stderr)
+        self.assertFalse(self.list.exists())
+
+    def test_a_binary_with_no_linked_libraries_stops_the_build(self):
+        self.link()
+        result = self.run_list("")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f"==> build-colmap: found no packages for {self.colmap}'s libraries", result.stderr)
+        self.assertFalse(self.list.exists())
+
+    def test_a_library_that_isnt_installed_stops_the_build(self):
+        self.link("libbar.so.2")
+        self.ldd += "\tlibmissing.so.3 => not found\n"
+        self.owners = {self.libs["libbar.so.2"]: "libbar2"}
+        result = self.run_list("")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("==> build-colmap: colmap links a library that isn't installed", result.stderr)
+        self.assertIn("libmissing.so.3 => not found", result.stderr)
+        self.assertFalse(self.list.exists())
+
+    def test_what_the_build_list_installed_is_what_changed_in_dpkg(self):
+        # build-colmap.sh's before and after: a new package and an upgraded one.
+        state = self.tmp / "dpkg-state"
+        state.write_text("libbar2=2.0\nlibfoo1=1.0\n")
+        body = ('before="$(installed_packages)"\n'
+                f'printf "libbar2=2.0\\nlibfoo1=1.2-3\\nlibnew=4\\n" >"{state}"\n'
+                'packages_changed_since "$before"\n')
+        result = self.run_list("", body)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "libfoo1=1.2-3\nlibnew=4\n")
 
 
 if __name__ == "__main__":

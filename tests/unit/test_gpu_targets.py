@@ -113,6 +113,20 @@ class CudaTargetsTests(unittest.TestCase):
         # An empty set would pass vacuously: the three CUDA builds are checked.
         self.assertEqual(binaries, {"colmap", "gsplat", "cuda-probe"})
 
+    def test_the_probes_ptx_is_checked_for_the_newest_gpu(self):
+        # r5.f6: the probe carries PTX for the last entry of the list (base-gpu's
+        # cmake_cuda_archs leaves it without -real), which sm_ lines can't see.
+        # A line in gpu/check.txt that lists the probe's PTX for that capability.
+        newest = dotted_capabilities(
+            re.search(r'variable "CUDA_CAPABILITIES" \{\s*default = "([^"]+)"', BAKE.read_text()).group(1))[-1]
+        text = (TOOLSETS / "gpu/check.txt").read_text()
+        line = re.search(r"^cuda-probe ptx %s:(.*)$" % newest.replace(".", ""), text, re.M)
+        self.assertIsNotNone(line, f"no `cuda-probe ptx {newest.replace('.', '')}:` line in gpu/check.txt")
+        self.assertIn("cuobjdump --list-ptx", line[1])
+        self.assertIn(f"_{newest.replace('.', '')}'", line[1])
+        # It isn't an sm_ line, so the per-GPU rule above doesn't count it as one.
+        self.assertNotIn("ptx", {match["binary"] for match in SM_CHECK.finditer(text)})
+
     def test_a_missing_gpu_check_is_found(self):
         text = "colmap sm_120: cuobjdump x | grep sm_120\ngsplat sm_89: a\ngsplat sm_120: b\n"
         self.assertEqual(unchecked(text, {"89", "120"}), {"colmap": ["89"]})
