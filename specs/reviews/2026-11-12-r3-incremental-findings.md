@@ -43,7 +43,8 @@
 - Evidence: bake.sh treats only an empty list as `lock.sh bake-args` failing ("an empty list means it did"), but bake-args dies mid-loop on an unknown kind after printing the lines before it.
 - Verified: with `go - 1.27.0` added after linux's claude line, bake-args printed base, apt-snapshot and claude and died; bake.sh (fake docker) ran bake with those three `--set`s and exited 0, so rust, terraform and tflint fell back to install.sh's defaults. The deploy's `lock="$(lock.sh bake-args …)"` fails closed, so it's a green PR and then a red deploy.
 - Recommendation: read bake-args into a variable under `set -e` (`args="$(lock.sh bake-args "$target")"`), then split it, so any failure stops the build.
-- Status: open
+- Status: fixed
+- Resolution: lolay/agent-images#120 (f221311): bake.sh captures `lock.sh bake-args` under `set -e` and `inherit_errexit` before splitting it (`scripts/cloud/bake.sh:32-40`); red with the old `mapfile < <(...)` read or `|| true` (r5)
 
 ### r3.f4 - A change to lock.sh's bake-args reaches no image until the scheduled rebuild
 
@@ -55,6 +56,7 @@
 - Verified: `changed-targets.sh c12bf71 c20c32a` (#80 edits lock.sh) plans no types. The PR check builds every type on `scripts/cloud/` changes, so a bake-args fix passes it and then waits for the nightly (linux) or weekly (gis, linux-gpu) rebuild.
 - Recommendation: add `scripts/cloud/lock.sh` to `every_type` and gcp.md:275's row, or move bake-args into its own file and list that.
 - Status: open
+- Resolution: still open (r5): `every_type` (`scripts/cloud/changed-targets.sh:69-74`) and gcp.md's map (:284) still leave out `scripts/cloud/lock.sh`; a lock.sh-only commit plans no type. Grew: bake-args now also emits `APT_PINS` (`lock.sh:345-397,518-536`), so a pin-parsing change reaches no image either
 
 ### r3.f5 - The lock watch's Close step reports success when the close fails
 
@@ -66,6 +68,7 @@
 - Verified: confirmed by reading; the next run retries the close, so the cost is a green run with a stale pull request.
 - Recommendation: add `set -euo pipefail` to the step, as the others have.
 - Status: open
+- Resolution: still open (r5): the Close step is now `lock-watch.yml:199-203`, unchanged
 
 ### r3.f6 - `lock.sh diff` misjoins under a non-C locale
 
@@ -77,6 +80,7 @@
 - Verified: with en_US.UTF-8 built by `localedef`, linux's real lock against a copy with one package removed and the snapshot moved gives "join: input is not in sorted order", 16 spurious added and removed lines, exit 1, and `summary` says "apt 15 packages"; C and C.UTF-8 give the right 2 lines. Hosted runners use C.UTF-8, so this hits `make cloud-lock` on a workstation, not the watch.
 - Recommendation: run `join` (or the whole function) with `LC_ALL=C`, and test `diff` under a non-C collation.
 - Status: open
+- Resolution: still open (r5): `cmd_diff`'s `join` is now `lock.sh:592-597`, still in the caller's locale
 
 ### r3.f7 - The watch can re-propose a lock pull request that merged while it was resolving
 
@@ -88,6 +92,7 @@
 - Verified: by trace. The result is a new pull request with an empty diff, which cloud-build's `changes` passes and auto-merge lands (or, if createCommitOnBranch refuses an empty commit, a failed run; untested, GraphQL isn't reachable here). Noise only; no wrong lock lands.
 - Recommendation: in Decide, compare the candidate with `origin/main` fetched after the resolve, not the checkout, and have propose skip when the commit's tree equals `main`'s.
 - Status: open
+- Resolution: still open (r5): Decide still compares with the checkout (`lock-watch.yml:106`), and `cmd_propose`/`commit_on` (`lock-watch.sh:341-385`) don't skip a tree equal to main's
 
 ### r3.f8 - `~> x.y` means the x.y line to the lock and `>= x.y, < (x+1).0` to tenv
 
@@ -99,7 +104,7 @@
 - Verified: narrowed. No VM image installs terraform, so the consumer of the raw constraint is `scripts/anthropic/setup.sh`: once someone pins `~> x.y`, an Anthropic environment and agent-linux would differ. Latent: the default is `latest`. The unanchored grep matters only from Terraform 11.
 - Recommendation: pick one meaning. Recommended: tenv's (HashiCorp's), so the constraint means what Terraform users expect, with `~> 1.14.0` for a line; fix gcp.md's lock table to match and anchor the grep. Or keep the line meaning and say in the pin table that `~> x.y` holds the x.y line.
 - Status: open
-- Resolution: still open (r4); location correction: the doc lines are `specs/gcp.md:325` (lock table) and `:617` (pin table) at bb8929c, not :210-216,612
+- Resolution: still open (r5), no decision on #83; locations now `lock.sh:241,245-262`, `specs/gcp.md:338` (lock table) and `:714` (pin table) at 1a7f6ab
 
 ### r3.f9 - Nightly compute types would get `CLAUDE_UPGRADE=false` with no watch locking their Claude
 
@@ -111,6 +116,7 @@
 - Verified: latent; android is weekly and the only compute type.
 - Recommendation: emit `CLAUDE_UPGRADE=false` only for nightly Cloud Run types (`gcp_backend` == run).
 - Status: open
+- Resolution: still open (r5): `gcp_runner_settings` is now `hooks/gcp/lib.sh:76-86`, unchanged
 
 ## drift
 
@@ -136,7 +142,7 @@
 - Verified: confirmed against the files; following either row pins nothing.
 - Recommendation: rewrite the base row as `BASE_IMAGE = "...@sha256:..."  # pinned: <URL>` in docker-bake.hcl, the release row as `TFLINT_VERSION` / `VIRTUALGL_VERSION` in each install.sh, and say in README and image-toolsets.md that Cloud Run types take versions from their lock.
 - Status: open
-- Resolution: still open (r4); location correction: README's Linux toolchains row is :88. r4.f8 adds COLMAP and Blender to the same tables
+- Resolution: partly lolay/agent-images#112, #125: the release-tool row is fixed (`specs/gcp.md:715`). Still open (r5): the base row (:708) still says to pin with `FROM ...@sha256:` rather than docker-bake.hcl's `BASE_IMAGE`, and README.md:88 and `specs/image-toolsets.md:106` still say newest stable at build time for Cloud Run types
 
 ### r3.f12 - The pins summary can't track apt, Homebrew or Claude `stable` pins as gcp.md says
 
@@ -148,6 +154,7 @@
 - Verified: confirmed for all three.
 - Recommendation: fix apt (read the note from the packages.txt line before stripping, as `pin_note` does for install.sh). For Homebrew and Claude `stable`, either mark them (a `# pinned:` note emitted as a `pinned` line) or correct gcp.md: Homebrew pins aren't tracked, and `stable` is a channel the watch follows. Recommended: fix apt, and correct gcp.md for the other two.
 - Status: open
+- Resolution: partly lolay/agent-images#121 (8d10838): an apt pin now locks `pinned apt/<name> <issue URL>` (`lock.sh:391-420`). Still open (r5): Homebrew pins write no `pinned` line (`resolve_brew`, :489), Claude `stable` writes none (`resolve_claude`, :194-202), gcp.md:710-718 isn't corrected, and no decision is on #83
 
 ## tests
 
@@ -185,6 +192,7 @@
 - Verified: dropping `cloud|` from the regex (a lock-only PR is then "not relevant" and `gate` passes) and `&&` to `||` in the verdict each leave test_lock_watch and test_bake_script green. The deploy's `-next` smoke still stands before promote.
 - Recommendation: move the path decision and the verdict into a script, as lock-watch.sh does, and test a lock-only diff, a specs-only diff and each non-success of `check` and `build`.
 - Status: open
+- Resolution: still open (r5): the `changes` regex and `gate` verdict are now `cloud-build.yml:44,196-213`; dropping `cloud|` and turning the verdict's `&&` into `||` leaves the suite green
 
 ### r3.f16 - The lock's pin lines are untested, and a Claude pin's issue URL is lost
 
@@ -195,8 +203,8 @@
 - Evidence: the pin tests never assert the `pinned` line that `lock-watch.sh pins` lists. The gap hides a bug: gcp.md says the `# pinned:` note goes where the dependency is declared, which for Claude is `default = "…"` inside `variable "CLAUDE_VERSION"`, but `pin_note` reads only the `variable` line and the line above it.
 - Verified: with all 22 ResolveTests running, dropping `pinned claude` (:144), the `~>` pinned terraform line (:207), `pin_note`'s line-above branch (:90) or bake_print's `env -u` (:100) each stays green. A note on the `default` line, or on a comment inside the block, gives `pinned claude -`.
 - Recommendation: assert the `pinned <what> <URL>` line in each pin test, add a case with `CLAUDE_VERSION` set in the environment, and make `pin_note` read the variable's block for the bake file (or document where the note must sit).
-- Status: open
-- Resolution: still open (r4); #103 added two more untested pin arms, r4.f5
+- Status: fixed
+- Resolution: lolay/agent-images#132 (1989b02), with #125: every pin test asserts its `pinned <what> <URL or ->` line, and `pin_note` reads the whole `CLAUDE_VERSION` block (`lock.sh:118-153`). The resolve tests skip in a session (r3.f18), so the red runs are #132's; CI's `check` job ran them green on #132 (r5)
 
 ### r3.f17 - The apt resolve's container script never runs in a test
 
@@ -208,6 +216,7 @@
 - Verified: replacing the install line with `apt-get install --simulate $PACKAGES` (recommends included, no filter) leaves test_lock OK. Run for real it would lock recommended packages the image never installs.
 - Recommendation: have the fake run the `-c` script with a fake `apt-get` first on PATH that prints real `--simulate` output (`Inst`, `Conf`), refuses `install` without `--no-install-recommends`, and fails `update` on request.
 - Status: open
+- Resolution: still open (r5): FAKE_DOCKER (`tests/unit/test_lock.py:44-108`) still never runs resolve_apt's script, now `lock.sh:446-465`
 
 ### r3.f18 - The lock resolve tests skip in a session and fail with Homebrew's buildx
 
@@ -219,6 +228,7 @@
 - Verified: 17 failures and 2 errors, all in ResolveTests, after a reviewer brew-installed docker and buildx in this session. Hosted runners keep buildx system-wide, so CI is unaffected.
 - Recommendation: skip on `docker buildx version` failing, pass `DOCKER_CONFIG` through to the real docker, and either add docker and docker-buildx to the session doctor profile or say in Makefile.md that these tests need them.
 - Status: open
+- Resolution: still open (r5), no decision on #83. Grew: the range added 21 more `ResolveTests` behind the same skip, so 44 skip in a session (23 at bb8929c), among them the apt snapshot-pin and `pin_note` block tests; mutating either stays green in a session. `PinBakeArgsTests`, which needs no Docker, has no malformed snapshot id
 
 ## duplication
 
@@ -232,6 +242,7 @@
 - Verified: confirmed; the copies agree today.
 - Recommendation: `lock-watch.sh open` and a `branch` subcommand for Decide; `lock.sh write <type>` for the workflow and the Makefile.
 - Status: open
+- Resolution: still open (r5), and moved: the watch's write loop is now `lock-watch.sh resolve`, which builds `images/cloud/$type/versions.lock` and `mv`s into it itself (:104-106) instead of using the `lock.sh path` #113 added; `Makefile:382-386` still `mv`s into it. Decide still types `lock/watch` and repeats `open_pr`'s query (`lock-watch.yml:98-111`). See r5.f10 for the Makefile's WRITE=1
 
 ### r3.f20 - Three packages.txt parsers and two Brewfile tap loops
 
@@ -243,6 +254,7 @@
 - Verified: confirmed; a divergence would fail loudly rather than silently.
 - Recommendation: one reader (`install-toolset.sh --list-packages|--list-taps <name>…`, or a sourced helper beside it) used by lock.sh and the base Dockerfile.
 - Status: open
+- Resolution: still open (r5), and grew: `packages_of` (`lock.sh:367`) still copies `install_apt`'s sed (`install-toolset.sh:63`) though lock.sh now sources install-toolset.sh; the range added `apt_pins_of` and `apt_pin_notes` (`lock.sh:377-383,403-405`), each stripping a line's comment and reading its name its own way, `build-colmap.sh:40`'s emptiness grep, and a second apt bootstrap (r5.f13); the pin-note readers already disagree (r5.f12). Tap loop still `lock.sh:511-513` and `install-toolset.sh:143-145`
 
 ### r3.f21 - Release tools are listed in four places in lock.sh, and each repository twice
 
@@ -253,8 +265,8 @@
 - Evidence: a new release tool means editing `resolve_terraform`/`cmd_resolve`, `release_repo`, `pinned_value` and `upstream_newest`; `VirtualGL/virtualgl` and `terraform-linters/tflint` are spelled in lock.sh and in their install.sh, and gpu/install.sh repeats `github_latest`'s redirect lookup. A moved repository has to be fixed twice, or the lock resolves a tag from one repository while the build downloads from another.
 - Verified: confirmed; partly unavoidable, since the build container and the resolver are different contexts.
 - Recommendation: declare each repository once beside its constraint in install.sh (`TFLINT_REPO=...`, used by its URLs), read it with a `declared`-style reader, and drive lock.sh's lists from one table.
-- Status: open
-- Resolution: still open (r4); #103 added COLMAP and Blender to every list and copied their lookups into the 3d toolset, r4.f12
+- Status: fixed
+- Resolution: lolay/agent-images#125 (abe0879), #133 (1d40518), no claim: each repository is declared once, as `*_RELEASES` beside its constraint in the toolset script, `release_tools` replaces lock.sh's per-tool lists, and `github_latest` is one function both sides share (r5)
 
 ### r3.f22 - Claude's `latest` default and release URL are restated outside docker-bake.hcl
 
@@ -266,3 +278,4 @@
 - Verified: lowered to info: the orchestrator taking `latest` everywhere is by design (cloud-build.yml:119, cloud-deploy.yml:106-108), so it's a copy, not drift.
 - Recommendation: decide whether the orchestrator follows a Claude pin. If not, say so beside the bake variable and drop bake.sh's redundant default; if so, have the deploy and bake.sh ask lock.sh for the version.
 - Status: open
+- Resolution: still open (r5), no decision on #83: `bake.sh:29` and `Makefile:118` still restate `CLAUDE_VERSION:-latest`, and `cloud-deploy.yml:111` still curls the release URL

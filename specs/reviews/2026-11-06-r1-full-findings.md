@@ -44,6 +44,7 @@
 - Verified: deliberate (comment at :265-267, "the next push retries"); `workflow_dispatch targets=orchestrator` is an escape hatch. Lowered from medium.
 - Recommendation: options: (a) the supervisor starts a type's orchestrator only once its job or image family exists, so the orchestrator job depends only on `plan` (recommended); (b) wait only for types added in this diff; (c) keep as is and document the dispatch escape hatch.
 - Status: open
+- Resolution: still open (r5), no decision on #40: the gate is now `.github/workflows/cloud-deploy.yml:338-346`
 
 ### r1.f4 - The cloud CLAUDE.md template tells `linux-gpu` sessions there's no GPU
 
@@ -55,6 +56,7 @@
 - Verified: confirmed in all three files.
 - Recommendation: drop "no GPU" from the template; say "software OpenGL (Mesa)" in the display fragment instead of "without a GPU".
 - Status: open
+- Resolution: still open (r5): the template still says there's no GPU, and since m3 it reaches 3d-gpu as well as linux-gpu
 
 ## hotspots
 
@@ -92,6 +94,7 @@
 - Verified: rename reproduced (`R100`, no D). Running VMs are still capped by `maxRunDuration` with DELETE; what leaks is TERMINATED VMs and their 100 GB disks.
 - Recommendation: have `cmd_prune` delete `managed-by=agent-images` instances whose type has no env file; pass `--no-renames` to the `git diff` calls.
 - Status: open
+- Resolution: still open (r5): `cmd_prune` is now `scripts/cloud/deploy.sh:310-332` and still deletes jobs and images only; the supervisor's types are `supervisor.sh:117-124`; `changed-targets.sh:51-52` still diffs without `--no-renames`
 
 ### r1.f8 - A hung deploy smoke can bill for 9.5 hours
 
@@ -129,6 +132,7 @@
 - Verified: confirmed; the type smoke also checks only `claude --version`, so a dropped runner flag isn't caught either.
 - Recommendation: options: (a) before `deploy.sh orchestrator`, run the pushed image's `claude self-hosted-runner orchestrator --help` and fail unless every flag the supervisor passes is listed, with the flag list in one place the unit test reads (recommended); (b) a full smoke that starts the supervisor against a test environment; (c) accept the risk while Claude self-updates are watched by hand.
 - Status: open
+- Resolution: still open (r5), no decision on #40: the orchestrator job is `cloud-deploy.yml:341-395`, `deploy.sh orchestrator` is :287-297, the supervisor passes its flags at `supervisor.sh:231-238`, and the fake claude (`tests/unit/test_supervisor.py:22-44`) still accepts any argument
 
 ### r1.f11 - Deploy promotion's operation-error path is untested
 
@@ -140,6 +144,7 @@
 - Verified: reproduced: replacing `deploy.sh:83` with `if false; then` leaves all 32 deploy tests passing. Lowered from medium: the code is right today.
 - Recommendation: give the fake an operation-error hook for Run and test that a failed `-next` write stops before the smoke and that a failed live write fails the deploy.
 - Status: open
+- Resolution: still open (r5): the `.error` check is `deploy.sh:82` (`wait_operation`, :70-85); fake_gcp's Run operations (:166-167) still never fail, since `operation_errors` covers Compute only
 
 ### r1.f12 - The unit suite runs only on path-filtered PRs, and `make test`'s help says otherwise
 
@@ -151,7 +156,7 @@
 - Verified: the path filter covers every source the tests exercise, so every PR touching tested code runs them; the gap is direct pushes and the help text. Lowered from medium; fix → decision.
 - Recommendation: fix the help text; decide whether `cloud-deploy` runs `make cloud-test` first (about 75 s) and whether `cloud-build`'s `check` job drops its path filter so it can be required.
 - Status: open
-- Resolution: partly overtaken by lolay/agent-images#54 and #71: cloud-build now runs on every pull request and its `gate` is what main's ruleset requires. Still open (r3): `make test`'s help (Makefile:199) still says it runs helper unit tests, the deploy has no test step, and no decision is recorded
+- Resolution: partly overtaken by lolay/agent-images#54 and #71: cloud-build now runs on every pull request and its `gate` is what main's ruleset requires. Still open (r3): `make test`'s help (Makefile:199) still says it runs helper unit tests, the deploy has no test step, and no decision is recorded. Still open (r5): `make test`'s help is now `Makefile:202`, unchanged otherwise.
 
 ### r1.f13 - Tart and LXD host runner scripts have no tests
 
@@ -174,6 +179,7 @@
 - Verified: reproduced with a directory as the work-order file. Lowered to info: the orchestrator writes the file as the same uid and `:87` already rejects a missing or empty one.
 - Recommendation: build the body into a variable first (`body="$(jq …)" || fail 1 …`) and make the fake reject a `:run` with no runner override.
 - Status: open
+- Resolution: still open (r5): the `:run` body is built at `hooks/gcp/spawn-runner:122-133`; the fake's `:run` (`fake_gcp.py:169-175`) still accepts any body
 
 ## dependencies
 
@@ -199,7 +205,7 @@
 - Verified: each workflow matches the template it validates, so nothing fails today. Lowered from medium.
 - Recommendation: move everything to 1.16.2 and keep the version in one file all three workflows read.
 - Status: open
-- Resolution: partly lolay/agent-images#61 (Renovate): ci.yml, cloud-build.yml and cloud-deploy.yml all install 1.16.2. Still open (r3): the version is still written in three workflows, and README.md:79,89, `images/macos/plugins.pkr.hcl:2` and `triage.yaml:95` still say 1.16.1 (README.md:89, about ci.yml, is now wrong)
+- Resolution: partly lolay/agent-images#61 (Renovate): ci.yml, cloud-build.yml and cloud-deploy.yml all install 1.16.2. Still open (r3): the version is still written in three workflows, and README.md:79,89, `images/macos/plugins.pkr.hcl:2` and `triage.yaml:95` still say 1.16.1 (README.md:89, about ci.yml, is now wrong). Still open (r5): 1.16.2 is written in `ci.yml:22`, `cloud-build.yml:63` and `cloud-deploy.yml:289`; README.md:79,89, `images/macos/plugins.pkr.hcl:2`, `triage.yaml:97` and `Makefile.md:156` say 1.16.1.
 
 ### r1.f17 - shellcheck and shfmt lint the same scripts at two versions
 
@@ -211,6 +217,7 @@
 - Verified: confirmed; "design.md says CI tools are pinned" was overstated (it pins Actions and Packer), but its rationale is what the unpinned tools break. Lowered from medium.
 - Recommendation: install the same versions in both workflows from one source; add `apt-get update` if apt stays.
 - Status: open
+- Resolution: still open (r5): cloud-build installs Ubuntu's shellcheck and shfmt (`cloud-build.yml:57`), ci.yml Homebrew's unpinned (`ci.yml:24`); both lint `CLOUD_SCRIPTS` (`Makefile:101-104`), which #116 widened to `images/cloud/base/*.sh`
 
 ### r1.f18 - Ubuntu 24.04 is the base everywhere with no recorded reason
 
@@ -222,7 +229,7 @@
 - Verified: no rationale recorded anywhere. Not verified: the CUDA 26.04 tag list.
 - Recommendation: record the constraint beside `ARG BASE_IMAGE` and in gcp.md's choices, with what lifts it; decide separately whether the orchestrator, GCE and LXD images follow.
 - Status: open
-- Resolution: partly lolay/agent-images#79: the CUDA reason is recorded for the Actions runners only (`.github/renovate.json`'s github-runners rule). Still open (r3): nothing beside docker-bake.hcl's BASE_IMAGE or in gcp.md says why the images stay on 24.04
+- Resolution: partly lolay/agent-images#79: the CUDA reason is recorded for the Actions runners only (`.github/renovate.json`'s github-runners rule). Still open (r3): nothing beside docker-bake.hcl's BASE_IMAGE or in gcp.md says why the images stay on 24.04. Still open (r5): #126 rewrote docker-bake.hcl around `BASE_IMAGE` (:47-57; base-gpu :131-139 explains CUDA 13.0, not the 24.04 hold) without recording why.
 
 ## contracts
 
@@ -248,6 +255,7 @@
 - Verified: confirmed. Lowered from medium: rare operator edits, loud failures.
 - Recommendation: options: rebuild the image when those keys change, or decouple them (a fixed minimum disk for the image, a family derived from the type, the hook refusing a `DISK_GB` below the image's).
 - Status: open
+- Resolution: still open (r5): a compute type rebuilds only on its image paths (`changed-targets.sh:124-131`); `DISK_GB` and `IMAGE_FAMILY` still go to Packer (`deploy.sh:161,182-183`)
 
 ### r1.f21 - No GCP type can pin Claude, though gcp.md describes how
 
@@ -271,6 +279,7 @@
 - Verified: tested in bash 5.2. A missing env file still exits 2 (`:76`).
 - Recommendation: `[[ -n ${X:-} ]] || fail 2 "X missing in infra/gcp/$RUNNER_TYPE.env"`.
 - Status: open
+- Resolution: still open (r5): `${X:?}` at `hooks/gcp/spawn-runner:77,174-175`; `on_exit` (:58-71) still maps the result to 1
 
 ## security
 
@@ -306,6 +315,7 @@
 - Verified: confirmed.
 - Recommendation: `objectCreator` + `objectViewer`, or soft delete or versioning on the bucket; or extend gcp.md's acceptance to integrity.
 - Status: open
+- Resolution: still open (r5), no decision on #40: `job-spec.sh:122` still mounts outputs read-write; the visibility-only acceptance is now `gcp.md:1005-1007`
 
 ### r1.f26 - Per-type secret files in the orchestrator container don't isolate types
 
@@ -317,6 +327,7 @@
 - Verified: confirmed; gcp.md doesn't claim isolation outright.
 - Recommendation: say in gcp.md that the types share one trust domain, and that a type serving another audience needs its own container and service account.
 - Status: open
+- Resolution: still open (r5): `start_type` is now `supervisor.sh:218-246`; `gcp.md:801-805` still doesn't say the types share one trust domain
 
 ## duplication
 
@@ -353,6 +364,7 @@
 - Verified: confirmed. Lowered from medium: the guest is throwaway, and the host's requirement accepts any Developer ID, not Anthropic's team.
 - Recommendation: one verify-then-clear helper with a team-ID requirement, used by both; or correct the comment.
 - Status: open
+- Resolution: still open (r5): now `images/shared/runners/claude.sh:81-88`
 
 ### r1.f30 - macOS cleanup stops the VM after 30 s, though everything budgets 120 s to drain
 
@@ -375,6 +387,7 @@
 - Verified: the LXD behavior is documented (linux.md:119-126), so it's a deliberate difference. Lowered from medium.
 - Recommendation: choose one policy (gate before `lxc publish`, or warn in Packer), and stage from one shared script or file list.
 - Status: open
+- Resolution: still open (r5), no decision on #40: `scripts/linux/build-image.sh:96-121` and `images/android/gce/provision.sh:78-82`
 
 ### r1.f32 - changed-targets' test fixture models an image layout that no longer exists
 
@@ -398,7 +411,7 @@
 - Verified: confirmed, latent.
 - Recommendation: one `gcp_type_setting` helper that sources in a subshell; the watchdog reads both values from one sourced subshell.
 - Status: open
-- Resolution: partly lolay/agent-images#54: `gcp_type_setting` (hooks/gcp/lib.sh) sources the env file in a subshell, and changed-targets, deploy and the supervisor read BACKEND, REBUILD and DEPLOY through it. Still open (r3): `images/shared/agent-runner-watchdog.sh` sources runner.env then reads WATCHDOG_ACTION with sed (:25,39), and cloud-deploy.yml greps project.env into GITHUB_ENV (:133,280,355,411)
+- Resolution: partly lolay/agent-images#54: `gcp_type_setting` (hooks/gcp/lib.sh) sources the env file in a subshell, and changed-targets, deploy and the supervisor read BACKEND, REBUILD and DEPLOY through it. Still open (r3): `images/shared/agent-runner-watchdog.sh` sources runner.env then reads WATCHDOG_ACTION with sed (:25,39), and cloud-deploy.yml greps project.env into GITHUB_ENV (:133,280,355,411). Still open (r5): #93 has the watchdog source runner.env (:33) but it still reads `WATCHDOG_ACTION` with sed (:51); `cloud-deploy.yml:133,280,355,411` unchanged.
 
 ### r1.f34 - The Anthropic setup script copies linux's toolset list and isn't linted
 
@@ -410,3 +423,4 @@
 - Verified: confirmed.
 - Recommendation: derive the list from the Dockerfiles as `toolsets_of` does, and add `scripts/anthropic/*.sh` to `SHELL_SCRIPTS`.
 - Status: open
+- Resolution: still open (r5): `scripts/anthropic/setup.sh:19` could derive its list from `cloud_toolsets linux` (`scripts/cloud/lib.sh:40`), which follows the build chain and so includes base's `core`; `cloud_toolsets_of` (:23) reads one Dockerfile and would drop it; `scripts/anthropic` is still in neither lint glob (`Makefile:101-124`)
