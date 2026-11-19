@@ -66,6 +66,13 @@ file, which every script reads; don't copy it. Copies drift: r1 found six that h
 (the runner settings' defaults, the toolset checks, the type list, `JAVA_HOME`, env
 parsing, the Anthropic toolset list; `specs/reviews/2026-11-06-r1-full.md`).
 
+When a change moves a fact to its one source, grep for the old value and fix every
+doc and comment that states it (specs, README.md, Makefile.md, script headers) in the
+same pull request; the reviews keep finding them left behind (r4.f6, f7, f8; r5.f7,
+f8, f9). A guard against a second copy matches the copy, not one spelling of it: r5
+found a `releases/latest` URL and a hand-written log prefix that #133's and #126's
+guards couldn't see (r5.f14, f15).
+
 ## Test fakes
 
 A test fake rejects what the real API would reject: a malformed body, a failed
