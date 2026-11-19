@@ -103,8 +103,13 @@ Adding a type is:
    `agent-tools = "target:<type>-tools"` and `tags("<type>")`). `tests/unit/test_bake.py`
    fails until both exist, and checks that `changed-targets.sh` sees the same parents.
 4. The environment in claude.ai, and its key as secret `claude-env-<type>`.
+5. The type's first lock. The pull request's first `cloud-build` has no lock for it,
+   so it resolves one, uploads it as the artifact `versions-lock-<type>` and fails
+   that type. Run the `gh run download` command in the job summary, commit the file
+   unedited at `images/cloud/<type>/versions.lock`, and push ([The lock](#the-lock)).
 
-The pull request builds it with the other types; the push to `main` deploys it.
+The pull request then builds it with the other types, from that lock; the push to
+`main` deploys it.
 
 **Standbys can be zero; orchestrators can't.** `--min-idle 0` (the default) keeps no
 runner waiting: a runner starts only when a session queues, and the session waits for
@@ -306,7 +311,7 @@ built from, and the check compares upstream against it, so nothing ever reads th
 image. One thing has its own lock: `3d-gpu`'s Python environment, `/opt/3d`, is
 `images/toolsets/3d/uv.lock`, which the watch doesn't move (`uv lock --upgrade` in a
 pull request; image-toolsets.md). `scripts/cloud/lock.sh` is its one reader and writer: `resolve <type>`
-(Linux, with Docker and Homebrew), `bake-args`, `diff`, `summary`, `pins` and `path`. A lock is
+(Linux, with Docker and Homebrew), `bake-args`, `diff`, `summary`, `pins`, `releases` and `path`. A lock is
 `<kind> <name> <value>` lines, sorted, under a header:
 
 ```text
@@ -369,7 +374,10 @@ runs `lock.sh resolve <type>`, the job uploads the result as the artifact
 the file as it came, and the rerun builds from it. Nothing writes the branch for
 them, and a type that has a lock is never resolved there: moving a lock stays the
 watch's. So `lock.sh resolve` writes every lock, the first one included; no lock is
-written or seeded by hand. apt's snapshot makes the apt layer reproducible, old versions
+written or seeded by hand. The one other writer is `make cloud-lock WRITE=1`, for a
+local `make cloud-build` against a candidate lock (a release pin only takes effect
+through the lock, since `bake-args` overrides it with the lock's value): that file
+is never committed. apt's snapshot makes the apt layer reproducible, old versions
 included, which plain `pkg=version` can't promise because Ubuntu's update pockets
 keep only the newest. One install isn't held: snapshot.ubuntu.com is HTTPS only and
 the stock `ubuntu:24.04` image has no CA certificates, so the base first installs
@@ -438,8 +446,10 @@ tarball and its SHA-256 file. download.blender.org answers 403 to GitHub's hoste
 runners now and then, and curl's `--retry` doesn't retry a 403, so each file is
 fetched with `--retry 3 --retry-all-errors` from download.blender.org first, then
 from two of Blender's official mirrors (OCF Berkeley, NLUUG) in order. Every file
-logs which source served it. A mirror only ever stands in for the same path, and
-the install checks the tarball against the release's SHA-256 file as before. A
+logs which source served it. A mirror only ever stands in for the same path. The
+install checks the tarball against the release's SHA-256 file, which catches a
+corrupt download, not a modified one: when blender.org refuses, both files can come
+from the same mirror, a risk the Owner accepted (#138, r5.f1). A
 mirror that trails a new release can make a resolve lock the previous one for a
 run; the next run that reaches download.blender.org moves it on. Found on
 2026-11-15: a cloud-build of #110 got the 403 on the 5.3.0 tarball, and lock-watch

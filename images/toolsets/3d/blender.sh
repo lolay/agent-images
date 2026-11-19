@@ -15,8 +15,11 @@
 # then (lock-watch run 43715897836, cloud-build job 132659831715, 2026-11-15),
 # and curl's --retry leaves a 403 alone, so each source gets --retry-all-errors.
 # Every file says on stderr which source served it; nothing falls back silently.
-# A mirror only ever stands in for the same path, and install.sh checks the
-# tarball against the release's SHA-256 file wherever each came from.
+# A mirror only ever stands in for the same path. install.sh checks the tarball
+# against the release's SHA-256 file, which catches a corrupt download, not a
+# modified one: when blender.org refuses, the tarball and its .sha256 can come
+# from the same mirror. The mirrors are official university mirrors over HTTPS,
+# and that residual risk is accepted (lolay/agent-images#138, r5.f1).
 set -euo pipefail
 shopt -s inherit_errexit
 

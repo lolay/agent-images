@@ -377,9 +377,11 @@ cloud-ci: cloud-lint cloud-test ## Lint, unit tests and a build of every cloud i
 
 # The lock's diff, or the whole candidate when the type has no lock yet. The
 # watch (m5) writes locks through pull requests, and cloud-build resolves a new
-# type's first one (scripts/cloud/new-lock.sh); WRITE=1 is for checking a
-# constraint change on a host with Docker before its pull request.
-cloud-lock: ## Resolve a runner type's lock from upstream now and show what moved (Linux, Docker, Homebrew): TYPE=linux [WRITE=1 writes it]
+# type's first one (scripts/cloud/new-lock.sh). WRITE=1 is for a local
+# `make cloud-build` against a candidate lock (bake-args overrides a release pin
+# with the lock's value, so trying a pin change takes the lock rewritten). That
+# lock is never committed: the watch and cloud-build write the ones in git.
+cloud-lock: ## Resolve a runner type's lock from upstream now and show what moved (Linux, Docker, Homebrew): TYPE=linux [WRITE=1 writes it for a local cloud-build, never to commit]
 	@set -o pipefail; lock=images/cloud/$(TYPE)/versions.lock; new="$$(mktemp)"; \
 	scripts/cloud/lock.sh resolve $(TYPE) >"$$new" || { rm -f "$$new"; exit 1; }; \
 	if [ -f "$$lock" ]; then scripts/cloud/lock.sh diff "$$lock" "$$new"; else cat "$$new"; fi; \
