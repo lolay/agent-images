@@ -32,9 +32,10 @@ install_apt "$colmap_packages"
 
 # BLENDER_VERSION: a version (the lock's, scripts/cloud/lock.sh, or a pin), else
 # the newest in blender.org's release index. BLENDER_RELEASES, blender.sh beside
-# this script, knows where the files come from (blender.org, then its mirrors)
-# and says which served each; the lock reads it here (release_tools) and asks
-# the same script for the newest.
+# this script, knows where the files come from (blender.org, then its mirrors,
+# except the newest-release lookup, which is blender.org's alone) and says which
+# served each; the lock reads it here (release_tools) and asks the same script
+# for the newest.
 version="${BLENDER_VERSION:-latest}"
 readonly BLENDER_RELEASES=blender.sh
 if [[ "$version" == latest ]]; then

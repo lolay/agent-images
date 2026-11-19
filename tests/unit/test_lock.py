@@ -904,33 +904,53 @@ class BlenderTests(unittest.TestCase):
         self.assertEqual(out.read_text(), "abc  blender-5.10.1-linux-x64.tar.xz\n")
         self.assertNotIn(BLENDER_MIRROR, self.log.read_text(), "the retry served it; no mirror was asked")
 
-    def test_a_refusing_blender_org_falls_back_to_a_mirror_and_says_so(self):
-        self.refuse(f"{BLENDER}/", 99)
-        self.refuse(f"{BLENDER}/Blender5.10/", 99)
-        result = self.blender("latest")
+    def test_a_refusing_blender_org_falls_back_to_a_mirror_for_a_file_and_says_so(self):
+        self.refuse(f"{BLENDER}/Blender5.10/blender-5.10.1.sha256", 99)
+        out = self.tmp / "blender.sha256"
+        result = self.blender("get", "Blender5.10/blender-5.10.1.sha256", str(out))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "5.10.1\n")
-        self.assertEqual(self.attempts(f"{BLENDER}/"), 4, "one try and three retries before the mirror")
-        self.assertIn(f"blender: {BLENDER}/ failed\n", result.stderr)
-        self.assertIn(f"blender: the release index from {BLENDER_MIRROR}\n", result.stderr)
-        self.assertIn(f"blender: Blender5.10/ from {BLENDER_MIRROR}\n", result.stderr)
+        self.assertEqual(out.read_text(), "abc  blender-5.10.1-linux-x64.tar.xz\n")
+        self.assertEqual(self.attempts(f"{BLENDER}/Blender5.10/blender-5.10.1.sha256"), 4,
+                         "one try and three retries before the mirror")
+        self.assertIn(f"blender: {BLENDER}/Blender5.10/blender-5.10.1.sha256 failed\n", result.stderr)
+        self.assertIn(f"blender: Blender5.10/blender-5.10.1.sha256 from {BLENDER_MIRROR}\n", result.stderr)
+
+    def test_latest_never_reads_a_mirror(self):
+        # r5.f2: a mirror that hasn't synced lists only Blender5.2/, and latest
+        # would print 5.2.9, which lock.sh writes as the newest and auto-merges.
+        # So a refusing blender.org fails latest, at either page, and no mirror
+        # is asked for either.
+        self.urls[f"{BLENDER_MIRROR}/"] = '<a href="Blender5.2/">Blender5.2/</a>\n'
+        self.urls[f"{BLENDER_MIRROR}/Blender5.2/"] = '<a href="blender-5.2.9-linux-x64.tar.xz">x</a>\n'
+        for refused in (f"{BLENDER}/", f"{BLENDER}/Blender5.10/"):
+            with self.subTest(refused):
+                self.log.unlink(missing_ok=True)
+                self.refuse(refused, 99)
+                result = self.blender("latest")
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("blender: no source served ", result.stderr)
+                self.assertEqual(self.attempts(refused), 4, "one try and three retries, then it gives up")
+                self.assertNotIn("mirrors.ocf", self.log.read_text())
+                self.assertNotIn("ftp.nluug", self.log.read_text())
+                self.urls.pop(f"status {refused}")
 
     def test_a_transfer_that_breaks_off_leaves_nothing_behind(self):
-        # blender.org sends part of an index naming a series the mirror doesn't
-        # have, then drops the connection on every attempt. Only the mirror's
-        # page may be read, or latest picks the series blender.org half-sent.
-        self.urls[f"partial {BLENDER}/"] = '<a href="Blender9.9/">Blender9.9/</a>\n<a href="Blend'
-        self.urls[f"status {BLENDER}/"] = ["partial"] * 99
-        result = self.blender("latest")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "5.10.1\n")
-        self.assertIn(f"blender: the release index from {BLENDER_MIRROR}\n", result.stderr)
+        # blender.org sends part of a file, then drops the connection on every
+        # attempt. Only the mirror's copy may reach out, or the half-sent bytes
+        # would stand in front of it.
         out = self.tmp / "blender.sha256"
         self.urls[f"partial {BLENDER}/Blender5.10/blender-5.10.1.sha256"] = "000  blender-5.10.1-linux"
         self.urls[f"status {BLENDER}/Blender5.10/blender-5.10.1.sha256"] = ["partial"] * 99
         result = self.blender("get", "Blender5.10/blender-5.10.1.sha256", str(out))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(out.read_text(), "abc  blender-5.10.1-linux-x64.tar.xz\n")
+        # And a latest that blender.org half-sent fails, rather than reading it.
+        self.urls[f"partial {BLENDER}/"] = '<a href="Blender9.9/">Blender9.9/</a>\n<a href="Blend'
+        self.urls[f"status {BLENDER}/"] = ["partial"] * 99
+        result = self.blender("latest")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
 
     def test_every_source_refusing_fails(self):
         self.urls = {}
@@ -1083,6 +1103,37 @@ class ReleaseToolTests(unittest.TestCase):
                 result = self.pins("release gizmo v1.0.0\npinned gizmo -\n")
                 self.assertEqual(result.returncode, 1)
                 self.assertIn(f"lock: images/toolsets/widgets/install.sh: {error}", result.stderr)
+
+    def test_a_script_source_must_be_a_plain_name_beside_the_declaring_file(self):
+        # r5.f5: the name check, not only the existence check. Each of these is a
+        # script that exists and would print a release, so only the name check
+        # refuses it.
+        (self.toolset / "sub").mkdir()
+        (self.toolset / "sub/latest.sh").write_text('#!/bin/bash\necho 7.1.0\n')
+        (self.repo / "images/toolsets/outside.sh").write_text('#!/bin/bash\necho 7.1.0\n')
+        for source in ("../outside.sh", "./latest.sh", "sub/latest.sh", "../widgets/latest.sh",
+                       str(self.repo / "images/toolsets/outside.sh")):
+            with self.subTest(source):
+                self.assertTrue((self.toolset / source).is_file(), "the fixture exists")
+                self.declare(f'gizmo="${{GIZMO_VERSION:-latest}}"\nreadonly GIZMO_RELEASES={source}\n')
+                result = self.pins("release gizmo v1.0.0\npinned gizmo -\n")
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertEqual(result.stdout, "")
+                self.assertIn(f"lock: images/toolsets/widgets/install.sh: release source '{source}' "
+                              "isn't a script beside it", result.stderr)
+
+    def test_a_newest_release_that_isnt_one_token_fails(self):
+        # r5.f5: a source that prints junk (an HTML error page, two words) is
+        # refused, not written to the lock as `release gizmo 7.1.0 <html>`.
+        self.declare('gizmo="${GIZMO_VERSION:-latest}"\nreadonly GIZMO_RELEASES=latest.sh\n')
+        for printed in ("7.1.0 extra", "<html>503</html>", "7.1.0\n7.1.1", "", "-7.1.0", "7.1.0;rm"):
+            with self.subTest(printed):
+                (self.toolset / "latest.sh").write_text(f"#!/bin/bash\nprintf '%s' '{printed}'\n")
+                result = self.pins("release gizmo v1.0.0\npinned gizmo -\n")
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("lock: latest.sh gave '", result.stderr)
+                self.assertIn("' as its newest release", result.stderr)
 
 
 class LockedReleaseToolTests(unittest.TestCase):

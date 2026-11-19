@@ -9,8 +9,9 @@
 #   Cloud Run documents only the library mount, so the image carries them. If the
 #   mount has no graphics libraries, both fall back to Mesa (llvmpipe, lavapipe).
 # - agent-cuda-probe, the smoke check's CUDA kernel, for every GPU in CUDAARCHS
-#   (base-gpu's), and agent-gpu-libs, which reports which driver libraries the
-#   host mounted.
+#   (base-gpu's; gencode_flags turns it into nvcc's flags, and --print-gencode
+#   prints them without installing anything), and agent-gpu-libs, which reports
+#   which driver libraries the host mounted.
 #
 # log, die, install_apt_packages and github_latest are install-toolset.sh's.
 set -euo pipefail
@@ -19,6 +20,28 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly here
 readonly nvidia_lib=/usr/local/nvidia/lib64
 : "${CUDAARCHS:?the GPU types build on base-gpu, which sets CUDAARCHS (images/cloud/docker-bake.hcl)}"
+
+# gencode_flags: CUDAARCHS in nvcc's terms, for the probe: <cc>-real is SASS for
+# that GPU, <cc>-virtual PTX, and a plain <cc> both, so a newer GPU can still JIT
+# it. Sets the array gencode. Only those three forms are CMake's CUDAARCHS
+# entries this reads; anything else dies here, before the first download.
+gencode_flags() {
+	local arch cc archs
+	gencode=()
+	IFS=';' read -ra archs <<<"$CUDAARCHS"
+	for arch in "${archs[@]}"; do
+		[[ "$arch" =~ ^([0-9]+)(-real|-virtual)?$ ]] || die "unexpected CUDAARCHS entry '$arch' in '$CUDAARCHS'"
+		cc="${BASH_REMATCH[1]}"
+		[[ "$arch" == *-virtual ]] || gencode+=(-gencode "arch=compute_$cc,code=sm_$cc")
+		[[ "$arch" == *-real ]] || gencode+=(-gencode "arch=compute_$cc,code=compute_$cc")
+	done
+}
+gencode_flags
+# --print-gencode: the flags, on one line, and nothing installed (the unit test's).
+if [[ "${1:-}" == --print-gencode ]]; then
+	printf '%s\n' "${gencode[*]}"
+	exit 0
+fi
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -47,16 +70,6 @@ printf '{\n  "file_format_version": "1.0.0",\n  "ICD": {"library_path": "%s/libE
 printf '{\n  "file_format_version": "1.0.1",\n  "ICD": {"library_path": "%s/libGLX_nvidia.so.0", "api_version": "1.4.0"}\n}\n' \
 	"$nvidia_lib" | sudo tee /usr/share/vulkan/icd.d/nvidia_icd.json >/dev/null
 
-# The probe, for CUDAARCHS in nvcc's terms: <cc>-real is SASS for that GPU,
-# <cc>-virtual PTX, and a plain <cc> both, so a newer GPU can still JIT it.
-gencode=()
-IFS=';' read -ra archs <<<"$CUDAARCHS"
-for arch in "${archs[@]}"; do
-	cc="${arch%-*}"
-	[[ "$cc" =~ ^[0-9]+$ ]] || die "unexpected CUDAARCHS entry '$arch' in '$CUDAARCHS'"
-	[[ "$arch" == *-virtual ]] || gencode+=(-gencode "arch=compute_$cc,code=sm_$cc")
-	[[ "$arch" == *-real ]] || gencode+=(-gencode "arch=compute_$cc,code=compute_$cc")
-done
 log "building agent-cuda-probe: ${gencode[*]}"
 /usr/local/cuda/bin/nvcc -O2 "${gencode[@]}" -o "$work/agent-cuda-probe" "$here/cuda-probe.cu"
 sudo install -m 755 "$work/agent-cuda-probe" /usr/local/bin/agent-cuda-probe

@@ -2,11 +2,14 @@
 # line of output is the reported version. None needs a GPU, so they run on a
 # hosted runner too; smoke.sh runs the GPU itself. The sm_ lines show the probe
 # was built for each GPU in base-gpu's CUDA_CAPABILITIES
-# (images/cloud/docker-bake.hcl): sm_89 the L4, sm_120 Blackwell.
+# (images/cloud/docker-bake.hcl): sm_89 the L4, sm_120 Blackwell. The ptx line is
+# the PTX the newest of them carries so a later GPU can JIT it (--list-ptx names
+# it by sm_ or compute_, by cuobjdump's version).
 nvcc: nvcc --version | grep -m1 release
 cuda-probe: command -v agent-cuda-probe
 cuda-probe sm_89: cuobjdump --list-elf "$(command -v agent-cuda-probe)" | grep -m1 -o 'sm_89'
 cuda-probe sm_120: cuobjdump --list-elf "$(command -v agent-cuda-probe)" | grep -m1 -o 'sm_120'
+cuda-probe ptx 120: cuobjdump --list-ptx "$(command -v agent-cuda-probe)" | grep -m1 -oE '(sm|compute)_120'
 driver-libs: command -v agent-gpu-libs
 eglinfo: command -v eglinfo
 vulkaninfo: command -v vulkaninfo
