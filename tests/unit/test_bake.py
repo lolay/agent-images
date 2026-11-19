@@ -233,7 +233,7 @@ class BakeTests(unittest.TestCase):
 
 
 class AptBuildConfTests(unittest.TestCase):
-    """images/cloud/base/apt-build.conf reaches every apt-get update a cloud build
+    """images/cloud/base/apt-build.conf reaches every update a cloud build
     runs, and no further, read as text (a build would need the archive down)."""
 
     CONF = "images/cloud/base/apt-build.conf"
@@ -254,14 +254,17 @@ class AptBuildConfTests(unittest.TestCase):
         prepare = self.text("images/cloud/base/apt-prepare.sh")
         self.assertIn('readonly conf_dir="$root/etc/apt/apt.conf.d"', prepare)
         installed = prepare.index('step install -D -m 644 "$here/apt-build.conf" "$conf_dir/40agent-build"')
-        self.assertLess(installed, prepare.index("step apt-get update"))
+        self.assertLess(installed, prepare.index("step apt_update"))
         self.assertEqual(self.INSTALLED, "/etc/apt/apt.conf.d/40agent-build")
 
     def test_the_orchestrator_passes_it_for_its_update(self):
+        # Its update is apt_update's (install-toolset.sh, mounted to source), run
+        # with APT_CONFIG exported; test_apt_update checks it is the only update.
         orchestrator = self.text("images/cloud/orchestrator/Dockerfile")
         self.assertIn(f"source={self.CONF},target=/tmp/apt-build.conf", orchestrator)
-        self.assertIn("APT_CONFIG=/tmp/apt-build.conf apt-get update", orchestrator)
-        self.assertEqual(orchestrator.count("apt-get update"), 1)
+        run = orchestrator.split("export APT_CONFIG=/tmp/apt-build.conf", 1)[1].split("apt-get install", 1)[0]
+        self.assertIn("bash -c 'source /tmp/install-toolset.sh && apt_update'", run)
+        self.assertNotIn("apt-get update", orchestrator)
 
     def test_the_runner_stage_removes_it(self):
         self.assertIn(self.INSTALLED, self.text("images/cloud/runner/Dockerfile").split("rm -f", 1)[1].splitlines()[0])

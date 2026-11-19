@@ -19,7 +19,9 @@
 # Usage: install-toolset.sh <name>...
 #
 # Its helpers are the toolsets' too, so no toolset script restates them: log,
-# die, apt (apt-get as root, no prompts), apt_install_options (what every apt
+# die, apt (apt-get as root, no prompts), apt_update (the one `apt-get update`
+# of the cloud builds, retried while the archive is out of sync),
+# apt_install_options (what every apt
 # install of a package list takes; images/cloud/base/apt-prepare.sh sources this
 # file for it, so the base's install and the lock's simulation take them too),
 # install_apt <file> (a packages.txt), install_apt_packages <package|.deb>...
@@ -44,7 +46,52 @@ die() {
 	printf '==> %s: %s\n' "${TOOLSET_LOG_NAME:-install-toolset}" "$*" >&2
 	exit 1
 }
-apt() { sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get -q "$@"; }
+# As root (the base's bootstrap, the orchestrator's build) there's no sudo to
+# call: the stock Ubuntu image doesn't have it.
+apt() {
+	local as_root=()
+	((EUID == 0)) || as_root=(sudo)
+	"${as_root[@]}" env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get -q "$@"
+}
+
+# apt_update: `apt-get update`, run again while the archive is out of sync. A
+# repository behind a CDN (NVIDIA's CUDA one, on 2026-11-18) can serve two
+# versions of an index for an hour, and an update that meets the other one fails
+# with "File has unexpected size ... Mirror sync in progress?" (or "Hash Sum
+# mismatch"). The node keeps serving the stale file to that request, so apt's own
+# Acquire::Retries can't help: the update has to run again, a few seconds later
+# and on another connection. Only those messages retry, so any other failure (an
+# unreachable archive, a missing suite) fails at once and a real outage isn't
+# hidden. Four attempts, 15, 45 and 90 seconds apart, each failure logged with
+# apt's error; the last one fails the build as an update always did, with apt's
+# exit status. The one place a cloud build runs `apt-get update` (test_apt_update.py
+# checks): the base's bootstrap, every toolset's install and the orchestrator's
+# build all call it.
+apt_update() {
+	local waits=(15 45 90) attempt=1 attempts status line out err
+	attempts=$((${#waits[@]} + 1))
+	out="$(mktemp)" err="$(mktemp)"
+	while :; do
+		status=0
+		apt update >"$out" 2>"$err" || status=$?
+		cat "$out"
+		cat "$err" >&2
+		((status != 0)) || break
+		grep -qE 'Mirror sync in progress|File has unexpected size|Hash Sum mismatch' "$out" "$err" || break
+		while read -r line; do
+			log "apt_update: attempt $attempt of $attempts failed: $line"
+		done < <(grep -hE 'Mirror sync in progress|File has unexpected size|Hash Sum mismatch' "$out" "$err")
+		if ((attempt == attempts)); then
+			log "apt_update: failed $attempts times in a row, with the archive out of sync"
+			break
+		fi
+		log "apt_update: retrying in ${waits[attempt - 1]}s"
+		sleep "${waits[attempt - 1]}"
+		attempt=$((attempt + 1))
+	done
+	rm -f "$out" "$err"
+	return "$status"
+}
 
 # apt_install_options: the options of every apt install of a package list, one
 # per line: each toolset's here, and the base's and the lock's simulation of
@@ -59,7 +106,7 @@ install_apt_packages() {
 	(($# > 0)) || return 0
 	log "installing $# apt packages"
 	mapfile -t options < <(apt_install_options)
-	apt update
+	apt_update
 	apt install "${options[@]}" "$@"
 	apt clean
 	if [[ "${APT_DROP_LISTS:-false}" == "true" ]]; then
@@ -181,7 +228,7 @@ for name in "$@"; do
 		# Exported in a subshell, so they reach this install.sh and what it runs,
 		# but not the later toolsets' Homebrew and installers.
 		(
-			export -f log die apt apt_install_options install_apt install_apt_packages github_latest
+			export -f log die apt apt_update apt_install_options install_apt install_apt_packages github_latest
 			TOOLSET_LOG_NAME="$name" TOOLSET_RECORD_DIR="$record_dir" bash "$dir/install.sh"
 		)
 		# Any brew command it ran refilled Homebrew's cache.

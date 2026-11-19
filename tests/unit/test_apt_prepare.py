@@ -30,14 +30,14 @@ PACKAGES = ["sudo", "ca-certificates", "curl"]
 # without them, a part of the archive that fails to download would pass. A real
 # install records each package in dpkg's status; a simulation prints apt's
 # answer and records the packages its status file lists. Each call goes to
-# $CALLS, as `apt-get <args>`.
+# $CALLS, as `apt-get <args>`: an update is `apt-get -q update`, the way
+# install-toolset.sh's apt_update runs it.
 FAKE_APT_GET = r'''
 printf 'apt-get %s\n' "$*" >>"$CALLS"
-op="${1:-}"
-shift || true
-simulate=false yes=false status="$FAKE_ROOT/var/lib/dpkg/status" packages=()
+op="" simulate=false yes=false status="$FAKE_ROOT/var/lib/dpkg/status" packages=()
 while (($# > 0)); do
 	case "$1" in
+	-q) ;;
 	-y) yes=true ;;
 	--no-install-recommends | --allow-downgrades) ;;
 	--simulate) simulate=true ;;
@@ -47,7 +47,7 @@ while (($# > 0)); do
 		shift
 		;;
 	-*) echo "E: Command line option '$1' is not understood" >&2; exit 100 ;;
-	*) packages+=("$1") ;;
+	*) if [[ -z "$op" ]]; then op="$1"; else packages+=("$1"); fi ;;
 	esac
 	shift
 done
@@ -57,6 +57,14 @@ update)
 	((${#packages[@]} == 0)) || { echo "E: The update command takes no arguments" >&2; exit 100; }
 	echo "Hit:1 http://archive.ubuntu.com/ubuntu noble InRelease"
 	[[ -z "${FAKE_UPDATE_FAIL:-}" ]] || { echo "E: Failed to fetch https://snapshot.ubuntu.com/x  404  Not Found" >&2; exit 100; }
+	# An index out of sync, as NVIDIA's CUDA repo served it: the first
+	# FAKE_SYNC_FAILURES updates fail, the next ones work.
+	n=$(($(cat "$CALLS.updates" 2>/dev/null || echo 0) + 1))
+	echo "$n" >"$CALLS.updates"
+	if ((n <= ${FAKE_SYNC_FAILURES:-0})); then
+		echo "E: Failed to fetch https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/Packages.gz  File has unexpected size (2088182 != 2089045). Mirror sync in progress?" >&2
+		exit 100
+	fi
 	;;
 install)
 	((${#packages[@]} > 0)) || { echo "E: fake: nothing to install" >&2; exit 100; }
@@ -115,6 +123,12 @@ class AptPrepareTests(unittest.TestCase):
         self.root = self.tmp / "root"
         self.bin = self.tmp / "bin"
         write_executable(self.bin / "apt-get", FAKE_APT_GET)
+        # apt_update's own: sudo (no root here, and the stock image has none),
+        # and a sleep that doesn't wait, refusing what the real one does.
+        write_executable(self.bin / "sudo", '(($# > 0)) || { echo "usage: sudo command" >&2; exit 1; }\nexec "$@"\n')
+        write_executable(self.bin / "sleep", '''(($# == 1)) && [[ "$1" =~ ^[0-9]+$ ]] || { echo "sleep: invalid time interval" >&2; exit 1; }
+echo "sleep $1" >>"$CALLS"
+''')
         self.calls = self.tmp / "calls"
 
     def run_prepare(self, *args, **env):
@@ -123,6 +137,7 @@ class AptPrepareTests(unittest.TestCase):
         (self.root / "var/lib/dpkg").mkdir(parents=True)
         (self.root / "var/lib/dpkg/status").write_text("Package: bash\nStatus: install ok installed\n\n")
         self.calls.unlink(missing_ok=True)
+        Path(f"{self.calls}.updates").unlink(missing_ok=True)
         return subprocess.run(
             ["bash", str(self.helpers / "apt-prepare.sh"), *args],
             env=base_env(self.tmp, self.bin, APT_PREPARE_ROOT=str(self.root), FAKE_ROOT=str(self.root),
@@ -148,10 +163,10 @@ class AptPrepareTests(unittest.TestCase):
     def test_the_build_runs_the_sequence(self):
         self.build()
         self.assertEqual(self.call_log(), [
-            "apt-get update",
+            "apt-get -q update",
             f"apt-get install {self.OPTIONS} ca-certificates",
             f'apt-pins install {PINS} (APT_SNAPSHOT={SNAPSHOT}; APT::Snapshot "{SNAPSHOT}";)',
-            "apt-get update",
+            "apt-get -q update",
             f"apt-get install {self.OPTIONS} sudo ca-certificates curl",
         ])
         conf = self.root / "etc/apt/apt.conf.d"
@@ -217,7 +232,34 @@ class AptPrepareTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn("Inst ", result.stdout)
                 self.assertIn("404  Not Found", result.stderr)
-                self.assertEqual(self.call_log(), ["apt-get update"])
+                self.assertEqual(self.call_log(), ["apt-get -q update"])
+
+    def test_an_index_out_of_sync_is_ridden_out_in_both_modes(self):
+        # Both updates go through apt_update (#142: the CUDA repo served two
+        # versions of Packages.gz for an hour). The first update fails twice, the
+        # second once; the sequence goes on, and the simulation's stdout stays
+        # apt's answer alone.
+        for mode in ("build", "simulate"):
+            with self.subTest(mode):
+                if mode == "build":
+                    self.build(FAKE_SYNC_FAILURES="2")
+                else:
+                    result = self.simulate(FAKE_SYNC_FAILURES="2")
+                    self.assertNotIn("Mirror sync", result.stdout)
+                    self.assertNotIn("apt_update", result.stdout)
+                log = [line for line in self.call_log() if not line.startswith("status ")]
+                self.assertEqual(log[:5], ["apt-get -q update", "sleep 15", "apt-get -q update", "sleep 45",
+                                           "apt-get -q update"])
+                self.assertEqual(log.count("apt-get -q update"), 4)
+                self.assertEqual(log.count("sleep 15"), 1)
+                self.assertTrue(log[-1].startswith(f"apt-get install {self.OPTIONS} "), log[-1])
+
+    def test_an_index_that_never_syncs_fails_the_build_with_the_last_error(self):
+        result = self.run_prepare(*PACKAGES, APT_SNAPSHOT=SNAPSHOT, FAKE_SYNC_FAILURES="99")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Mirror sync in progress?", result.stderr)
+        self.assertEqual(self.call_log().count("apt-get -q update"), 4)
+        self.assertFalse([line for line in self.call_log() if line.startswith(("apt-get install", "apt-pins"))])
 
     def test_usage(self):
         for args in ([], ["--simulate"], ["--nope", "sudo"]):

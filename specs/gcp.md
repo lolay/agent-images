@@ -389,8 +389,8 @@ reads today's archive.
 That bootstrap is one script, `images/cloud/base/apt-prepare.sh`, which the base
 layer runs and the resolve simulates (r5.f13, option a; owner, issue #138), so the
 lock resolves what the build installs: the build's apt settings
-(`apt-build.conf`), `apt-get update`, `ca-certificates` from today's archive, the
-snapshot (the build only), the pins (`apt-pins.sh install`), `apt-get update`, then
+(`apt-build.conf`), `apt_update`, `ca-certificates` from today's archive, the
+snapshot (the build only), the pins (`apt-pins.sh install`), `apt_update`, then
 the install. The resolve runs it with `--simulate` in a stock container, which
 installs `ca-certificates` too, with or without pins, and simulates against the
 package state saved before that install, so the lock still lists it as the build
@@ -438,12 +438,33 @@ update. apt's default only warns and carries on without it. A build missing
 resolve missing `noble-updates` would lock release versions. The base layer
 installs the file for itself and the toolset layers (`apt-prepare.sh`, which
 installs it in the resolve's container too), the runner stage drops it with the
-snapshot, and the orchestrator build passes it in `APT_CONFIG`. No extra retries: apt already retries each download three times
-with backoff. An outage longer than that is the workflows' to ride out (lock
-pull requests retry hourly, a failed deploy is covered by the next push or
-nightly build). Found on 2026-11-11, when snapshot.ubuntu.com was unreachable
-and builds failed with "Unable to locate package sudo" rather than the fetch
-error.
+snapshot, and the orchestrator build passes it in `APT_CONFIG`. apt already
+retries each download three times with backoff, and an outage longer than that is
+the workflows' to ride out (lock pull requests retry hourly, a failed deploy is
+covered by the next push or nightly build). Found on 2026-11-11, when
+snapshot.ubuntu.com was unreachable and builds failed with "Unable to locate
+package sudo" rather than the fetch error.
+
+One failure is retried, and only that one: a repository whose index is out of
+sync. NVIDIA's CUDA repo sits behind a CDN whose nodes served two versions of
+`Packages.gz` for about an hour on 2026-11-18, and `linux-gpu` and `3d-gpu` failed
+several times on #142, each time at a different step (the base's apt layer,
+`install-toolset.sh jvm`, `build-colmap.sh`'s `install_apt`), with `E: Failed to
+fetch .../Packages.gz  File has unexpected size (2088182 != 2089045). Mirror sync in
+progress?` and `apt-get update` exiting 100. The same commit passed once it
+settled. apt's own `Acquire::Retries` doesn't help: the node keeps serving the
+stale file to the request, so the update has to run again. `apt_update` in
+`images/toolsets/install-toolset.sh` is the only `apt-get update` of the cloud
+builds (a unit test fails if another script or Dockerfile runs one): the base's
+bootstrap (`apt-prepare.sh`, so the lock's resolve too), every toolset's and
+builder stage's `install_apt_packages`, and the orchestrator's build, which
+mounts the file to source it. It runs the update again when its output has
+`Mirror sync in progress`, `File has unexpected size` or `Hash Sum mismatch`: four
+attempts in all, 15, 45 and 90 seconds apart, each failure logged with apt's error.
+Any other error fails at once, so a real outage isn't hidden, and the last
+attempt's failure fails the build with apt's exit status, as an update always did.
+The base needs no extra mount for it: `apt-prepare.sh` sources
+`install-toolset.sh`, which the base layer mounts already.
 
 The resolve's one registry read, the base tag's digest, does retry, but only on
 a 429: mirror.gcr.io answers one when Google's quota on its reads from Docker

@@ -17,7 +17,7 @@
 # The steps:
 #   1. apt-build.conf as /etc/apt/apt.conf.d/40agent-build: a part of the
 #      archive that fails to download fails each update after it
-#   2. apt-get update, then ca-certificates (on plain Ubuntu with its openssl)
+#   2. apt_update, then ca-certificates (on plain Ubuntu with its openssl)
 #      from today's archive: snapshot.ubuntu.com is HTTPS only, and the stock
 #      image has no CA certificates
 #   3. the build alone: APT::Snapshot at APT_SNAPSHOT
@@ -25,8 +25,11 @@
 #   4. apt-pins.sh install $APT_PINS: each pin's own snapshot as a source, its
 #      version the candidate. APT_PINS is lock.sh bake-args' (the build's) or
 #      resolve_apt's, both read from the type's package lists
-#   5. apt-get update
+#   5. apt_update
 #   6. the install, or its simulation
+# apt_update is install-toolset.sh's, the one apt-get update of the cloud builds:
+# it runs the update again while the archive is out of sync (its header has the
+# rules), so a repository mid-sync doesn't fail the build or the resolve.
 # Every install, the simulation's included, takes install-toolset.sh's
 # apt_install_options, which every toolset layer's install takes too: with -y,
 # apt refuses a downgrade --allow-downgrades doesn't allow, so a pin below
@@ -41,6 +44,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly here
 # shellcheck source=images/toolsets/install-toolset.sh
 source "$here/install-toolset.sh"
+TOOLSET_LOG_NAME=apt-prepare
 
 readonly root="${APT_PREPARE_ROOT:-}"
 readonly conf_dir="$root/etc/apt/apt.conf.d"
@@ -87,13 +91,13 @@ if $simulate; then
 	cp "$root/var/lib/dpkg/status" "$saved_status"
 fi
 step install -D -m 644 "$here/apt-build.conf" "$conf_dir/40agent-build"
-step apt-get update
+step apt_update
 step apt-get install "${options[@]}" ca-certificates
 if ! $simulate; then
 	printf 'APT::Snapshot "%s";\n' "$APT_SNAPSHOT" >"$conf_dir/50agent-snapshot"
 fi
 step bash "$here/apt-pins.sh" install "${pins[@]}"
-step apt-get update
+step apt_update
 if $simulate; then
 	apt-get install "${options[@]}" --simulate -o Dir::State::status="$saved_status" "$@"
 else
