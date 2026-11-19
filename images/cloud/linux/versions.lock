@@ -336,7 +336,7 @@ brew protobuf 36.2
 brew python@3.15 3.15.2
 brew readline 8.3.6
 brew ripgrep 15.2.0
-brew ruff 0.17.5
+brew ruff 0.17.6
 brew rustup 1.29.3
 brew shellcheck 0.11.0
 brew shfmt 3.14.1
