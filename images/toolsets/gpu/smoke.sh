@@ -14,11 +14,13 @@ set -euo pipefail
 gpu="$(nvidia-smi --query-gpu=name,driver_version,compute_cap --format=csv,noheader)"
 echo "gpu: $gpu"
 agent-cuda-probe
+# Its stdout only: a warning on stderr goes to the smoke's own stderr rather
+# than replace the summary line below.
 libs_rc=0
-libs="$(agent-gpu-libs 2>&1)" || libs_rc=$?
+libs="$(agent-gpu-libs)" || libs_rc=$?
 [[ -z "$libs" ]] || echo "$libs"
 if ((libs_rc != 0)); then
-	libs_part="agent-gpu-libs failed (exit $libs_rc)"
+	libs_part="agent-gpu-libs failed (exit $libs_rc)${libs:+: ${libs##*$'\n'}}"
 elif [[ -z "$libs" ]]; then
 	libs_part="agent-gpu-libs printed nothing"
 else

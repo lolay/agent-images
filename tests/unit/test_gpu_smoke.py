@@ -73,11 +73,24 @@ class GpuSmokeTests(unittest.TestCase):
             f" NVENC encodes: yes; {LIBS_LINE}",
         )
 
-    def test_a_failing_agent_gpu_libs_is_reported_not_fatal(self):
-        result = self.smoke("echo 'boom' >&2; exit 3")
+    def test_a_failing_agent_gpu_libs_is_reported_with_why(self):
+        # The deploy logs only the last line, so the reason has to be on it.
+        result = self.smoke("echo 'no driver mounted at /usr/local/nvidia/lib64'; exit 3")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(self.last_line(result).endswith(
+            "NVENC encodes: yes; agent-gpu-libs failed (exit 3): no driver mounted at /usr/local/nvidia/lib64"),
+            self.last_line(result))
+
+    def test_a_failure_with_no_output_is_still_named(self):
+        result = self.smoke("exit 3")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(self.last_line(result).endswith("NVENC encodes: yes; agent-gpu-libs failed (exit 3)"))
-        self.assertIn("boom", result.stdout)
+
+    def test_a_warning_on_stderr_does_not_replace_the_summary(self):
+        result = self.smoke(f"echo '{LIBS_LINE}'; echo 'warning: something' >&2")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(self.last_line(result).endswith(f"NVENC encodes: yes; {LIBS_LINE}"), self.last_line(result))
+        self.assertIn("warning: something", result.stderr)
 
     def test_a_silent_agent_gpu_libs_is_reported(self):
         result = self.smoke("true")
