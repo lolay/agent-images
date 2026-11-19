@@ -379,10 +379,7 @@ class ColmapRuntimePackagesTests(unittest.TestCase):
     FAKE_LDD = r'''[[ $# -eq 1 && "$1" == "$LDD_BIN" ]] || { echo "ldd: $*: No such file or directory" >&2; exit 1; }
 cat "$LDD_OUT"
 '''
-    FAKE_DPKG = r'''case "$*" in
--S\ *) ;;
-*) echo "dpkg: error: unknown option $*" >&2; exit 2 ;;
-esac
+    FAKE_DPKG = r'''[[ $# -eq 2 && "$1" == -S ]] || { echo "dpkg: error: unexpected arguments: $*" >&2; exit 2; }
 path="$2"
 while IFS=' ' read -r known package; do
 	[[ "$known" == "$path" ]] && { printf '%s: %s\n' "$package" "$path"; exit 0; }
