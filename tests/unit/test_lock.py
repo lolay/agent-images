@@ -970,6 +970,17 @@ class ReleaseToolTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
 
+    def test_a_broken_build_chain_fails(self):
+        # A parent with no Dockerfile: cloud_toolsets fails partway, which would
+        # otherwise read as a type with no release tools and an empty table.
+        self.declare('gizmo="${GIZMO_VERSION:-latest}"\nreadonly GIZMO_RELEASES=https://github.com/acme/gizmo/releases\n')
+        (self.repo / "images/cloud/demo/Dockerfile").write_text(
+            "FROM agent-gone\nRUN bash /tmp/toolsets/install-toolset.sh widgets\n")
+        result = subprocess.run(["bash", str(SCRIPT), "releases", "demo"], cwd=self.repo,
+                                capture_output=True, text=True, timeout=30)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "")
+
     def test_an_unknown_type_fails(self):
         result = subprocess.run(["bash", str(SCRIPT), "releases", "nope"], cwd=self.repo,
                                 capture_output=True, text=True, timeout=30)
