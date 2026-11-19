@@ -15,6 +15,7 @@ import unittest
 from pathlib import Path
 
 from support import REPO
+from test_bake import run_types
 
 SCRIPT = REPO / "scripts/cloud/lock.sh"
 REAL_DOCKER = shutil.which("docker")
@@ -507,13 +508,25 @@ class ResolveTests(unittest.TestCase):
             with self.subTest(new):
                 bake = self.repo / "images/cloud/docker-bake.hcl"
                 saved = bake.read_text()
-                self.edit("images/cloud/docker-bake.hcl", old, new)
-                if "2.1.300" not in new:
-                    self.edit("images/cloud/docker-bake.hcl", 'default = "latest"', 'default = "2.1.300"')
-                entries = self.entries(self.resolve())
-                bake.write_text(saved)
+                try:
+                    self.edit("images/cloud/docker-bake.hcl", old, new)
+                    if "2.1.300" not in new:
+                        self.edit("images/cloud/docker-bake.hcl", 'default = "latest"', 'default = "2.1.300"')
+                    entries = self.entries(self.resolve())
+                finally:
+                    bake.write_text(saved)
                 self.assertIn("claude - 2.1.300", entries)
                 self.assertIn(f"pinned claude {issue}", entries)
+
+    def test_a_claude_pin_past_a_nested_block_names_its_issue(self):
+        issue = "https://github.com/anthropics/claude-code/issues/9"
+        self.edit("images/cloud/docker-bake.hcl", 'variable "CLAUDE_VERSION" {',
+                  'variable "CLAUDE_VERSION" { # the installer\'s version\n'
+                  '  validation {\n    condition = CLAUDE_VERSION != ""\n    error_message = "x"\n  }')
+        self.edit("images/cloud/docker-bake.hcl", 'default = "latest"', f'default = "2.1.300" # pinned: {issue}')
+        entries = self.entries(self.resolve())
+        self.assertIn("claude - 2.1.300", entries)
+        self.assertIn(f"pinned claude {issue}", entries)
 
     def test_a_note_past_the_variable_block_is_not_its_pin(self):
         self.edit("images/cloud/docker-bake.hcl", 'default = "latest"', 'default = "2.1.300"')
@@ -987,6 +1000,12 @@ class ReleaseToolTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("lock: no type nope (images/cloud/nope/Dockerfile)", result.stderr)
 
+    def test_a_type_name_that_isnt_one_is_refused(self):
+        result = subprocess.run(["bash", str(SCRIPT), "releases", "../demo"], cwd=self.repo,
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("lock: usage:", result.stderr)
+
 
     def test_a_source_without_its_constraint_fails(self):
         self.declare("readonly GIZMO_RELEASES=https://github.com/acme/gizmo/releases\n")
@@ -1005,22 +1024,25 @@ class ReleaseToolTests(unittest.TestCase):
 
 
 class LockedReleaseToolTests(unittest.TestCase):
-    """Every type's lock, against the repo's toolsets: each `release <name>` line
-    is still a release tool its toolsets declare. Without this a pull request
-    that deletes a declaration stays green, and the lock watch drops the tool
-    from the lock after it merges (r4.f12's review)."""
+    """Every Cloud Run type, against the repo's toolsets: its release tools are
+    all declared (a type with no lock yet included, whose first resolve is
+    cloud-build's), and each `release <name>` line in its lock is still one of
+    them. Without this a pull request that deletes a declaration stays green,
+    and the lock watch drops the tool from the lock after it merges (r4.f12's
+    review)."""
 
     def test_every_locked_release_tool_is_declared(self):
-        locks = sorted((REPO / "images/cloud").glob("*/versions.lock"))
-        self.assertTrue(locks)
-        for lock in locks:
-            type_ = lock.parent.name
+        types = run_types()
+        self.assertTrue(types)
+        for type_ in types:
             with self.subTest(type_):
                 result = subprocess.run(["bash", str(SCRIPT), "releases", type_], cwd=REPO,
                                         capture_output=True, text=True, timeout=60)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 declared = {line.split()[0] for line in result.stdout.splitlines()}
-                locked = {line.split()[1] for line in lock.read_text().splitlines() if line.startswith("release ")}
+                lock = REPO / "images/cloud" / type_ / "versions.lock"
+                text = lock.read_text() if lock.exists() else ""  # a new type: no lock yet
+                locked = {line.split()[1] for line in text.splitlines() if line.startswith("release ")}
                 self.assertLessEqual(locked, declared, f"{type_}: locked but not declared")
 
 

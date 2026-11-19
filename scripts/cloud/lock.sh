@@ -107,8 +107,9 @@ declared() {
 
 # pin_note <file> <text>: the `# pinned: <URL>` note on the line declaring
 # <text> or the line above it, or, when that line opens a block (the bake
-# file's `variable "CLAUDE_VERSION" {`), on any line of the block, such as its
-# `default = ...`; - when there's none.
+# file's `variable "CLAUDE_VERSION" {`, a comment after the brace allowed), on
+# any line of the block, nested blocks included, such as its `default = ...`;
+# - when there's none.
 pin_note() {
 	awk -v text="$2" '
 		function note(line) {
@@ -117,14 +118,19 @@ pin_note() {
 			found = 1
 			return 1
 		}
-		block {
+		# code(line): the line without its comment, for counting braces.
+		function code(line) { sub(/#.*/, "", line); return line }
+		depth {
 			if (note($0)) exit
-			if ($0 ~ /^[[:space:]]*}/) exit
+			line = code($0)
+			depth += gsub(/\{/, "", line)
+			depth -= gsub(/\}/, "", line)
+			if (depth <= 0) exit
 			next
 		}
 		index($0, text) {
 			if (note($0) || note(previous)) exit
-			if ($0 ~ /\{[[:space:]]*$/) { block = 1; next }
+			if (code($0) ~ /\{[[:space:]]*$/) { depth = 1; next }
 			exit
 		}
 		{ previous = $0 }
@@ -267,7 +273,9 @@ resolve_terraform() {
 # A `${NAME_VERSION:-...}` with no NAME_RELEASES beside it fails (except
 # terraform_var, resolved on its own): a declaration deleted or written in a
 # form this doesn't read would otherwise drop the tool from the lock, and the
-# build would take its newest release unlocked.
+# build would take its newest release unlocked. So in a toolset script that
+# form is reserved for locked tools; a setting of another kind takes another
+# name (gcp.md, "The lock").
 release_tools() {
 	local toolsets toolset file var source sources constraints
 	[[ -f "images/cloud/$1/Dockerfile" ]] || die "no type $1 (images/cloud/$1/Dockerfile)"
@@ -697,6 +705,7 @@ pins)
 	;;
 releases)
 	(($# == 2)) || usage
+	[[ "$2" =~ ^[a-z0-9-]+$ ]] || usage
 	release_tools "$2"
 	;;
 path)

@@ -339,8 +339,11 @@ own downloads use the same source, and `lock.sh`'s `release_tools` reads both fr
 the type's toolsets, so adding one is that edit; the lock line is `release <name>`,
 NAME in lower case. A `${NAME_VERSION:-...}` with no `NAME_RELEASES` beside it fails
 the resolve (Terraform's, which the lock resolves itself, aside), and a unit test
-checks every locked `release` line against `lock.sh releases <type>`, so deleting
-a declaration fails its pull request instead of unlocking the tool at the next watch.
+runs `lock.sh releases` for every Cloud Run type and checks each locked `release`
+line against it, so deleting a declaration fails its pull request instead of
+unlocking the tool at the next watch. In a toolset script, `${*_VERSION:-...}` is
+reserved for locked tools: a setting of another kind (an interpreter's version,
+say) takes another name.
 
 The build consumes the lock (`scripts/cloud/bake.sh` locally and on pull requests,
 the deploy's bake from `lock.sh bake-args`): `BASE_IMAGE` at the locked digest,
