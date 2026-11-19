@@ -14,10 +14,11 @@
 #   apt-pins.sh remove
 #       deletes both files
 #
-# The pins are lock.sh's: `bake-args` gives the build APT_PINS from the lock's
-# apt-pin-snapshot lines, and `resolve` passes the same list to its container.
-# Run as root by images/cloud/base/Dockerfile (install), images/cloud/runner/Dockerfile
-# (remove, with the build's other apt settings) and lock.sh resolve_apt.
+# The pins are read from the type's package lists by lock.sh: `bake-args` gives
+# the build APT_PINS, and `resolve` passes the same list to its container.
+# Run as root by images/cloud/base/apt-prepare.sh (install), in the base
+# Dockerfile's apt layer and in lock.sh resolve_apt's container alike, and by
+# images/cloud/runner/Dockerfile (remove, with the build's other apt settings).
 #
 # APT_PINS_ROOT prefixes every path (tests).
 set -euo pipefail

@@ -110,19 +110,30 @@ declared() {
 	printf '%s' "$value"
 }
 
-# pin_note <file> <text>: the `# pinned: <URL>` note on the line declaring
-# <text> or the line above it, or, when that line opens a block (the bake
-# file's `variable "CLAUDE_VERSION" {`, a comment after the brace allowed), on
-# any line of the block, nested blocks included, such as its `default = ...`;
-# - when there's none. Braces in strings and comments don't count.
+# pin_issue <line>: the issue the line's `# pinned:` note names (gcp.md,
+# "Pinning a dependency"): the first word after `pinned:`, with any spaces or
+# tabs, or none, after the `#` and after the colon; - when that word is - or
+# the note's `snapshot=<id>`; nothing when the line has no note. The one reader
+# of the note, for every kind of pin.
+pin_issue() {
+	[[ "$1" =~ \#[[:space:]]*pinned:[[:space:]]*([^[:space:]]+) ]] || return 0
+	if [[ "${BASH_REMATCH[1]}" == snapshot=* ]]; then
+		printf -- -
+	else
+		printf '%s' "${BASH_REMATCH[1]}"
+	fi
+}
+
+# pin_note <file> <text>: the issue of the first `# pinned:` note (pin_issue)
+# on the line declaring <text>, then the line above it, then, when that line
+# opens a block (the bake file's `variable "CLAUDE_VERSION" {`, a comment after
+# the brace allowed), any line of the block, nested blocks included, such as
+# its `default = ...`; - when there's none. Braces in strings and comments
+# don't count.
 pin_note() {
-	awk -v text="$2" '
-		function note(line) {
-			if (!match(line, /# pinned: [^ ]+/)) return 0
-			print substr(line, RSTART + 10, RLENGTH - 10)
-			found = 1
-			return 1
-		}
+	local lines line issue
+	# Assigned first: a failure in <(...) would pass as no note.
+	lines="$(awk -v text="$2" '
 		# code(line): the line as HCL sees its structure, for finding and
 		# counting braces: quoted strings emptied, then /* */ on the line and a
 		# trailing # or // comment dropped (strings first, so a URL in one
@@ -135,8 +146,10 @@ pin_note() {
 			if (cut) line = substr(line, 1, cut - 1)
 			return line
 		}
+		# The lines a note may be on, in order: the declaring line, the one
+		# above it, then the block it opens.
 		depth {
-			if (note($0)) exit
+			print
 			line = code($0)
 			depth += gsub(/\{/, "", line)
 			depth -= gsub(/\}/, "", line)
@@ -144,12 +157,20 @@ pin_note() {
 			next
 		}
 		index($0, text) {
-			if (note($0) || note(previous)) exit
+			print
+			print previous
 			if (code($0) ~ /\{[[:space:]]*$/) { depth = 1; next }
 			exit
 		}
-		{ previous = $0 }
-		END { if (!found) print "-" }' "$1"
+		{ previous = $0 }' "$1")"
+	while IFS= read -r line; do
+		issue="$(pin_issue "$line")"
+		if [[ -n "$issue" ]]; then
+			printf '%s\n' "$issue"
+			return
+		fi
+	done <<<"$lines"
+	printf -- '-\n'
 }
 
 # bake_print <type>: the type's build graph as bake resolves it, with nothing
@@ -389,13 +410,12 @@ apt_pins_of() {
 }
 
 # apt_pin_notes <type>: a `pinned apt/<name> <issue URL or ->` line for each
-# name=version pin in the type's package lists, the URL the first word after the
-# comment's `# pinned:` (`snapshot=<id>` may follow it; - when the comment names
-# no URL or there is none). A package pinned the same way in two lists (curl, in
-# the base's and core's) is one line. Two lists that name different issues for
-# one package fail: the pin's issue is one fact, and which one the watch should
-# show is not for a script to guess. A list that names an issue beside one that
-# names none gives the issue.
+# name=version pin in the type's package lists, the URL its `# pinned:` note
+# names (pin_issue; - when there is none). A package pinned the same way in two
+# lists (curl, in the base's and core's) is one line. Two lists that name
+# different issues for one package fail: the pin's issue is one fact, and which
+# one the watch should show is not for a script to guess. A list that names an
+# issue beside one that names none gives the issue.
 apt_pin_notes() {
 	local line package url
 	local -A noted=()
@@ -404,10 +424,8 @@ apt_pin_notes() {
 		package="${package//[[:space:]]/}"
 		[[ "$package" =~ ^([a-z0-9.+-]+)= ]] || continue
 		package="${BASH_REMATCH[1]}"
-		url=-
-		if [[ "$line" =~ \#[[:space:]]*pinned:[[:space:]]*([^[:space:]]+) && "${BASH_REMATCH[1]}" != snapshot=* ]]; then
-			url="${BASH_REMATCH[1]}"
-		fi
+		url="$(pin_issue "$line")"
+		url="${url:--}"
 		if [[ "${noted[$package]:--}" != - && "$url" != - && "${noted[$package]}" != "$url" ]]; then
 			die "$1: apt/$package's pin names two issues: ${noted[$package]} and $url"
 		fi
@@ -426,9 +444,10 @@ apt_pins() { apt_pins_of "$1" | LC_ALL=C sort -u; }
 
 # resolve_apt <type> <base ref> <old lock or empty>: what apt resolves the type's
 # packages to today, in a stock container at the locked base digest, and the
-# snapshot that holds it: the old one if nothing moved, else now. A pin that
-# names its snapshot resolves against that snapshot too, added the way the build
-# adds it (images/cloud/base/apt-pins.sh).
+# snapshot that holds it: the old one if nothing moved, else now. The container
+# runs the build's own apt bootstrap, pins included, then simulates the install
+# (images/cloud/base/apt-prepare.sh --simulate), so the lock lists what the
+# build installs.
 resolve_apt() {
 	local type="$1" base="$2" old="$3" packages pins notes newest_pin now resolved
 	mapfile -t packages < <(packages_of "$type")
@@ -436,34 +455,19 @@ resolve_apt() {
 	pins="$(apt_pins "$type")"
 	notes="$(apt_pin_notes "$type")"
 	now="${LOCK_NOW:-$(date -u +%Y%m%dT%H%M%SZ)}"
-	# --entrypoint: CUDA's entrypoint prints a banner on stdout. apt-build.conf
-	# fails the update when part of the archive doesn't download, rather than
-	# resolving without it. --mount, unlike -v, refuses a missing source.
-	# With pins: snapshot.ubuntu.com is HTTPS only and the stock image has no CA
-	# certificates, so ca-certificates comes from today's archive first, as in
-	# the build, and the simulation reads the package state saved before it, so
-	# the lock still lists what the build installs.
+	# --entrypoint: CUDA's entrypoint prints a banner on stdout. apt-prepare.sh
+	# reads its helpers from beside it, as in the base Dockerfile's mounts.
+	# --mount, unlike -v, refuses a missing source.
 	resolved="$(docker run --rm --entrypoint /bin/bash \
+		--mount "type=bind,source=$PWD/images/cloud/base/apt-prepare.sh,target=/tmp/apt-prepare.sh,readonly" \
 		--mount "type=bind,source=$PWD/images/cloud/base/apt-build.conf,target=/tmp/apt-build.conf,readonly" \
 		--mount "type=bind,source=$PWD/images/cloud/base/apt-pins.sh,target=/tmp/apt-pins.sh,readonly" \
-		-e APT_CONFIG=/tmp/apt-build.conf -e APT_PINS="${pins//$'\n'/ }" -e PACKAGES="${packages[*]}" "$base" -c '
-		set -euo pipefail
-		status=/var/lib/dpkg/status
-		if [[ -n "$APT_PINS" ]]; then
-			cp "$status" /tmp/dpkg-status
-			status=/tmp/dpkg-status
-			apt-get update -q >/tmp/update.log 2>&1 || { cat /tmp/update.log >&2; exit 1; }
-			DEBIAN_FRONTEND=noninteractive apt-get install -q -y --no-install-recommends ca-certificates >/tmp/install.log 2>&1 ||
-				{ cat /tmp/install.log >&2; exit 1; }
-			# shellcheck disable=SC2086 # a list of pins
-			bash /tmp/apt-pins.sh install $APT_PINS
-		fi
-		apt-get update -q >/tmp/update.log 2>&1 || { cat /tmp/update.log >&2; exit 1; }
-		# shellcheck disable=SC2086 # a list of names
-		apt-get install --simulate --no-install-recommends -o Dir::State::status="$status" $PACKAGES | sed -n "s/^Inst //p"')" ||
+		--mount "type=bind,source=$PWD/images/toolsets/install-toolset.sh,target=/tmp/install-toolset.sh,readonly" \
+		-e APT_PINS="${pins//$'\n'/ }" "$base" /tmp/apt-prepare.sh --simulate "${packages[@]}")" ||
 		die "apt couldn't resolve $type's packages in $base"
 	# Inst <name> [<installed>] (<version> <origin>[, <origin>...] [<arch>])
-	resolved="$(sed -E 's/^([^ ]+) (\[[^]]*\] )?\(([^ ]+) (.*) \[[^]]*\]\).*/\1 \3 \4/' <<<"$resolved" |
+	resolved="$(sed -n 's/^Inst //p' <<<"$resolved" |
+		sed -E 's/^([^ ]+) (\[[^]]*\] )?\(([^ ]+) (.*) \[[^]]*\]\).*/\1 \3 \4/' |
 		awk '{kind = ($3 ~ /^Ubuntu:/) ? "apt" : "apt-floating"; print kind, $1, $2}' | LC_ALL=C sort)"
 	[[ -n "$resolved" ]] || die "apt resolved nothing for $type"
 	# The old snapshot stays only if no pin's snapshot is newer: the build
@@ -687,6 +691,9 @@ cmd_pins() {
 		printf '%s\t%s\t%s\t%s\n' "$what" "${value:--}" "${newest:--}" "$issue"
 	done < <(awk '$1 == "pinned"' "$file")
 }
+
+# Sourced (tests): the functions alone.
+[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
 
 case "${1:-}" in
 resolve)

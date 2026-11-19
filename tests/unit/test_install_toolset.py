@@ -231,7 +231,7 @@ class SharedHelpersTests(unittest.TestCase):
         )
         result = self.run_bash(str(probe))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "apt die github_latest install_apt install_apt_packages log ")
+        self.assertEqual(result.stdout, "apt apt_install_options die github_latest install_apt install_apt_packages log ")
 
 class GithubLatestTests(unittest.TestCase):
     """install-toolset.sh's github_latest, which a toolset's install.sh gets
