@@ -9,7 +9,7 @@
 # against, pins included), and those the base image already had by name, since
 # a later toolset may move them within the snapshot.
 #
-# log, die and install_apt are install-toolset.sh's, which the stage mounts
+# log, die, install_apt and github_latest are install-toolset.sh's, which the stage mounts
 # beside the toolset.
 set -euo pipefail
 
@@ -23,15 +23,13 @@ TOOLSET_LOG_NAME=build-colmap
 source "$here/../install-toolset.sh"
 : "${CUDAARCHS:?the GPU types build on base-gpu, which sets CUDAARCHS (images/cloud/docker-bake.hcl)}"
 
-# COLMAP_VERSION: a release tag (the lock's, or a pin), else the newest release:
-# the tag GitHub redirects /releases/latest to (no API call, no rate limit).
+# COLMAP_VERSION: a release tag (the lock's, or a pin), else the newest release.
 version="${COLMAP_VERSION:-latest}"
 # Where its releases are, for the downloads here and for the lock, which reads
 # it here (scripts/cloud/lock.sh, release_tools).
 readonly COLMAP_RELEASES=https://github.com/colmap/colmap/releases
 if [[ "$version" == latest ]]; then
-	latest="$(curl -fsSLI --retry 3 -o /dev/null -w '%{url_effective}' "$COLMAP_RELEASES/latest")"
-	version="${latest##*/}"
+	version="$(github_latest "$COLMAP_RELEASES")"
 fi
 [[ "$version" =~ ^[0-9]+(\.[0-9]+)+$ ]] || die "unexpected COLMAP release '$version'"
 

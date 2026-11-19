@@ -19,8 +19,10 @@
 # Usage: install-toolset.sh <name>...
 #
 # Its helpers are the toolsets' too, so no toolset script restates them: log,
-# die, apt (apt-get as root, no prompts), install_apt <file> (a packages.txt)
-# and install_apt_packages <package|.deb>.... A toolset's install.sh gets them
+# die, apt (apt-get as root, no prompts), install_apt <file> (a packages.txt),
+# install_apt_packages <package|.deb>... and github_latest <releases URL> (the
+# newest release's tag; scripts/cloud/lock.sh sources this file for it too, so
+# the build and the lock read a release the same way). A toolset's install.sh gets them
 # exported, with TOOLSET_LOG_NAME, their log prefix, set to the toolset's name.
 # A toolset script a Dockerfile runs itself (3d's build-colmap.sh) sources this
 # file, which then defines them and returns.
@@ -60,6 +62,16 @@ install_apt() {
 	local packages
 	mapfile -t packages < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$1")
 	install_apt_packages "${packages[@]}"
+}
+
+# github_latest <https://github.com/<owner>/<repo>/releases>: the tag GitHub
+# redirects /releases/latest to (no API call, so no rate limit). A release
+# tool's `latest` at build, and the lock's resolve and pins (release_tools).
+github_latest() {
+	local url latest="$1/latest"
+	url="$(curl -fsSLI --retry 3 -o /dev/null -w '%{url_effective}' "$latest")" || die "couldn't fetch $latest"
+	[[ "$url" == */releases/tag/* ]] || die "no latest release in $1 ($url)"
+	printf '%s' "${url##*/}"
 }
 
 # Sourced: the helpers are all the caller wanted.
@@ -156,7 +168,7 @@ for name in "$@"; do
 		# Exported in a subshell, so they reach this install.sh and what it runs,
 		# but not the later toolsets' Homebrew and installers.
 		(
-			export -f log die apt install_apt install_apt_packages
+			export -f log die apt install_apt install_apt_packages github_latest
 			TOOLSET_LOG_NAME="$name" TOOLSET_RECORD_DIR="$record_dir" bash "$dir/install.sh"
 		)
 		# Any brew command it ran refilled Homebrew's cache.
