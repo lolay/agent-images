@@ -24,8 +24,11 @@ die() {
 # COLMAP_VERSION: a release tag (the lock's, or a pin), else the newest release:
 # the tag GitHub redirects /releases/latest to (no API call, no rate limit).
 version="${COLMAP_VERSION:-latest}"
+# Where its releases are, for the downloads here and for the lock, which reads
+# it here (scripts/cloud/lock.sh, release_tools).
+readonly COLMAP_RELEASES=https://github.com/colmap/colmap/releases
 if [[ "$version" == latest ]]; then
-	latest="$(curl -fsSLI --retry 3 -o /dev/null -w '%{url_effective}' https://github.com/colmap/colmap/releases/latest)"
+	latest="$(curl -fsSLI --retry 3 -o /dev/null -w '%{url_effective}' "$COLMAP_RELEASES/latest")"
 	version="${latest##*/}"
 fi
 [[ "$version" =~ ^[0-9]+(\.[0-9]+)+$ ]] || die "unexpected COLMAP release '$version'"
@@ -46,7 +49,7 @@ sudo mkdir -p /usr/include/opencv4
 
 log "COLMAP $version"
 mkdir -p "$src"
-curl -fsSL --retry 3 "https://github.com/colmap/colmap/archive/refs/tags/$version.tar.gz" |
+curl -fsSL --retry 3 "${COLMAP_RELEASES%/releases}/archive/refs/tags/$version.tar.gz" |
 	tar -xz -C "$src" --strip-components=1
 # STD hash maps: the default, and the ABI pycolmap's wheels use.
 cmake -S "$src" -B "$src/build" -GNinja \

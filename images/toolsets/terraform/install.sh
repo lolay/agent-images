@@ -7,6 +7,9 @@ set -euo pipefail
 # locked versions (scripts/cloud/lock.sh); the VM images take these defaults.
 terraform="${TERRAFORM_VERSION:-latest}"
 tflint="${TFLINT_VERSION:-latest}"
+# Where tflint's releases are, for its downloads below and for the lock, which
+# reads it here (scripts/cloud/lock.sh, release_tools).
+readonly TFLINT_RELEASES=https://github.com/terraform-linters/tflint/releases
 
 # tenv reports progress on stderr, which a green build doesn't allow.
 tenv tf install "$terraform" 2>&1
@@ -15,9 +18,9 @@ tenv tf use "$terraform" 2>&1
 # tflint, from its release (Homebrew dropped it after its license change),
 # checked against the release's checksums.
 if [[ "$tflint" == latest ]]; then
-	release=https://github.com/terraform-linters/tflint/releases/latest/download
+	release="$TFLINT_RELEASES/latest/download"
 else
-	release="https://github.com/terraform-linters/tflint/releases/download/$tflint"
+	release="$TFLINT_RELEASES/download/$tflint"
 fi
 work="$(mktemp -d)"
 curl -fsSL -o "$work/tflint_linux_amd64.zip" "$release/tflint_linux_amd64.zip"
