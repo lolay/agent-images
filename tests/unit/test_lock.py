@@ -15,6 +15,7 @@ import unittest
 from pathlib import Path
 
 from support import REPO
+from test_bake import run_types
 
 SCRIPT = REPO / "scripts/cloud/lock.sh"
 REAL_DOCKER = shutil.which("docker")
@@ -468,13 +469,88 @@ class ResolveTests(unittest.TestCase):
 
     def test_terraform_constraint_takes_the_newest_stable_on_its_line(self):
         self.edit("images/toolsets/terraform/install.sh", "${TERRAFORM_VERSION:-latest}", "${TERRAFORM_VERSION:-~> 1.14}")
-        self.assertIn("terraform - 1.14.9", self.entries(self.resolve()))
+        entries = self.entries(self.resolve())
+        self.assertIn("terraform - 1.14.9", entries)
+        self.assertIn("pinned terraform -", entries)
+
+    def test_a_pinned_terraform_names_its_issue(self):
+        self.edit("images/toolsets/terraform/install.sh", 'terraform="${TERRAFORM_VERSION:-latest}"',
+                  'terraform="${TERRAFORM_VERSION:-1.14.2}" # pinned: https://github.com/hashicorp/terraform/issues/3')
+        entries = self.entries(self.resolve())
+        self.assertIn("terraform - 1.14.2", entries)
+        self.assertIn("pinned terraform https://github.com/hashicorp/terraform/issues/3", entries)
+        self.assertNotIn("releases.hashicorp.com", self.log.read_text())
+
+    def test_a_pinned_release_tool_skips_its_source_and_names_its_issue(self):
+        # The pin's note on the line above the constraint, which pin_note reads too.
+        self.edit("images/toolsets/3d/build-colmap.sh", 'version="${COLMAP_VERSION:-latest}"',
+                  '# pinned: https://github.com/colmap/colmap/issues/7\nversion="${COLMAP_VERSION:-3.12.0}"')
+        entries = self.entries(self.resolve("3d-gpu"))
+        self.assertIn("release colmap 3.12.0", entries)
+        self.assertIn("pinned colmap https://github.com/colmap/colmap/issues/7", entries)
+        self.assertNotIn("github.com/colmap/colmap/releases/latest", self.log.read_text())
+        self.assertIn("release blender 5.10.1", entries)
 
     def test_a_pinned_claude_skips_the_channel(self):
         self.edit("images/cloud/docker-bake.hcl", 'default = "latest"', 'default = "2.1.300"')
         entries = self.entries(self.resolve())
         self.assertIn("claude - 2.1.300", entries)
+        self.assertIn("pinned claude -", entries)
         self.assertNotIn("claude-code-releases", self.log.read_text())
+
+    def test_a_claude_pin_names_its_issue_anywhere_in_its_variable_block(self):
+        # gcp.md: the note goes where the dependency is declared, which for Claude
+        # is the `default` inside `variable "CLAUDE_VERSION"` (r3.f16).
+        issue = "https://github.com/anthropics/claude-code/issues/9"
+        for old, new in (('default = "latest"', f'default = "2.1.300" # pinned: {issue}'),
+                         ('variable "CLAUDE_VERSION" {', f'# pinned: {issue}\nvariable "CLAUDE_VERSION" {{'),
+                         ('variable "CLAUDE_VERSION" {', f'variable "CLAUDE_VERSION" {{ # pinned: {issue}')):
+            with self.subTest(new):
+                bake = self.repo / "images/cloud/docker-bake.hcl"
+                saved = bake.read_text()
+                try:
+                    self.edit("images/cloud/docker-bake.hcl", old, new)
+                    if "2.1.300" not in new:
+                        self.edit("images/cloud/docker-bake.hcl", 'default = "latest"', 'default = "2.1.300"')
+                    entries = self.entries(self.resolve())
+                finally:
+                    bake.write_text(saved)
+                self.assertIn("claude - 2.1.300", entries)
+                self.assertIn(f"pinned claude {issue}", entries)
+
+    def test_a_claude_pin_past_a_nested_block_names_its_issue(self):
+        # Braces in a string or a comment aren't the block's (Copilot, #132).
+        issue = "https://github.com/anthropics/claude-code/issues/9"
+        validation = ('\n  validation {\n    condition = CLAUDE_VERSION != "}"\n'
+                      '    error_message = "no } here {"\n  }')
+        for opener in ("{ # the installer's version", "{ // the installer's version",
+                       "{ /* the installer's version */"):
+            with self.subTest(opener):
+                bake = self.repo / "images/cloud/docker-bake.hcl"
+                saved = bake.read_text()
+                try:
+                    self.edit("images/cloud/docker-bake.hcl", 'variable "CLAUDE_VERSION" {',
+                              f'variable "CLAUDE_VERSION" {opener}{validation}')
+                    self.edit("images/cloud/docker-bake.hcl", 'default = "latest"',
+                              f'default = "2.1.300" # pinned: {issue}')
+                    entries = self.entries(self.resolve())
+                finally:
+                    bake.write_text(saved)
+                self.assertIn("claude - 2.1.300", entries)
+                self.assertIn(f"pinned claude {issue}", entries)
+
+    def test_a_note_past_the_variable_block_is_not_its_pin(self):
+        self.edit("images/cloud/docker-bake.hcl", 'default = "latest"', 'default = "2.1.300"')
+        self.edit("images/cloud/docker-bake.hcl", 'variable "COMMIT" {',
+                  '# pinned: https://github.com/anthropics/claude-code/issues/9\nvariable "COMMIT" {')
+        self.assertIn("pinned claude -", self.entries(self.resolve()))
+
+    def test_claude_version_in_the_environment_doesnt_reach_the_lock(self):
+        # bake.sh and the Makefile export CLAUDE_VERSION; the lock reads the
+        # bake file's own default, as the watch on main does.
+        entries = self.entries(self.resolve(CLAUDE_VERSION="2.1.999"))
+        self.assertIn("claude - 2.1.319", entries)
+        self.assertNotIn("pinned claude -", entries)
 
     def test_a_pinned_base_keeps_its_digest(self):
         pinned = "mirror.gcr.io/library/ubuntu:24.04@sha256:" + "a" * 64
@@ -896,10 +972,51 @@ class ReleaseToolTests(unittest.TestCase):
         self.assertEqual(result.stdout, "gizmo\tv1.0.0\tv2.0.0\t-\nwidget-thing\t7.0.0\t7.1.0\t-\n")
 
     def test_a_pinned_tool_no_toolset_declares_fails(self):
-        self.declare('gizmo="${GIZMO_VERSION:-latest}"\n')
+        self.declare("set -euo pipefail\n")
         result = self.pins("release gizmo v1.0.0\npinned gizmo -\n")
         self.assertEqual(result.returncode, 1)
         self.assertIn("lock: pinned 'gizmo': no upstream known", result.stderr)
+
+    def test_a_constraint_without_its_source_fails(self):
+        # A deleted or unreadable declaration (export, declare -r) would drop the
+        # tool from the lock, and the build would take its newest release.
+        for line in ("", "export GIZMO_RELEASES=https://github.com/acme/gizmo/releases\n"):
+            with self.subTest(line):
+                self.declare('gizmo="${GIZMO_VERSION:-latest}"\n' + line)
+                result = self.pins("release gizmo v1.0.0\npinned gizmo -\n")
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("lock: images/toolsets/widgets/install.sh: ${GIZMO_VERSION:-...} has no "
+                              "GIZMO_RELEASES=<source> beside it", result.stderr)
+
+    def test_terraform_is_resolved_on_its_own(self):
+        self.declare('terraform="${TERRAFORM_VERSION:-latest}"\n')
+        result = self.pins("terraform - 1.14.2\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_a_broken_build_chain_fails(self):
+        # A parent with no Dockerfile: cloud_toolsets fails partway, which would
+        # otherwise read as a type with no release tools and an empty table.
+        self.declare('gizmo="${GIZMO_VERSION:-latest}"\nreadonly GIZMO_RELEASES=https://github.com/acme/gizmo/releases\n')
+        (self.repo / "images/cloud/demo/Dockerfile").write_text(
+            "FROM agent-gone\nRUN bash /tmp/toolsets/install-toolset.sh widgets\n")
+        result = subprocess.run(["bash", str(SCRIPT), "releases", "demo"], cwd=self.repo,
+                                capture_output=True, text=True, timeout=30)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "")
+
+    def test_an_unknown_type_fails(self):
+        result = subprocess.run(["bash", str(SCRIPT), "releases", "nope"], cwd=self.repo,
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("lock: no type nope (images/cloud/nope/Dockerfile)", result.stderr)
+
+    def test_a_type_name_that_isnt_one_is_refused(self):
+        result = subprocess.run(["bash", str(SCRIPT), "releases", "../demo"], cwd=self.repo,
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("lock: usage:", result.stderr)
+
 
     def test_a_source_without_its_constraint_fails(self):
         self.declare("readonly GIZMO_RELEASES=https://github.com/acme/gizmo/releases\n")
@@ -915,6 +1032,29 @@ class ReleaseToolTests(unittest.TestCase):
                 result = self.pins("release gizmo v1.0.0\npinned gizmo -\n")
                 self.assertEqual(result.returncode, 1)
                 self.assertIn(f"lock: images/toolsets/widgets/install.sh: {error}", result.stderr)
+
+
+class LockedReleaseToolTests(unittest.TestCase):
+    """Every Cloud Run type, against the repo's toolsets: its release tools are
+    all declared (a type with no lock yet included, whose first resolve is
+    cloud-build's), and each `release <name>` line in its lock is still one of
+    them. Without this a pull request that deletes a declaration stays green,
+    and the lock watch drops the tool from the lock after it merges (r4.f12's
+    review)."""
+
+    def test_every_locked_release_tool_is_declared(self):
+        types = run_types()
+        self.assertTrue(types)
+        for type_ in types:
+            with self.subTest(type_):
+                result = subprocess.run(["bash", str(SCRIPT), "releases", type_], cwd=REPO,
+                                        capture_output=True, text=True, timeout=60)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                declared = {line.split()[0] for line in result.stdout.splitlines()}
+                lock = REPO / "images/cloud" / type_ / "versions.lock"
+                text = lock.read_text() if lock.exists() else ""  # a new type: no lock yet
+                locked = {line.split()[1] for line in text.splitlines() if line.startswith("release ")}
+                self.assertLessEqual(locked, declared, f"{type_}: locked but not declared")
 
 
 class PinBakeArgsTests(unittest.TestCase):

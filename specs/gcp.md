@@ -337,7 +337,13 @@ A release tool is declared once, in the toolset script that reads it:
 URL or a script beside it whose `latest` prints the newest release. The script's
 own downloads use the same source, and `lock.sh`'s `release_tools` reads both from
 the type's toolsets, so adding one is that edit; the lock line is `release <name>`,
-NAME in lower case.
+NAME in lower case. A `${NAME_VERSION:-...}` with no `NAME_RELEASES` beside it fails
+the resolve (Terraform's, which the lock resolves itself, aside), and a unit test
+runs `lock.sh releases` for every Cloud Run type and checks each locked `release`
+line against it, so deleting a declaration fails its pull request instead of
+unlocking the tool at the next watch. In a toolset script, `${*_VERSION:-...}` is
+reserved for locked tools: a setting of another kind (an interpreter's version,
+say) takes another name.
 
 The build consumes the lock (`scripts/cloud/bake.sh` locally and on pull requests,
 the deploy's bake from `lock.sh bake-args`): `BASE_IMAGE` at the locked digest,
@@ -701,8 +707,10 @@ it's fixed. How, per source:
 | Terraform | `TERRAFORM_VERSION=1.14.2` or `~> 1.14` in `images/toolsets/terraform/install.sh` | tenv takes the constraint as is |
 | Type tool from a release | Its `*_VERSION` default in the script that reads it, beside its `*_RELEASES` (the release rows of the lock table) | |
 
-Pins live where the dependency is declared, each with `# pinned: <issue URL>`, and the
-lock marks them pinned. The watch lists every pin in the job summary next to
+Pins live where the dependency is declared, each with `# pinned: <issue URL>` on the
+declaring line or the line above it (for Claude, anywhere in docker-bake.hcl's
+`variable "CLAUDE_VERSION"` block, `default` included), and the lock marks them
+pinned. The watch lists every pin in the job summary next to
 upstream's current version and the issue's state, so a pin whose issue closed stands
 out instead of rotting. A package pinned in two lists (curl, in the base's and core's)
 is one pin; if the lists name different issues, `resolve` and `bake-args` fail rather

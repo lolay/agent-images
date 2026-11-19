@@ -16,6 +16,9 @@
 #   lock.sh pins <type>           each pin in the type's lock, tab-separated:
 #                                 what, locked value, upstream's newest now, and
 #                                 the issue URL (or -)
+#   lock.sh releases <type>       the type's release tools, as release_tools
+#                                 lists them (no network: a check that each
+#                                 locked release tool is still declared)
 #   lock.sh path <type>           where the type's lock is, whether or not it
 #                                 exists yet
 #
@@ -75,13 +78,16 @@ readonly lock_dir="${LOCK_DIR:-images/cloud}"
 readonly claude_releases=https://downloads.claude.ai/claude-code-releases
 readonly rust_dist=https://static.rust-lang.org/dist
 readonly terraform_index=https://releases.hashicorp.com/terraform/index.json
+# The one *_VERSION constraint a toolset declares that lock.sh resolves itself
+# (resolve_terraform) rather than as a release tool (release_tools).
+readonly terraform_var=TERRAFORM_VERSION
 readonly registry_waits="${LOCK_REGISTRY_WAITS:-30 60 120 180 240}"
 
 die() {
 	printf 'lock: %s\n' "$*" >&2
 	exit 1
 }
-usage() { die "usage: lock.sh resolve <type> | bake-args <type> | diff <old> <new> | summary <old> <new> | pins <type> | path <type>"; }
+usage() { die "usage: lock.sh resolve <type> | bake-args <type> | diff <old> <new> | summary <old> <new> | pins <type> | releases <type> | path <type>"; }
 
 lock_file() { printf '%s/%s/versions.lock' "$lock_dir" "$1"; }
 
@@ -100,12 +106,41 @@ declared() {
 }
 
 # pin_note <file> <text>: the `# pinned: <URL>` note on the line declaring
-# <text> or the line above it; - when there's none.
+# <text> or the line above it, or, when that line opens a block (the bake
+# file's `variable "CLAUDE_VERSION" {`, a comment after the brace allowed), on
+# any line of the block, nested blocks included, such as its `default = ...`;
+# - when there's none. Braces in strings and comments don't count.
 pin_note() {
 	awk -v text="$2" '
+		function note(line) {
+			if (!match(line, /# pinned: [^ ]+/)) return 0
+			print substr(line, RSTART + 10, RLENGTH - 10)
+			found = 1
+			return 1
+		}
+		# code(line): the line as HCL sees its structure, for finding and
+		# counting braces: quoted strings emptied, then /* */ on the line and a
+		# trailing # or // comment dropped (strings first, so a URL in one
+		# stays whole). A /* */ spanning lines is not followed.
+		function code(line,  cut) {
+			gsub(/"([^"\\]|\\.)*"/, "\"\"", line)
+			gsub(/\/\*([^*]|\*+[^*\/])*\*+\//, "", line)
+			cut = index(line, "#")
+			if (index(line, "//") && (!cut || index(line, "//") < cut)) cut = index(line, "//")
+			if (cut) line = substr(line, 1, cut - 1)
+			return line
+		}
+		depth {
+			if (note($0)) exit
+			line = code($0)
+			depth += gsub(/\{/, "", line)
+			depth -= gsub(/\}/, "", line)
+			if (depth <= 0) exit
+			next
+		}
 		index($0, text) {
-			if (match($0, /# pinned: [^ ]+/)) { print substr($0, RSTART + 10, RLENGTH - 10); found = 1; exit }
-			if (match(previous, /# pinned: [^ ]+/)) { print substr(previous, RSTART + 10, RLENGTH - 10); found = 1; exit }
+			if (note($0) || note(previous)) exit
+			if (code($0) ~ /\{[[:space:]]*$/) { depth = 1; next }
 			exit
 		}
 		{ previous = $0 }
@@ -213,9 +248,9 @@ terraform_newest() {
 
 resolve_terraform() {
 	local file=images/toolsets/terraform/install.sh constraint version line
-	constraint="$(declared "$file" TERRAFORM_VERSION)"
+	constraint="$(declared "$file" "$terraform_var")"
 	if [[ "$constraint" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-		printf 'terraform - %s\npinned terraform %s\n' "$constraint" "$(pin_note "$file" 'TERRAFORM_VERSION:-')"
+		printf 'terraform - %s\npinned terraform %s\n' "$constraint" "$(pin_note "$file" "$terraform_var:-")"
 	else
 		# latest, or ~> x.y: the newest stable release on that line.
 		line=""
@@ -226,7 +261,7 @@ resolve_terraform() {
 		fi
 		version="$(terraform_newest "$line")"
 		[[ -n "$version" ]] || die "terraform: no release matches '$constraint'"
-		[[ "$constraint" == latest ]] || printf 'pinned terraform %s\n' "$(pin_note "$file" 'TERRAFORM_VERSION:-')"
+		[[ "$constraint" == latest ]] || printf 'pinned terraform %s\n' "$(pin_note "$file" "$terraform_var:-")"
 		printf 'terraform - %s\n' "$version"
 	fi
 }
@@ -244,18 +279,36 @@ resolve_terraform() {
 #                  the tag GitHub redirects /releases/latest to
 #   <script>.sh    a script beside the declaring one whose `latest` prints the
 #                  newest release (the 3d toolset's blender.sh)
+#
+# A `${NAME_VERSION:-...}` with no NAME_RELEASES beside it fails (except
+# terraform_var, resolved on its own): a declaration deleted or written in a
+# form this doesn't read would otherwise drop the tool from the lock, and the
+# build would take its newest release unlocked. So in a toolset script that
+# form is reserved for locked tools; a setting of another kind takes another
+# name (gcp.md, "The lock").
 release_tools() {
-	local toolset file var source
+	local toolsets toolset file var source sources constraints
+	[[ -f "images/cloud/$1/Dockerfile" ]] || die "no type $1 (images/cloud/$1/Dockerfile)"
+	# Assigned first: a failure in <(...) would pass as no toolsets.
+	toolsets="$(cloud_toolsets "$1")"
 	while read -r toolset; do
+		[[ -n "$toolset" ]] || continue
 		for file in "images/toolsets/$toolset"/*.sh; do
 			[[ -f "$file" ]] || continue
+			sources="$(sed -n -E 's/^[[:space:]]*(readonly[[:space:]]+)?([A-Z][A-Z0-9_]*)_RELEASES=([^[:space:]#;]+).*/\2 \3/p' "$file")"
+			constraints="$(grep -oE '\$\{[A-Z][A-Z0-9_]*_VERSION:-' "$file" | sed -E 's/^\$\{(.*)_VERSION:-$/\1/' | LC_ALL=C sort -u)" || true
+			for var in $constraints; do
+				[[ "${var}_VERSION" == "$terraform_var" ]] || grep -qE "^$var " <<<"$sources" ||
+					die "$file: \${${var}_VERSION:-...} has no ${var}_RELEASES=<source> beside it (lock.sh release_tools)"
+			done
 			while read -r var source; do
+				[[ -n "$var" ]] || continue
 				# The constraint must be there too: a source alone resolves nothing.
 				declared "$file" "${var}_VERSION" >/dev/null
 				printf '%s %s %s_VERSION %s\n' "$(tr '[:upper:]_' '[:lower:]-' <<<"$var")" "$file" "$var" "$source"
-			done < <(sed -n -E 's/^[[:space:]]*(readonly[[:space:]]+)?([A-Z][A-Z0-9_]*)_RELEASES=([^[:space:]#;]+).*/\2 \3/p' "$file")
+			done <<<"$sources"
 		done
-	done < <(cloud_toolsets "$1")
+	done <<<"$toolsets"
 }
 
 # release_latest <file> <source>: upstream's newest release from a source that
@@ -476,7 +529,9 @@ cmd_resolve() {
 		die "$type's build graph has no CLAUDE_VERSION"
 	old="$(lock_file "$type")"
 	[[ -f "$old" ]] || old=""
-	mapfile -t toolsets < <(cloud_toolsets "$type")
+	# Assigned first: a failure in <(...) would pass as no toolsets.
+	toolsets="$(cloud_toolsets "$type")"
+	mapfile -t toolsets <<<"$toolsets"
 	releases="$(release_tools "$type")"
 	prepare_brew
 
@@ -657,6 +712,11 @@ summary)
 pins)
 	(($# == 2)) || usage
 	cmd_pins "$2"
+	;;
+releases)
+	(($# == 2)) || usage
+	[[ "$2" =~ ^[a-z0-9-]+$ ]] || usage
+	release_tools "$2"
 	;;
 path)
 	(($# == 2)) || usage
