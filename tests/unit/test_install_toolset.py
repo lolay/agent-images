@@ -387,7 +387,10 @@ done <"$DPKG_OWNERS"
 echo "dpkg-query: no path found matching pattern $path" >&2
 exit 1
 '''
-    FAKE_DPKG_QUERY = r'''[[ "$*" == '-W -f=${Package}=${Version}\n' ]] || { echo "dpkg-query: error: bad invocation $*" >&2; exit 2; }
+    FAKE_DPKG_QUERY = r'''if [[ $# -ne 2 || "$1" != -W || "$2" != '-f=${Package}=${Version}\n' ]]; then
+    echo "dpkg-query: error: unexpected arguments ($# given): $*" >&2
+    exit 2
+fi
 cat "$DPKG_STATE"
 '''
 
