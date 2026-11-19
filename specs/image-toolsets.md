@@ -53,11 +53,19 @@ plus an ordered list of toolsets, and nothing is inherited from another type.
 images/toolsets/
   <name>/packages.txt   apt packages (Linux only), optional
   <name>/Brewfile       Homebrew formulae, optional (Linux and macOS)
-  <name>/install.sh     anything else (rustup toolchain, tenv, tflint, the SDK), optional
+  <name>/install.sh     anything else (rustup toolchain, tenv, tflint, the SDK), optional;
+                        runs under install-toolset.sh, with its helpers (next paragraph)
   <name>/build-packages.txt  apt packages a type's builder stage installs for this
                         toolset (3d: COLMAP's), optional; locked with packages.txt
   install-toolset.sh    installs one toolset: apt list, then Brewfile, then install.sh
 ```
+
+`install.sh` and the scripts beside it run under `install-toolset.sh`, which exports
+its helpers to them: `log`, `die`, `apt`, `install_apt`, `install_apt_packages` and
+`github_latest` (the header of `install-toolset.sh` has each one's contract). So an
+`install.sh` doesn't run on its own, and a script a type's builder stage runs itself
+(3d's `build-colmap.sh`) sources `install-toolset.sh` to get them. A release tool's
+`NAME_VERSION` and `NAME_RELEASES` follow [gcp.md](gcp.md#the-lock), "The lock".
 
 | Toolset | Contents | Why it's a unit |
 | --- | --- | --- |
@@ -238,9 +246,10 @@ Same lesson. PyTorch, Open3D and gsplat lag CPython releases (Open3D's wheels ha
 stopped a version or two behind), and gsplat compiles a CUDA extension against
 PyTorch. So the `3d` toolset is a uv project at `/opt/3d` with `requires-python`
 set to the newest version all three publish for, PyTorch from its CUDA index, and
-gsplat built with `TORCH_CUDA_ARCH_LIST="8.9;12.0+PTX"` at image build so no session
-compiles it. COLMAP is built from source in a builder stage
-(`CMAKE_CUDA_ARCHITECTURES="89;120"`) from the packages in `build-packages.txt`,
+gsplat compiled at image build so no session compiles it. COLMAP is built from source
+in a builder stage. Both builds read the GPU targets, `CUDAARCHS` and
+`TORCH_CUDA_ARCH_LIST`, from `base-gpu` (see Build wiring), which derives them from
+`CUDA_CAPABILITIES`, so neither names an architecture. COLMAP builds from the packages in `build-packages.txt`,
 which the lock resolves with the type's `packages.txt`, and only its install tree is
 copied in, with the Ubuntu packages its binary links: at the versions it was built
 against where the build list installed them, by name where the base image already

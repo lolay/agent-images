@@ -101,9 +101,11 @@ target "versions-linux" {
 # newest, which a newer GPU's driver compiles. Any order: oldest_first below
 # sorts it. base-gpu hands it to the builds as the variables they read: CMake's
 # CUDAARCHS ("89-real;120") and PyTorch's TORCH_CUDA_ARCH_LIST ("8.9;12.0+PTX");
-# the gpu toolset builds nvcc's flags from CUDAARCHS. The toolsets' check.txt
-# checks each binary for every one, so adding a GPU here is the image side of a
-# new GPU type.
+# the gpu toolset builds nvcc's flags from CUDAARCHS. Adding a GPU here is the
+# image side of a new GPU type, and it takes three more edits: an sm_ line for it
+# in both toolsets' check.txt (3d's and gpu's, which check each binary for every
+# GPU), and the edit to test_the_list_is_the_l4_and_blackwell
+# (tests/unit/test_gpu_targets.py), the one place a test spells the list out.
 # Like TAG and REGISTRY, a CUDA_CAPABILITIES in the environment replaces it. It
 # must be dotted capabilities separated by spaces: anything else fails the bake
 # rather than build without a GPU.
