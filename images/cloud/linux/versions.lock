@@ -286,7 +286,7 @@ apt-snapshot - 20261119T162327Z
 base - mirror.gcr.io/library/ubuntu:24.04@sha256:73b999393d07f2bf65a40373778a44dc9a6d54ad7718d29247d8ff9413c4d6a8
 brew abseil 20260817.0
 brew actionlint 1.7.12
-brew ada-url 4.0.0_2
+brew ada-url 4.1.0
 brew age 1.3.2
 brew brotli 1.2.1
 brew buf 1.75.0
@@ -353,7 +353,7 @@ brew uvwasi 0.0.23
 brew xz 5.8.4
 brew zlib-ng-compat 2.3.3_1
 brew zstd 1.5.7_1
-claude - 2.1.328
+claude - 2.1.329
 release tflint v0.66.0
 rust - 1.100.0
 terraform - 1.17.2
