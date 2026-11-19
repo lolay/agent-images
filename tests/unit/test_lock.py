@@ -21,7 +21,7 @@ SCRIPT = REPO / "scripts/cloud/lock.sh"
 REAL_DOCKER = shutil.which("docker")
 
 FAKE_DOCKER = r'''#!/usr/bin/env python3
-import hashlib, json, os, subprocess, sys
+import hashlib, json, os, re, subprocess, sys
 args = sys.argv[1:]
 def log(line):
     with open(os.environ["FAKE_LOG"], "a") as f:
@@ -51,8 +51,11 @@ if args[:4] == ["run", "--rm", "--entrypoint", "/bin/bash"]:
     rest, mounts, env = args[4:], [], []
     while rest and rest[0] in ("--mount", "-e"):
         (mounts if rest[0] == "--mount" else env).append(rest[1]); rest = rest[2:]
-    if len(rest) != 3 or rest[1] != "-c":
+    # The resolve's one container command: images/cloud/base/apt-prepare.sh
+    # --simulate and the packages.
+    if len(rest) < 4 or rest[1:3] != ["/tmp/apt-prepare.sh", "--simulate"]:
         sys.exit("docker: fake: unexpected run: " + " ".join(args))
+    targets = set()
     for mount in mounts:
         fields = dict(f.partition("=")[::2] for f in mount.split(","))
         if fields.get("type") != "bind" or not fields.get("target"):
@@ -60,25 +63,30 @@ if args[:4] == ["run", "--rm", "--entrypoint", "/bin/bash"]:
         # Like docker's --mount (not -v): a missing source is an error.
         if not os.path.isabs(fields.get("source", "")) or not os.path.exists(fields["source"]):
             sys.exit("docker: Error response from daemon: invalid mount config for type \"bind\": bind source path does not exist: " + fields.get("source", ""))
-    packages = next((e for e in env if e.startswith("PACKAGES=")), None)
-    if packages is None:
-        sys.exit("docker: fake: no PACKAGES")
-    log("apt " + rest[0] + " " + packages)
+        targets.add(fields["target"])
+    # apt-prepare.sh, and what it reads beside it: in the stock image, a file
+    # not mounted isn't there.
+    for helper in ("apt-prepare.sh", "apt-build.conf", "apt-pins.sh", "install-toolset.sh"):
+        if "/tmp/" + helper not in targets:
+            sys.exit("/tmp/apt-prepare.sh: line 1: /tmp/" + helper + ": No such file or directory")
+    packages = rest[3:]
+    log("apt " + rest[0] + " " + " ".join(packages))
     for mount in mounts:
         log("mount " + mount)
     for e in env:
-        if not e.startswith("PACKAGES="):
-            log("env " + e)
+        log("env " + e)
+    if any(e.startswith("APT_SNAPSHOT=") for e in env):
+        sys.exit("apt-prepare: --simulate reads today's archive; APT_SNAPSHOT is the build's")
     if os.environ.get("FAKE_APT_FAIL"):
         sys.exit("E: Unable to locate package nosuchthing")
     # The archive apt reads: today's index (what FAKE_APT's simulation installs),
-    # plus each snapshot apt-pins.sh adds as a source, when the container has the
-    # script and the pins. A snapshot's index lists each pocket's current version
-    # only, so a name=version in neither is refused, as apt refuses it.
+    # plus each snapshot apt-pins.sh adds as a source from the pins. A snapshot's
+    # index lists each pocket's current version only, so a name=version in
+    # neither is refused, as apt refuses it.
     today = open(os.environ["FAKE_APT"]).read().splitlines()
     sources = [today]
     pins = next((e[len("APT_PINS="):] for e in env if e.startswith("APT_PINS=")), "")
-    if pins and any(m.endswith("target=/tmp/apt-pins.sh,readonly") for m in mounts):
+    if pins:
         snapshots = json.loads(os.environ.get("FAKE_APT_SNAPSHOTS", "{}"))
         for pin in pins.split():
             name, _, snapshot = pin.rpartition("@")
@@ -92,7 +100,7 @@ if args[:4] == ["run", "--rm", "--entrypoint", "/bin/bash"]:
     # What the base image already has: apt installs nothing for it, so no Inst.
     installed = json.loads(os.environ.get("FAKE_APT_INSTALLED", "{}"))
     out = list(today)
-    for wanted in packages[len("PACKAGES="):].split():
+    for wanted in packages:
         name, _, want = wanted.partition("=")
         if not want:
             continue
@@ -105,7 +113,12 @@ if args[:4] == ["run", "--rm", "--entrypoint", "/bin/bash"]:
             sys.stderr.write("E: Version '" + want + "' for '" + name + "' was not found\n")
             sys.exit(100)
         out = [line for line in out if line.split(" ", 1)[0] != name] + [found]
-    sys.stdout.write("".join(line + "\n" for line in out))
+    # apt-get install --simulate's output: a note, then an Inst and a Conf line
+    # per package.
+    sys.stdout.write("NOTE: This is only a simulation!\n      apt-get needs root privileges for real execution.\n"
+                     "Reading package lists...\nBuilding dependency tree...\n")
+    sys.stdout.write("".join("Inst " + line + "\n" for line in out))
+    sys.stdout.write("".join("Conf " + re.sub(r"^(\S+) \[[^]]*\] ", r"\1 ", line) + "\n" for line in out))
     sys.exit(0)
 sys.exit("docker: fake: unexpected call: " + " ".join(args) + "\nSee 'docker --help'.")
 '''
@@ -381,18 +394,24 @@ class ResolveTests(unittest.TestCase):
         self.resolve()
         apt = next(line for line in self.log.read_text().splitlines() if line.startswith("apt "))
         ubuntu = "mirror.gcr.io/library/ubuntu:24.04"
-        self.assertTrue(apt.startswith(f"apt {ubuntu}@{digest_of(ubuntu)} PACKAGES=sudo ca-certificates curl "), apt)
+        self.assertTrue(apt.startswith(f"apt {ubuntu}@{digest_of(ubuntu)} sudo ca-certificates curl "), apt)
         self.assertIn(" openjdk-21-jdk-headless ", apt)
         self.assertIn(" xvfb ", apt)
 
-    def test_apt_resolves_with_the_build_apt_settings(self):
-        # A part of the archive that fails to download has to fail the resolve,
-        # not lock older versions resolved without it (apt-build.conf).
+    def test_apt_resolves_with_the_build_apt_bootstrap(self):
+        # The container runs the build's own sequence (apt-prepare.sh, which
+        # installs apt-build.conf: a part of the archive that fails to download
+        # fails the resolve, not lock older versions resolved without it), with
+        # what it reads beside it, and no snapshot: the resolve picks that.
         self.resolve()
         log = self.log.read_text().splitlines()
+        for source, target in (("images/cloud/base/apt-prepare.sh", "/tmp/apt-prepare.sh"),
+                               ("images/cloud/base/apt-build.conf", "/tmp/apt-build.conf"),
+                               ("images/cloud/base/apt-pins.sh", "/tmp/apt-pins.sh"),
+                               ("images/toolsets/install-toolset.sh", "/tmp/install-toolset.sh")):
+            self.assertIn(f"mount type=bind,source={self.repo / source},target={target},readonly", log)
+        self.assertFalse([line for line in log if line.startswith(("env APT_CONFIG=", "env APT_SNAPSHOT="))], log)
         conf = self.repo / "images/cloud/base/apt-build.conf"
-        self.assertIn(f"mount type=bind,source={conf},target=/tmp/apt-build.conf,readonly", log)
-        self.assertIn("env APT_CONFIG=/tmp/apt-build.conf", log)
         self.assertIn('\nAPT::Update::Error-Mode "any";\n', conf.read_text())
 
     def test_taps_are_trusted_before_resolving(self):
@@ -1103,6 +1122,25 @@ class PinBakeArgsTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("*.args.APT_PINS=curl=8.5.0-2ubuntu10.1@20260101T000000Z", result.stdout.splitlines())
 
+    def test_a_snapshot_straight_after_pinned_reaches_the_build(self):
+        # pin_issue reads `#pinned:snapshot=<id>` as a note naming no issue
+        # (gcp.md, "Pinning a dependency"), so the pin itself must parse too.
+        self.add("images/toolsets/core/packages.txt", "git\n",
+                 "git\nopenssl=3.0.13-0ubuntu3.6 #pinned:snapshot=20260101T000000Z\n")
+        self.add("images/toolsets/native/packages.txt", "cmake\n",
+                 "cmake=3.28.3-1build7 # pinned:\tsnapshot=20250601T120000Z\n")
+        result = self.bake_args()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("*.args.APT_PINS=cmake=3.28.3-1build7@20250601T120000Z "
+                      "openssl=3.0.13-0ubuntu3.6@20260101T000000Z", result.stdout.splitlines())
+
+    def test_a_snapshot_glued_to_a_word_still_fails(self):
+        self.add("images/toolsets/core/packages.txt", "git\n",
+                 "git\nopenssl=3.0.13-0ubuntu3.6 # pinned: https://x/1,snapshot=20260101T000000Z\n")
+        result = self.bake_args()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("snapshot= is a word of its own", result.stderr)
+
     def test_a_pin_without_a_snapshot_adds_nothing(self):
         self.add("images/toolsets/native/packages.txt", "cmake\n", "cmake=3.28.3-1build7\n")
         result = self.bake_args()
@@ -1132,6 +1170,70 @@ class PinBakeArgsTests(unittest.TestCase):
         self.add("images/cloud/base/packages.txt", "curl\n", pin)
         self.add("images/toolsets/core/packages.txt", "curl\n", pin)
         self.assertEqual(self.bake_args().returncode, 0)
+
+
+class PinIssueTests(unittest.TestCase):
+    """One reader of a `# pinned:` note (r5.f12): pin_issue, which pin_note (a
+    toolset script's or the bake file's pin) and apt_pin_notes (a package
+    list's) both call, so a spelling that names an issue for one names it for
+    both. lock.sh is sourced for its functions (no Docker needed)."""
+
+    ISSUE = "https://github.com/lolay/agent-images/issues/117"
+    # gcp.md, "Pinning a dependency": any spaces or tabs, or none, after the #
+    # and after the colon.
+    SPELLINGS = ("# pinned: {}", "#pinned: {}", "# pinned:\t{}", "#  pinned: {}", "#\tpinned:  {}", "# pinned:{}")
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.repo = self.tmp / "repo"
+        for name in ("images/cloud", "images/toolsets", "infra/gcp", "scripts/cloud", "hooks/gcp"):
+            shutil.copytree(REPO / name, self.repo / name)
+        self.base_list = self.repo / "images/cloud/base/packages.txt"
+        self.saved_list = self.base_list.read_text()
+
+    def lock_fn(self, script, *args):
+        result = subprocess.run(["bash", "-c", f'source scripts/cloud/lock.sh\n{script}', "lock-test", *args],
+                                cwd=self.repo, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
+
+    def pin_issue(self, line):
+        return self.lock_fn('pin_issue "$1"', line)
+
+    def pin_note(self, text):
+        path = self.tmp / "install.sh"
+        path.write_text(text)
+        return self.lock_fn('pin_note "$1" "FOO_VERSION:-"', str(path)).strip()
+
+    def apt_note(self, comment):
+        self.base_list.write_text(self.saved_list.replace("curl\n", f"curl=8.5.0-2ubuntu10.1 {comment}\n", 1))
+        lines = [line for line in self.lock_fn("apt_pin_notes linux").splitlines() if line.startswith("pinned apt/curl ")]
+        self.assertEqual(len(lines), 1, lines)
+        return lines[0].split(" ", 2)[2]
+
+    def test_each_spelling_names_the_issue(self):
+        for spelling in self.SPELLINGS:
+            with self.subTest(spelling):
+                self.assertEqual(self.pin_issue("x=1 " + spelling.format(self.ISSUE)), self.ISSUE)
+                self.assertEqual(self.pin_issue(spelling.format(self.ISSUE) + " snapshot=20260101T000000Z"),
+                                 self.ISSUE)
+
+    def test_a_note_without_an_issue_and_a_line_without_a_note(self):
+        for line, issue in (("curl=1 # pinned: -", "-"), ("curl=1 # pinned: snapshot=20260101T000000Z", "-"),
+                            ("curl=1 #pinned:\tsnapshot=20260101T000000Z", "-"), ("curl=1", ""),
+                            ("curl=1 # pinned", ""), ("curl=1 # pinned:", ""), ("curl=1 # a comment", "")):
+            with self.subTest(line):
+                self.assertEqual(self.pin_issue(line), issue)
+
+    def test_both_readers_give_the_same_answer(self):
+        for spelling in self.SPELLINGS + ("# pinned: -", "# pinned: snapshot=20260101T000000Z", "# a comment"):
+            note = spelling.format(self.ISSUE)
+            expected = self.ISSUE if "{}" in spelling else "-"
+            with self.subTest(note):
+                self.assertEqual(self.pin_note(f'v="${{FOO_VERSION:-1.0}}" {note}\n'), expected)
+                self.assertEqual(self.pin_note(f'{note}\nv="${{FOO_VERSION:-1.0}}"\n'), expected)
+                self.assertEqual(self.apt_note(note), expected)
 
 
 class ReadTests(unittest.TestCase):

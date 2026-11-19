@@ -331,12 +331,13 @@ the snapshot its version comes from (a record, since the build reads the pin fro
 its list; its own line, since a version the base image already has gets no `apt`
 line), and `pinned <what> <issue URL>` a pin
 ([below](#pinning-a-dependency)); an apt pin is `pinned apt/<package> <issue URL>`,
-the URL the first word of its list line's `# pinned:` comment (`-` if it names none).
+the URL its list line's `# pinned:` note names (`-` if it names none; the spelling is
+[below](#pinning-a-dependency)).
 
 | Dependency | Locked as | Constraint, where it's declared | Resolved by (from upstream only) |
 | --- | --- | --- | --- |
 | Base image | Digest | `BASE_IMAGE` per base target in `docker-bake.hcl` (a tag; `@sha256` pins it) | `docker buildx imagetools inspect`: the index digest, no pull (a bare registry `HEAD` on mirror.gcr.io needs a token) |
-| apt packages, dependencies included | An Ubuntu snapshot id, plus the full resolved list | `images/cloud/base/packages.txt`, each toolset's `packages.txt`, and its `build-packages.txt` if it has a builder stage (`name=version` pins one; `snapshot=<id>` in its `# pinned:` comment takes that version from that snapshot) | `apt-get install --simulate` of that list in a stock container at the locked base digest, against today's archive, plus each pin's own snapshot as an extra source (`images/cloud/base/apt-pins.sh`). A resolved set unlike the lock's (or a new base) moves the snapshot to now |
+| apt packages, dependencies included | An Ubuntu snapshot id, plus the full resolved list | `images/cloud/base/packages.txt`, each toolset's `packages.txt`, and its `build-packages.txt` if it has a builder stage (`name=version` pins one; `snapshot=<id>` in its `# pinned:` comment takes that version from that snapshot) | `images/cloud/base/apt-prepare.sh --simulate` in a stock container at the locked base digest: the build's own apt bootstrap against today's archive, each pin's own snapshot added as an extra source (`images/cloud/base/apt-pins.sh`), then `apt-get install --simulate` of that list with the build's install options. A resolved set unlike the lock's (or a new base) moves the snapshot to now |
 | Homebrew, dependencies and `lolay/tap` included | Each formula with its version and revision | The type's Brewfiles | `brew bundle list`, `brew deps --union` (no build-only dependencies) and `brew info --json=v2` on the runner's own Homebrew, after tapping and trusting the Brewfiles' taps. Matches the image's `brew list` exactly |
 | Claude Code | Version | `CLAUDE_VERSION` in `docker-bake.hcl` (`latest`, `stable`, or a version) | `https://downloads.claude.ai/claude-code-releases/<channel>` |
 | Rust toolchain | Version | `RUST_TOOLCHAIN` in `images/toolsets/rust/install.sh` (`stable`, a minor line, or a version) | rustup's channel manifest |
@@ -385,6 +386,24 @@ the stock `ubuntu:24.04` image has no CA certificates, so the base first install
 sets the snapshot. The runner stage drops the setting, so a session's own apt
 reads today's archive.
 
+That bootstrap is one script, `images/cloud/base/apt-prepare.sh`, which the base
+layer runs and the resolve simulates (r5.f13, option a; owner, issue #138), so the
+lock resolves what the build installs: the build's apt settings
+(`apt-build.conf`), `apt-get update`, `ca-certificates` from today's archive, the
+snapshot (the build only), the pins (`apt-pins.sh install`), `apt-get update`, then
+the install. The resolve runs it with `--simulate` in a stock container, which
+installs `ca-certificates` too, with or without pins, and simulates against the
+package state saved before that install, so the lock still lists it as the build
+installs it. Every install takes `apt_install_options` from
+`images/toolsets/install-toolset.sh` (`-y --no-install-recommends
+--allow-downgrades`), the options every toolset layer's install takes too, the
+simulation's included: with `-y`, apt refuses a downgrade that
+`--allow-downgrades` doesn't allow, so the resolve accepts a downgrading pin exactly
+when the build does. The base Dockerfile and `resolve_apt` mount the script and the
+files it reads beside it (`apt-build.conf`, `apt-pins.sh`, `install-toolset.sh`) in
+`/tmp`, and a unit test fails if either, or any other type's Dockerfile or cloud
+script, writes a step of it itself.
+
 A pin that names its own snapshot reaches the build as `APT_PINS`,
 `name=version@id` each, which `lock.sh bake-args` reads from the type's package
 lists, not the lock, the way `install_apt` takes a pin's version: a pin needs no
@@ -407,9 +426,8 @@ core's) counts once; two pins that differ fail the build.
 Priority 1001 and `--allow-downgrades` on every package list's install let a pin
 sit below what's installed (`openssl`, which `ca-certificates` brought in from
 today's archive). The runner stage removes both files with the other apt settings.
-The resolve adds the same source in its container, after installing
-`ca-certificates` (the snapshot is HTTPS only), and simulates against the package
-state saved before that install, so the lock still lists what the build installs. The VM images (android) take each `install.sh`'s default
+The resolve adds the same source in its container, through the same
+`apt-prepare.sh` (above). The VM images (android) take each `install.sh`'s default
 and have no lock (m5, D2).
 
 Every `apt-get update` in a cloud build, and `lock.sh`'s resolve, runs with
@@ -418,9 +436,9 @@ Every `apt-get update` in a cloud build, and `lock.sh`'s resolve, runs with
 update. apt's default only warns and carries on without it. A build missing
 `noble-security` would install unpatched packages and pass its smoke, and a
 resolve missing `noble-updates` would lock release versions. The base layer
-installs the file for itself and the toolset layers, the runner stage drops it
-with the snapshot, and the orchestrator build and the resolve pass it in
-`APT_CONFIG`. No extra retries: apt already retries each download three times
+installs the file for itself and the toolset layers (`apt-prepare.sh`, which
+installs it in the resolve's container too), the runner stage drops it with the
+snapshot, and the orchestrator build passes it in `APT_CONFIG`. No extra retries: apt already retries each download three times
 with backoff. An outage longer than that is the workflows' to ride out (lock
 pull requests retry hourly, a failed deploy is covered by the next push or
 nightly build). Found on 2026-11-11, when snapshot.ubuntu.com was unreachable
@@ -727,7 +745,10 @@ it's fixed. How, per source:
 Pins live where the dependency is declared, each with `# pinned: <issue URL>` on the
 declaring line or the line above it (for Claude, anywhere in docker-bake.hcl's
 `variable "CLAUDE_VERSION"` block, `default` included), and the lock marks them
-pinned. The watch lists every pin in the job summary next to
+pinned. The note is `#`, then `pinned:`, each followed by any spaces or tabs or
+none (`#pinned:<tab><URL>` reads as `# pinned: <URL>`), and its first word is the
+issue: `-`, or an apt pin's `snapshot=<id>` in its place, names none. `lock.sh`'s
+`pin_issue` is the one reader, for every kind of pin (r5.f12). The watch lists every pin in the job summary next to
 upstream's current version and the issue's state, so a pin whose issue closed stands
 out instead of rotting. A package pinned in two lists (curl, in the base's and core's)
 is one pin; if the lists name different issues, `resolve` and `bake-args` fail rather
