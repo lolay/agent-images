@@ -1053,6 +1053,37 @@ class ReleaseToolTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertIn(f"lock: images/toolsets/widgets/install.sh: {error}", result.stderr)
 
+    def test_a_script_source_must_be_a_plain_name_beside_the_declaring_file(self):
+        # r5.f5: the name check, not only the existence check. Each of these is a
+        # script that exists and would print a release, so only the name check
+        # refuses it.
+        (self.toolset / "sub").mkdir()
+        (self.toolset / "sub/latest.sh").write_text('#!/bin/bash\necho 7.1.0\n')
+        (self.repo / "images/toolsets/outside.sh").write_text('#!/bin/bash\necho 7.1.0\n')
+        for source in ("../outside.sh", "./latest.sh", "sub/latest.sh", "../widgets/latest.sh",
+                       str(self.repo / "images/toolsets/outside.sh")):
+            with self.subTest(source):
+                self.assertTrue((self.toolset / source).is_file(), "the fixture exists")
+                self.declare(f'gizmo="${{GIZMO_VERSION:-latest}}"\nreadonly GIZMO_RELEASES={source}\n')
+                result = self.pins("release gizmo v1.0.0\npinned gizmo -\n")
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertEqual(result.stdout, "")
+                self.assertIn(f"lock: images/toolsets/widgets/install.sh: release source '{source}' "
+                              "isn't a script beside it", result.stderr)
+
+    def test_a_newest_release_that_isnt_one_token_fails(self):
+        # r5.f5: a source that prints junk (an HTML error page, two words) is
+        # refused, not written to the lock as `release gizmo 7.1.0 <html>`.
+        self.declare('gizmo="${GIZMO_VERSION:-latest}"\nreadonly GIZMO_RELEASES=latest.sh\n')
+        for printed in ("7.1.0 extra", "<html>503</html>", "7.1.0\n7.1.1", "", "-7.1.0", "7.1.0;rm"):
+            with self.subTest(printed):
+                (self.toolset / "latest.sh").write_text(f"#!/bin/bash\nprintf '%s' '{printed}'\n")
+                result = self.pins("release gizmo v1.0.0\npinned gizmo -\n")
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("lock: latest.sh gave '", result.stderr)
+                self.assertIn("' as its newest release", result.stderr)
+
 
 class LockedReleaseToolTests(unittest.TestCase):
     """Every Cloud Run type, against the repo's toolsets: its release tools are
