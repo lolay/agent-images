@@ -109,7 +109,7 @@ declared() {
 # <text> or the line above it, or, when that line opens a block (the bake
 # file's `variable "CLAUDE_VERSION" {`, a comment after the brace allowed), on
 # any line of the block, nested blocks included, such as its `default = ...`;
-# - when there's none.
+# - when there's none. Braces in strings and comments don't count.
 pin_note() {
 	awk -v text="$2" '
 		function note(line) {
@@ -118,8 +118,18 @@ pin_note() {
 			found = 1
 			return 1
 		}
-		# code(line): the line without its comment, for counting braces.
-		function code(line) { sub(/#.*/, "", line); return line }
+		# code(line): the line as HCL sees its structure, for finding and
+		# counting braces: quoted strings emptied, then /* */ on the line and a
+		# trailing # or // comment dropped (strings first, so a URL in one
+		# stays whole). A /* */ spanning lines is not followed.
+		function code(line,  cut) {
+			gsub(/"([^"\\]|\\.)*"/, "\"\"", line)
+			gsub(/\/\*([^*]|\*+[^*\/])*\*+\//, "", line)
+			cut = index(line, "#")
+			if (index(line, "//") && (!cut || index(line, "//") < cut)) cut = index(line, "//")
+			if (cut) line = substr(line, 1, cut - 1)
+			return line
+		}
 		depth {
 			if (note($0)) exit
 			line = code($0)

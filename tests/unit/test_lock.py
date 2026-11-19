@@ -519,14 +519,25 @@ class ResolveTests(unittest.TestCase):
                 self.assertIn(f"pinned claude {issue}", entries)
 
     def test_a_claude_pin_past_a_nested_block_names_its_issue(self):
+        # Braces in a string or a comment aren't the block's (Copilot, #132).
         issue = "https://github.com/anthropics/claude-code/issues/9"
-        self.edit("images/cloud/docker-bake.hcl", 'variable "CLAUDE_VERSION" {',
-                  'variable "CLAUDE_VERSION" { # the installer\'s version\n'
-                  '  validation {\n    condition = CLAUDE_VERSION != ""\n    error_message = "x"\n  }')
-        self.edit("images/cloud/docker-bake.hcl", 'default = "latest"', f'default = "2.1.300" # pinned: {issue}')
-        entries = self.entries(self.resolve())
-        self.assertIn("claude - 2.1.300", entries)
-        self.assertIn(f"pinned claude {issue}", entries)
+        validation = ('\n  validation {\n    condition = CLAUDE_VERSION != "}"\n'
+                      '    error_message = "no } here {"\n  }')
+        for opener in ("{ # the installer's version", "{ // the installer's version",
+                       "{ /* the installer's version */"):
+            with self.subTest(opener):
+                bake = self.repo / "images/cloud/docker-bake.hcl"
+                saved = bake.read_text()
+                try:
+                    self.edit("images/cloud/docker-bake.hcl", 'variable "CLAUDE_VERSION" {',
+                              f'variable "CLAUDE_VERSION" {opener}{validation}')
+                    self.edit("images/cloud/docker-bake.hcl", 'default = "latest"',
+                              f'default = "2.1.300" # pinned: {issue}')
+                    entries = self.entries(self.resolve())
+                finally:
+                    bake.write_text(saved)
+                self.assertIn("claude - 2.1.300", entries)
+                self.assertIn(f"pinned claude {issue}", entries)
 
     def test_a_note_past_the_variable_block_is_not_its_pin(self):
         self.edit("images/cloud/docker-bake.hcl", 'default = "latest"', 'default = "2.1.300"')
