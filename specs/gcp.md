@@ -804,6 +804,15 @@ reset of the host (`gcloud compute instances reset agent-orchestrator`), so the
 container starts again and reads it. Setting `orchestrator-image` to the digest
 already running does nothing.
 
+The file per type keeps each orchestrator pointed at its own key; it doesn't keep
+the types apart. Every type's orchestrator and hook runs in the one container as the
+one uid (`ubuntu`), with the one service account, `agent-orchestrator`, whose
+condition lets it read every `claude-env-*` secret and run every type's job. So the
+types share one trust domain: whatever runs as one type's orchestrator or hook can
+read every type's key and file. That's fine while every type serves the same owner.
+A type that serves another audience (another team, a customer) needs its own
+orchestrator container and its own service account, allowed only its own secret.
+
 ## The hook
 
 `hooks/gcp/spawn-runner`, the counterpart of `hooks/linux/spawn-runner`, same contract

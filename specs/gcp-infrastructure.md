@@ -134,6 +134,11 @@ The project is dedicated to this, so project-level grants are an acceptable scop
 | `agent-runner` (what job executions and runner VMs run as) | `logging.logWriter`; `storage.objectAdmin` on `lolay-agents-outputs` only; `storage.objectViewer` on `lolay-agents-datasets` only. Sessions get no secrets and no other GCP access |
 | `agent-images-ci` (GitHub Actions, through federation) | `artifactregistry.writer` on the repo; `run.developer`; `iam.serviceAccountUser` on `agent-runner`; custom role `orchestratorDeployer` (`compute.instances.get`, `compute.instances.setMetadata`) on the orchestrator VM only; custom role `zoneOperationsReader` (`compute.zoneOperations.get`) at project level, since gcloud polls the operation `setMetadata` returns; `iam.serviceAccountUser` on `agent-orchestrator`, since `setMetadata` on a VM that runs as a service account needs actAs on it (it gives CI nothing new: CI already picks the image the orchestrator runs); `logging.viewer`, so the deploy can print a failed smoke execution's log in the workflow run; for the `android` image, `compute.instanceAdmin.v1` and `compute.storageAdmin` (Packer's build VM and the image), `iap.tunnelResourceAccessor` (Packer's SSH) |
 
+`agent-orchestrator`'s secret condition is a prefix, so every type's orchestrator
+can read every type's key: the types are one trust domain ([gcp.md, "Keys"](gcp.md#keys)).
+A type for another audience needs its own service account, its condition naming
+only that type's secret.
+
 ### Workload identity federation
 
 - Pool `github`, provider `github-actions`, issuer `https://token.actions.githubusercontent.com`.
