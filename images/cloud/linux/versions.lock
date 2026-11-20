@@ -323,7 +323,7 @@ brew lolay/tap/triage 0.5.0
 brew lz4 1.11.1
 brew merve 1.2.2_5
 brew mpdecimal 4.0.1
-brew nbytes 0.1.4
+brew nbytes 0.1.5
 brew ncurses 6.6
 brew node 26.13.1_2
 brew openldap 2.7.2
