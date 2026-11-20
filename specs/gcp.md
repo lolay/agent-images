@@ -273,7 +273,8 @@ updates jobs. Enforced in three places, so one mistake doesn't open it up:
   versions report goes to the run's summary and an artifact. The check runs on
   every pull request, and its `gate` job is what `main`'s ruleset requires: it
   passes when nothing the check covers changed, or when the lint, the tests and
-  every image's build and smoke passed.
+  every image's build and smoke passed. Which paths the check covers and the
+  verdict are `scripts/cloud/pr-check.sh` (`relevant`, `gate`), where they're tested.
 
 ### What a push to `main` deploys
 
