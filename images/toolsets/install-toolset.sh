@@ -60,7 +60,7 @@ brew_env() {
 # call: the stock Ubuntu image doesn't have it.
 apt() {
 	local as_root=()
-	((EUID == 0)) || as_root=(sudo)
+	[[ "$(id -u)" == 0 ]] || as_root=(sudo)
 	"${as_root[@]}" env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get -q "$@"
 }
 

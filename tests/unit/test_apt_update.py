@@ -49,6 +49,8 @@ shift || true
 case "$op" in
 update)
 	(($# == 0)) || { echo "E: The update command takes no arguments" >&2; exit 100; }
+	[[ "$FAKE_UID" == 0 || -n "${FAKE_SUDOED:-}" ]] ||
+		{ echo "E: Could not open lock file /var/lib/apt/lists/lock - open (13: Permission denied)" >&2; exit 100; }
 	n=$(($(cat "$STATE" 2>/dev/null || echo 0) + 1))
 	echo "$n" >"$STATE"
 	echo "apt-get update" >>"$CALLS"
@@ -68,9 +70,17 @@ FAKE_SLEEP = r'''
 echo "sleep $1" >>"$CALLS"
 '''
 
-# sudo as the build's user has it, with no root here: it runs its command, and
-# refuses what real sudo would (no command).
-FAKE_SUDO = '(($# > 0)) || { echo "usage: sudo command" >&2; exit 1; }\nexec "$@"\n'
+# sudo as the build's user has it: it runs its command as root (here: FAKE_SUDOED,
+# which fake apt-get wants of a non-root caller), refuses what real sudo would (no
+# command), and logs the call to $SUDO_CALLS.
+FAKE_SUDO = (
+    '(($# > 0)) || { echo "usage: sudo command" >&2; exit 1; }\n'
+    'echo "sudo $1" >>"${SUDO_CALLS:-/dev/null}"\n'
+    'FAKE_SUDOED=1 exec "$@"\n'
+)
+
+# id as apt() asks for the user: only `id -u`, as FAKE_UID (0 is root).
+FAKE_ID = '[[ "$*" == "-u" ]] || { echo "id: fake: unexpected arguments: $*" >&2; exit 1; }\necho "$FAKE_UID"\n'
 
 
 class AptUpdateTests(unittest.TestCase):
@@ -84,17 +94,20 @@ class AptUpdateTests(unittest.TestCase):
         write_executable(self.bin / "sudo", FAKE_SUDO)
         write_executable(self.bin / "apt-get", FAKE_APT_GET)
         write_executable(self.bin / "sleep", FAKE_SLEEP)
+        write_executable(self.bin / "id", FAKE_ID)
         self.calls = self.tmp / "calls"
+        self.sudo_calls = self.tmp / "sudo-calls"
         self.scratch = self.tmp / "scratch"  # TMPDIR: where mktemp puts apt_update's files
         self.scratch.mkdir()
         self.probe = self.tmp / "probe.sh"
         self.probe.write_text(f'TOOLSET_LOG_NAME=probe\nsource "{self.toolsets}/install-toolset.sh"\napt_update\necho "after"\n')
 
-    def run_update(self, error=CUDA_SYNC, failures=0):
+    def run_update(self, error=CUDA_SYNC, failures=0, uid="1000"):
         return subprocess.run(
             ["bash", str(self.probe)],
             env=base_env(self.tmp, self.bin, CALLS=str(self.calls), STATE=str(self.tmp / "state"),
-                         FAILURES=str(failures), FAKE_ERROR=error, TMPDIR=str(self.scratch)),
+                         FAILURES=str(failures), FAKE_ERROR=error, TMPDIR=str(self.scratch),
+                         FAKE_UID=uid, SUDO_CALLS=str(self.sudo_calls)),
             stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30,
         )
 
@@ -177,12 +190,25 @@ class AptUpdateTests(unittest.TestCase):
         result = subprocess.run(
             ["bash", str(self.probe)],
             env=base_env(self.tmp, self.bin, CALLS=str(self.calls), STATE=str(self.tmp / "state"),
-                         FAILURES="99", FAKE_ERROR=CUDA_SYNC, FAKE_ERROR_AFTER=NOT_FOUND),
+                         FAILURES="99", FAKE_ERROR=CUDA_SYNC, FAKE_ERROR_AFTER=NOT_FOUND, FAKE_UID="1000"),
             stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30,
         )
         self.assertEqual(result.returncode, 100)
         self.assertEqual(self.call_log(), ["apt-get update", "sleep 15", "apt-get update"])
         self.assertIn(NOT_FOUND, result.stderr)
+
+    def test_a_build_user_runs_apt_through_sudo(self):
+        result = self.run_update(failures=1, uid="1000")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.sudo_calls.read_text().splitlines(), ["sudo env", "sudo env"])
+
+    def test_root_runs_it_without_sudo_which_the_stock_image_lacks(self):
+        # The base's bootstrap and the orchestrator's build run as root on plain
+        # Ubuntu: a call to sudo there is "command not found".
+        write_executable(self.bin / "sudo", 'echo "sudo: command not found" >&2\nexit 127\n')
+        result = self.run_update(failures=1, uid="0")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.call_log(), ["apt-get update", "sleep 15", "apt-get update"])
 
     def test_its_temp_files_are_removed(self):
         for failures in (0, 1, 99):
@@ -190,8 +216,12 @@ class AptUpdateTests(unittest.TestCase):
                 (self.tmp / "state").unlink(missing_ok=True)
                 self.run_update(failures=failures)
                 self.assertEqual(list(self.scratch.iterdir()), [])
-        # And on the way out for an error it doesn't retry.
-        self.run_update(error=NOT_FOUND, failures=1)
+        # And on the way out for an error it doesn't retry (a fresh counter, so
+        # this update is the one that fails).
+        (self.tmp / "state").unlink(missing_ok=True)
+        result = self.run_update(error=NOT_FOUND, failures=1)
+        self.assertEqual(result.returncode, 100)
+        self.assertIn(NOT_FOUND, result.stderr)
         self.assertEqual(list(self.scratch.iterdir()), [])
 
 
@@ -209,6 +239,7 @@ class InstallPathTests(unittest.TestCase):
         bin_dir = tmp / "bin"
         write_executable(bin_dir / "sudo", FAKE_SUDO)
         write_executable(bin_dir / "sleep", FAKE_SLEEP)
+        write_executable(bin_dir / "id", FAKE_ID)
         # The install and clean the toolset's list goes on to, logged as apt got them.
         install = "install | clean) echo \"${op}${*:+ $*}\" >>\"$CALLS\" ;;\n"
         write_executable(bin_dir / "apt-get", FAKE_APT_GET.replace(
@@ -217,7 +248,7 @@ class InstallPathTests(unittest.TestCase):
         result = subprocess.run(
             ["bash", str(toolsets / "install-toolset.sh"), "jvm"],
             env=base_env(tmp, bin_dir, CALLS=str(calls), STATE=str(tmp / "state"), FAILURES="2",
-                         FAKE_ERROR=CUDA_SYNC, AGENT_TOOLSETS_DIR=str(tmp / "record")),
+                         FAKE_ERROR=CUDA_SYNC, AGENT_TOOLSETS_DIR=str(tmp / "record"), FAKE_UID="1000"),
             stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
