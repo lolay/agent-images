@@ -160,6 +160,18 @@ class ChangedTargetsTests(unittest.TestCase):
         self.base = self.head()
         self.assertEqual(self.change("images/toolsets/skills/agent-toolset-checks/SKILL.md")["types"], both)
 
+    def test_what_bake_args_reads_rebuilds_every_type(self):
+        # r3.f4: the deploy's build arguments are `lock.sh bake-args`, which reads
+        # a type's toolsets (for APT_PINS) with scripts/cloud/lib.sh; a fix to
+        # either otherwise waited for the scheduled rebuild.
+        both = [{"type": "linux", "build": True}, {"type": "linux-gpu", "build": True}]
+        for name in ("scripts/cloud/lock.sh", "scripts/cloud/lib.sh"):
+            with self.subTest(name=name):
+                result = self.change(name)
+                self.assertEqual(result["types"], both)
+                self.assertFalse(result["orchestrator"])
+                self.base = self.head()
+
     def test_the_android_images_toolset_list_deploys_nothing(self):
         self.assertEqual(
             self.change("images/android/toolsets.txt"), {"types": [], "vms": [], "orchestrator": False, "prune": False}
