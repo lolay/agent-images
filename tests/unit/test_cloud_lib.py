@@ -95,6 +95,39 @@ class TypeSettingTests(unittest.TestCase):
         self.assertEqual(self.value('gcp_rebuild_class weekly >/dev/null; echo "${REBUILD:-unset}"').strip(), "unset")
 
 
+class RunnerSettingsTests(unittest.TestCase):
+    """gcp_runner_settings' CLAUDE_UPGRADE=false: only where the watch locks
+    Claude, a nightly Cloud Run type (D6, r3.f9)."""
+
+    def upgrade(self, text: str):
+        env_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, env_dir)
+        (env_dir / "project.env").write_text("PROJECT_ID=p\n")
+        (env_dir / "t.env").write_text(text)
+        result = subprocess.run(
+            ["bash", "-c", f'set -euo pipefail; source "{REPO}/hooks/gcp/lib.sh"; gcp_load_env t; gcp_runner_settings t'],
+            capture_output=True, text=True, env={"PATH": "/usr/bin:/bin", "AGENT_GCP_ENV_DIR": str(env_dir)},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        settings = dict(line.split("=", 1) for line in result.stdout.splitlines())
+        return settings.get("CLAUDE_UPGRADE")
+
+    def test_a_nightly_cloud_run_type_runs_its_locked_claude(self):
+        self.assertEqual(self.upgrade("REBUILD=nightly\n"), "false")
+        self.assertEqual(self.upgrade(""), "false", "unset is nightly, and BACKEND's default is run")
+        self.assertEqual(self.upgrade("BACKEND=run\n"), "false")
+
+    def test_a_weekly_type_updates_itself(self):
+        self.assertIsNone(self.upgrade("REBUILD=weekly\n"))
+        self.assertIsNone(self.upgrade("BACKEND=compute\nREBUILD=weekly\n"))
+
+    def test_a_compute_type_updates_itself_whatever_its_class(self):
+        # The watch resolves only Cloud Run types: a nightly compute type's Claude
+        # is its last Packer build's, so it must keep updating itself at start.
+        self.assertIsNone(self.upgrade("BACKEND=compute\nREBUILD=nightly\n"))
+        self.assertIsNone(self.upgrade("BACKEND=compute\n"), "no REBUILD is nightly")
+
+
 class CheckTypeTests(unittest.TestCase):
     """gcp_check_type: the one reader of the DEPLOY=false-on-compute rule."""
 

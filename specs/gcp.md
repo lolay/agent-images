@@ -682,7 +682,8 @@ The trade is build cost against how fast an image's contents move and what being
 behind costs a session. Claude, the thing that moves most, is locked on `nightly`
 types: the hourly watch proposes each release, and `gcp_runner_settings` sets
 `CLAUDE_UPGRADE=false` for them (read from `REBUILD`, so a type moved to `weekly`
-gets self-update back). On `weekly` types it updates itself at runner start, so a
+gets self-update back, and only for `BACKEND=run`: the watch locks no compute
+type's Claude, so one keeps updating itself whatever its class). On `weekly` types it updates itself at runner start, so a
 week-old `android` or `gis` image still runs today's Claude; what a week costs it is apt and Homebrew updates, which a session with
 `sudo` (`android`) or Homebrew (all) can pull when it needs one. Every type still
 rebuilds on any push that touches its inputs ([above](#what-a-push-to-main-deploys)).
