@@ -205,7 +205,7 @@ class SharedHelpersTests(unittest.TestCase):
             f"{path.relative_to(REPO)}:{number}"
             for path in users
             for number, line in enumerate(path.read_text().splitlines(), 1)
-            if re.match(r"\s*(log|apt|install_apt|install_apt_packages|github_latest)\s*\(\)", line)
+            if re.match(r"\s*(log|apt|apt_update|install_apt|install_apt_packages|github_latest)\s*\(\)", line)
             or (path.name != "lock.sh" and re.match(r"\s*die\s*\(\)", line))
         ]
         self.assertEqual(restated, [])
@@ -263,7 +263,7 @@ class SharedHelpersTests(unittest.TestCase):
         )
         result = self.run_bash(str(probe))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "apt apt_install_options brew_env brew_path die github_latest "
+        self.assertEqual(result.stdout, "apt apt_install_options apt_update brew_env brew_path die github_latest "
                          "install_apt install_apt_packages log ")
 
 class GithubLatestTests(unittest.TestCase):

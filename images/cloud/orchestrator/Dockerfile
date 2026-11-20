@@ -9,8 +9,12 @@
 FROM mirror.gcr.io/library/ubuntu:24.04
 
 # apt-build.conf: a part of the archive that fails to download fails the build.
+# apt_update is install-toolset.sh's, which every cloud build's apt update goes
+# through: it runs again while the archive is out of sync.
 RUN --mount=type=bind,source=images/cloud/base/apt-build.conf,target=/tmp/apt-build.conf \
-	APT_CONFIG=/tmp/apt-build.conf apt-get update \
+	--mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/install-toolset.sh \
+	export APT_CONFIG=/tmp/apt-build.conf \
+	&& bash -c 'source /tmp/install-toolset.sh && apt_update' \
 	&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl jq procps \
 	&& rm -rf /var/lib/apt/lists/*
 

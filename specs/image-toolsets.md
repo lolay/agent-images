@@ -61,7 +61,7 @@ images/toolsets/
 ```
 
 `install.sh` and the scripts beside it run under `install-toolset.sh`, which exports
-its helpers to them: `log`, `die`, `apt`, `install_apt`, `install_apt_packages` and
+its helpers to them: `log`, `die`, `apt`, `apt_update`, `install_apt`, `install_apt_packages` and
 `github_latest` (the header of `install-toolset.sh` has each one's contract). So an
 `install.sh` doesn't run on its own, and a script a type's builder stage runs itself
 (3d's `build-colmap.sh`) sources `install-toolset.sh` to get them. A release tool's
