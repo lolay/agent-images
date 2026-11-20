@@ -1429,6 +1429,41 @@ class ReadTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertEqual(result.stdout, "")
 
+    def test_write_puts_the_lock_where_path_says(self):
+        # r3.f19: the one writer, for the watch and make cloud-lock WRITE=1.
+        for type_ in ("linux", "newtype"):
+            with self.subTest(type_):
+                result = subprocess.run(["bash", str(SCRIPT), "write", type_], cwd=REPO, input=self.LOCK,
+                                        capture_output=True, text=True, timeout=30,
+                                        env={**os.environ, "LOCK_DIR": str(self.tmp)})
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
+                path = Path(self.run_lock("path", type_).stdout.strip())
+                self.assertEqual(path.read_text(), self.LOCK)
+                self.assertEqual(path.stat().st_mode & 0o777, 0o644)
+                self.assertEqual(os.listdir(path.parent), ["versions.lock"], "no temporary file left")
+
+    def test_make_cloud_lock_writes_and_finds_the_lock_through_lock_sh(self):
+        recipe = subprocess.run(["make", "-n", "cloud-lock", "TYPE=linux", "WRITE=1"], cwd=REPO,
+                                capture_output=True, text=True, timeout=30, check=True).stdout
+        self.assertIn("scripts/cloud/lock.sh write linux <", recipe)
+        self.assertIn('lock="$(scripts/cloud/lock.sh path linux)"', recipe)
+        self.assertNotIn("versions.lock", recipe, "lock.sh names where a lock is")
+        self.assertNotRegex(recipe, r"\bmv\b")
+
+    def test_write_refuses_less_than_a_lock_and_keeps_the_old_one(self):
+        self.write("linux/versions.lock", self.LOCK)
+        partial = "".join(line + "\n" for line in self.LOCK.splitlines() if not line.startswith("base "))
+        result = subprocess.run(["bash", str(SCRIPT), "write", "linux"], cwd=REPO, input=partial,
+                                capture_output=True, text=True, timeout=30,
+                                env={**os.environ, "LOCK_DIR": str(self.tmp)})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("the lock for linux has no base line", result.stderr)
+        self.assertEqual((self.tmp / "linux/versions.lock").read_text(), self.LOCK)
+        self.assertEqual(os.listdir(self.tmp / "linux"), ["versions.lock"], "no temporary file left")
+        for args in (("write",), ("write", "../linux"), ("write", "linux", "x")):
+            with self.subTest(args):
+                self.assertEqual(self.run_lock(*args).returncode, 1)
+
     def test_bake_args_refuses_an_unknown_kind(self):
         self.write("linux/versions.lock", self.LOCK + "npm left-pad 1.3.0\n")
         result = self.run_lock("bake-args", "linux")

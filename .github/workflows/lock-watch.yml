@@ -79,34 +79,44 @@ jobs:
           CLASS: ${{ steps.class.outputs.class }}
         run: |
           set -euo pipefail
-          # The candidate tree starts as main's locks; each resolved type
-          # replaces its own. A type that fails keeps main's and doesn't stop
-          # the others; the unresolved job fails the run after propose.
+          # The candidate tree holds each resolved type's lock. A type that
+          # fails gets none there and doesn't stop the others; the unresolved
+          # job fails the run after propose.
           mkdir -p out/candidate
-          cp --parents images/cloud/*/versions.lock out/candidate/
           scripts/cloud/lock-watch.sh resolve "$CLASS" out/candidate | tee out/results
           failed="$(sed -n 's/^failed //p' out/results | tr '\n' ' ')"
           echo "failed=${failed% }" >>"$GITHUB_OUTPUT"
+      # main as it is now, not as checked out: a lock pull request can merge
+      # while the types resolve, and comparing with the checkout would propose
+      # its locks again (r3.f7). The candidate takes main's lock for each type
+      # it doesn't hold: outside the class, or failed.
+      - name: Main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          scripts/cloud/lock-watch.sh seed origin/main out/main
+          scripts/cloud/lock-watch.sh seed origin/main out/candidate
       - name: Decide
         id: decide
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          open="$(gh api "repos/$GITHUB_REPOSITORY/pulls?head=${GITHUB_REPOSITORY%%/*}:lock/watch&base=main&state=open" --jq 'length')"
-          if ((open > 0)); then
-            git fetch --no-tags origin lock/watch
+          branch="$(scripts/cloud/lock-watch.sh branch)"
+          open="$(scripts/cloud/lock-watch.sh open)"
+          if [[ -n "$open" ]]; then
+            git fetch --no-tags origin "$branch"
             # Keep the open pull request's candidates for the types this run
             # didn't resolve (the weekly run's in an hourly run, or a type whose
             # resolve failed), except a lock main changed since the branch left it.
-            scripts/cloud/lock-watch.sh carry out/results out/candidate origin/main origin/lock/watch
+            scripts/cloud/lock-watch.sh carry out/results out/candidate origin/main "origin/$branch"
           fi
-          changed="$(scripts/cloud/lock-watch.sh changed . out/candidate)"
+          changed="$(scripts/cloud/lock-watch.sh changed out/main out/candidate)"
           if [[ -z "$changed" ]]; then
             action=none
-            ((open == 0)) || action=close
+            [[ -z "$open" ]] || action=close
             echo "No lock moved."
-          elif ((open > 0)) && scripts/cloud/lock-watch.sh proposed out/candidate origin/main origin/lock/watch; then
+          elif [[ -n "$open" ]] && scripts/cloud/lock-watch.sh proposed out/candidate origin/main "origin/$branch"; then
             # Nothing to push, so nothing new reruns its checks: the retry job
             # reruns a failed build instead.
             action=retry
@@ -117,8 +127,8 @@ jobs:
           fi
           echo "action=$action" >>"$GITHUB_OUTPUT"
           if [[ "$action" == push ]]; then
-            title="$(scripts/cloud/lock-watch.sh title . out/candidate)"
-            scripts/cloud/lock-watch.sh body . out/candidate >out/body.md
+            title="$(scripts/cloud/lock-watch.sh title out/main out/candidate)"
+            scripts/cloud/lock-watch.sh body out/main out/candidate >out/body.md
             # The changed locks, for the propose job: only those paths.
             candidate="$(printf '%s\n' "$changed" | tar -C out/candidate -czf - -T - | base64 -w0)"
             {

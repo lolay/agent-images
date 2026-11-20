@@ -382,10 +382,12 @@ cloud-ci: cloud-lint cloud-test ## Lint, unit tests and a build of every cloud i
 # with the lock's value, so trying a pin change takes the lock rewritten). That
 # lock is never committed: the watch and cloud-build write the ones in git.
 cloud-lock: ## Resolve a runner type's lock from upstream now and show what moved (Linux, Docker, Homebrew): TYPE=linux [WRITE=1 writes it for a local cloud-build, never to commit]
-	@set -o pipefail; lock=images/cloud/$(TYPE)/versions.lock; new="$$(mktemp)"; \
+	@set -o pipefail; lock="$$(scripts/cloud/lock.sh path $(TYPE))" || exit 1; new="$$(mktemp)"; \
 	scripts/cloud/lock.sh resolve $(TYPE) >"$$new" || { rm -f "$$new"; exit 1; }; \
 	if [ -f "$$lock" ]; then scripts/cloud/lock.sh diff "$$lock" "$$new"; else cat "$$new"; fi; \
-	if [ -n "$(WRITE)" ]; then mv "$$new" "$$lock"; printf 'wrote %s\n' "$$lock"; else rm -f "$$new"; fi
+	if [ -n "$(WRITE)" ]; then scripts/cloud/lock.sh write $(TYPE) <"$$new" || { rm -f "$$new"; exit 1; }; \
+	  printf 'wrote %s\n' "$$lock"; fi; \
+	rm -f "$$new"
 
 cloud-targets: ## Print every Cloud Run type and the orchestrator, one a line: what TYPE=all and cloud-ci build
 	@printf '%s\n' $(CLOUD_TARGETS)

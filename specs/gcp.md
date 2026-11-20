@@ -311,7 +311,8 @@ built from, and the check compares upstream against it, so nothing ever reads th
 image. One thing has its own lock: `3d-gpu`'s Python environment, `/opt/3d`, is
 `images/toolsets/3d/uv.lock`, which the watch doesn't move (`uv lock --upgrade` in a
 pull request; image-toolsets.md). `scripts/cloud/lock.sh` is its one reader and writer: `resolve <type>`
-(Linux, with Docker and Homebrew), `bake-args`, `diff`, `summary`, `pins`, `releases` and `path`. A lock is
+(Linux, with Docker and Homebrew), `bake-args`, `diff`, `summary`, `pins`, `releases`, `path` and `write` (the
+watch's candidate and `make cloud-lock WRITE=1` write a lock only through it). A lock is
 `<kind> <name> <value>` lines, sorted, under a header:
 
 ```text
@@ -375,7 +376,8 @@ runs `lock.sh resolve <type>`, the job uploads the result as the artifact
 the file as it came, and the rerun builds from it. Nothing writes the branch for
 them, and a type that has a lock is never resolved there: moving a lock stays the
 watch's. So `lock.sh resolve` writes every lock, the first one included; no lock is
-written or seeded by hand. The one other writer is `make cloud-lock WRITE=1`, for a
+written or seeded by hand. The one other writer is `make cloud-lock WRITE=1` (through
+`lock.sh write`, as the watch writes its candidate), for a
 local `make cloud-build` against a candidate lock (a release pin only takes effect
 through the lock, since `bake-args` overrides it with the lock's value): that file
 is never committed. apt's snapshot makes the apt layer reproducible, old versions
@@ -533,8 +535,12 @@ A dispatch takes `all`, `nightly` or `weekly`. One run at a time, queued. It nev
 deploys; it only proposes a pull request:
 
 1. `resolve` (read-only `GITHUB_TOKEN`, no secrets) resolves each type in the class
-   on its own (`lock-watch.sh resolve`, one `lock.sh resolve` per type) into a
-   candidate tree that starts as `main`'s locks. A type whose resolve fails keeps
+   on its own (`lock-watch.sh resolve`, one `lock.sh resolve` per type, written
+   with `lock.sh write`) into a candidate tree. It then fetches `main` again, fills
+   in `main`'s lock as it is now for each type the candidate lacks (`lock-watch.sh
+   seed`), and compares with that rather than the checkout: a lock pull request
+   that merged while the types resolved would otherwise be proposed again. A type
+   whose resolve fails keeps
    `main`'s lock in the candidate and the loop carries on, so one type's upstream
    can't hold back the others' locks: on 2026-11-15 (run 43715897836) a 403 while
    resolving `3d-gpu`, the first type, failed the whole job, and `gis`, `linux-gpu`
@@ -562,7 +568,8 @@ deploys; it only proposes a pull request:
    `retry` the red pull request it left sat until upstream moved again.
 4. Something moved: `propose` (environment `lock-bot`) commits the moved locks onto
    `main`'s head as `lock/watch` and opens the pull request, or refreshes the open
-   one, titled from `lock.sh summary` (`lock(linux): claude 2.1.318, go 1.26.1, apt
+   one (unless `main`'s head, read again, already holds every one of them: then it
+   closes the open one and pushes nothing), titled from `lock.sh summary` (`lock(linux): claude 2.1.318, go 1.26.1, apt
    3 packages`; several types read `lock(gis, linux): gis: ...; linux: ...`), with
    each type's `lock.sh diff` as its description, and turns on auto-merge (squash).
 5. The pull request's required check is `cloud-build`'s `gate`: the build of every

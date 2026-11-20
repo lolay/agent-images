@@ -21,6 +21,10 @@
 #                                 locked release tool is still declared)
 #   lock.sh path <type>           where the type's lock is, whether or not it
 #                                 exists yet
+#   lock.sh write <type>          write the lock on stdin (a resolve's output)
+#                                 to the type's lock, whole or not at all: the
+#                                 one place a lock file is written (the watch,
+#                                 make cloud-lock WRITE=1)
 #
 # A lock is `<kind> <name> <value>` lines, sorted, under a comment header:
 #
@@ -60,7 +64,8 @@
 # apt resolves today differs from what the lock recorded.
 #
 #   LOCK_NOW       the snapshot id to use if apt moved (default: now, UTC)
-#   LOCK_DIR       where the current locks are (default images/cloud)
+#   LOCK_DIR       where the current locks are, and where write writes
+#                  (default images/cloud)
 #   LOCK_REGISTRY_WAITS  seconds to wait before each retry of a rate-limited
 #                  registry read (default "30 60 120 180 240"; tests set zeros)
 # Run from the repo root.
@@ -92,12 +97,21 @@ die() {
 	printf 'lock: %s\n' "$*" >&2
 	exit 1
 }
-usage() { die "usage: lock.sh resolve <type> | bake-args <type> | diff <old> <new> | summary <old> <new> | pins <type> | releases <type> | path <type>"; }
+usage() { die "usage: lock.sh resolve <type> | bake-args <type> | diff <old> <new> | summary <old> <new> | pins <type> | releases <type> | path <type> | write <type>"; }
 
 lock_file() { printf '%s/%s/versions.lock' "$lock_dir" "$1"; }
 
 # lock_value <file> <kind> [name]: the value of one line, or nothing.
 lock_value() { awk -v kind="$2" -v name="${3:--}" '$1 == kind && $2 == name {print $3; exit}' "$1"; }
+
+# require_lines <file> [name]: fail unless the lock has the lines every build
+# reads, naming it <name> (default the file).
+require_lines() {
+	local kind
+	for kind in base apt-snapshot claude; do
+		[[ -n "$(lock_value "$1" "$kind")" ]] || die "${2:-$1} has no $kind line"
+	done
+}
 
 # --- Constraints, read where they're declared ---------------------------------
 
@@ -579,9 +593,7 @@ cmd_bake_args() {
 	# issues for one package fails here, in cloud-build, not in the next resolve.
 	apt_pin_notes "$1" >/dev/null
 	[[ -f "$file" ]] || die "no lock for $1 ($file): cloud-build resolves a new type's lock on its pull request for the author to commit (AGENTS.md)"
-	for kind in base apt-snapshot claude; do
-		[[ -n "$(lock_value "$file" "$kind")" ]] || die "$file has no $kind line"
-	done
+	require_lines "$file"
 	while read -r kind name value; do
 		case "$kind" in
 		base) printf '*.args.BASE_IMAGE=%s\n' "$value" ;;
@@ -703,6 +715,21 @@ cmd_pins() {
 	done < <(awk '$1 == "pinned"' "$file")
 }
 
+# cmd_write <type>: the lock on stdin, written to lock_file: to a new file
+# beside it, checked, then moved over it, so a reader never sees half a lock and
+# a bad one leaves the old in place.
+cmd_write() {
+	local file
+	file="$(lock_file "$1")"
+	mkdir -p "${file%/*}"
+	write_tmp="$(mktemp "$file.XXXXXX")"
+	trap 'rm -f "$write_tmp"' EXIT
+	cat >"$write_tmp"
+	require_lines "$write_tmp" "the lock for $1"
+	chmod 644 "$write_tmp"
+	mv "$write_tmp" "$file"
+}
+
 # Sourced (tests): the functions alone.
 [[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
 
@@ -737,6 +764,11 @@ path)
 	[[ "$2" =~ ^[a-z0-9-]+$ ]] || usage
 	lock_file "$2"
 	printf '\n'
+	;;
+write)
+	(($# == 2)) || usage
+	[[ "$2" =~ ^[a-z0-9-]+$ ]] || usage
+	cmd_write "$2"
 	;;
 *) usage ;;
 esac

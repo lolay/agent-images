@@ -129,6 +129,26 @@ if rest == "git/refs" and method == "POST":
         fail(422, "Object does not exist")
     refs[name] = fields["sha"]; log("create " + name + " " + fields["sha"]); mark_merged()
     out({"ref": fields["ref"]})
+if rest.startswith("git/trees/") and method == "GET":
+    sha, _, query = rest[len("git/trees/"):].partition("?")
+    if query not in ("", "recursive=1"):
+        fail(422, "fake: unknown parameter " + query)
+    if sha not in commits:
+        fail(404, "Not Found")
+    files = commits[sha]["files"]
+    def blob(text):
+        data = text.encode()
+        return hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
+    entries, dirs = [], set()
+    for name in sorted(files):
+        parts = name.split("/")
+        for depth in range(1, len(parts)):
+            dirs.add("/".join(parts[:depth]))
+        entries.append({"path": name, "mode": "100644", "type": "blob", "sha": blob(files[name])})
+    entries += [{"path": d, "mode": "040000", "type": "tree", "sha": hashlib.sha1(d.encode()).hexdigest()} for d in sorted(dirs)]
+    if query == "":
+        entries = [e for e in entries if "/" not in e["path"]]
+    out({"sha": sha, "tree": entries, "truncated": False})
 if rest.startswith("git/refs/heads/") and method == "PATCH":
     name = rest[len("git/refs/heads/"):]
     if name not in refs:
@@ -377,11 +397,14 @@ class PinsTests(Base):
         self.assertNotEqual(result.returncode, 0)
 
 
-# lock.sh resolve for ResolveTests: the real one's interface (resolve <type>,
-# Cloud Run types only, a lock on stdout only when all of it resolved), with the
-# types in FAKE_FAIL failing the way 3d-gpu did in lock-watch run 43715897836.
+# lock.sh for ResolveTests: resolve has the real one's interface (resolve
+# <type>, Cloud Run types only, a lock on stdout only when all of it resolved),
+# with the types in FAKE_FAIL failing the way 3d-gpu did in lock-watch run
+# 43715897836; write is the real one (REAL_LOCK_SH), so where a lock goes stays
+# lock.sh's.
 FAKE_LOCK_SH = r"""#!/bin/bash
 set -euo pipefail
+if [[ $# == 2 && $1 == write ]]; then exec bash "$REAL_LOCK_SH" "$@"; fi
 [[ $# == 2 && $1 == resolve ]] || { echo "lock: usage: lock.sh resolve <type> | ..." >&2; exit 1; }
 [[ -f "infra/gcp/$2.env" && $2 != android ]] || { echo "lock: $2 isn't a Cloud Run type in infra/gcp" >&2; exit 1; }
 echo "resolve $2" >>"$FAKE_LOG"
@@ -390,7 +413,11 @@ if [[ " $FAKE_FAIL " == *" $2 "* ]]; then
 	echo "lock: couldn't fetch https://download.blender.org/release/" >&2
 	exit 22
 fi
-printf '# header\nclaude - 2.1.330\nresolved %s -\n' "$2"
+if [[ " ${FAKE_PARTIAL:-} " == *" $2 "* ]]; then
+	printf '# header\nclaude - 2.1.330\n'
+	exit 0
+fi
+printf '# header\napt-snapshot - 20261101T000000Z\nbase - ubuntu@sha256:aaa\nclaude - 2.1.330\nresolved %s -\n' "$2"
 """
 
 
@@ -409,9 +436,10 @@ class ResolveTests(Base):
         self.log = self.tmp / "log"
         self.candidate = self.tree("candidate", {t: LOCK for t in ("3d-gpu", "gis", "linux", "linux-gpu")})
 
-    def resolve(self, class_="weekly", fail=""):
+    def resolve(self, class_="weekly", fail="", partial=""):
         return self.run_watch("resolve", class_, str(self.candidate), cwd=self.repo, script=self.script,
-                              env={"FAKE_LOG": str(self.log), "FAKE_FAIL": fail})
+                              env={"FAKE_LOG": str(self.log), "FAKE_FAIL": fail, "FAKE_PARTIAL": partial,
+                                   "REAL_LOCK_SH": str(REPO / "scripts/cloud/lock.sh")})
 
     def lock(self, type_):
         return (self.candidate / "images/cloud" / type_ / "versions.lock").read_text()
@@ -449,6 +477,27 @@ class ResolveTests(Base):
         result = self.resolve(fail="3d-gpu gis linux-gpu")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "failed 3d-gpu\nfailed gis\nfailed linux-gpu\n")
+
+    def test_an_empty_candidate_gets_each_resolved_lock_where_lock_sh_puts_it(self):
+        # The workflow's candidate starts empty; lock.sh write lays it out
+        # (r3.f19), and main's locks are seeded after (GitTests).
+        shutil.rmtree(self.candidate)
+        self.candidate.mkdir()
+        result = self.resolve(fail="gis")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        locks = sorted(str(p.relative_to(self.candidate)) for p in self.candidate.rglob("*") if p.is_file())
+        self.assertEqual(locks, ["images/cloud/3d-gpu/versions.lock", "images/cloud/linux-gpu/versions.lock"])
+        self.assertIn("resolved 3d-gpu -", self.lock("3d-gpu"))
+
+    def test_a_lock_that_lock_sh_refuses_is_not_kept(self):
+        # lock.sh writes the lock (r3.f19), so a resolve that printed less than a
+        # lock fails that type rather than reaching the candidate.
+        result = self.resolve(partial="gis")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "resolved 3d-gpu\nfailed gis\nresolved linux-gpu\n")
+        self.assertEqual(self.lock("gis"), LOCK, "the type keeps main's lock")
+        self.assertIn("lock: the lock for gis has no base line", result.stderr)
+        self.assertIn("lock-watch: gis: lock.sh write refused the resolved lock (exit 1)", result.stderr)
 
     def test_an_unknown_class_or_missing_tree_fails(self):
         self.assertEqual(self.resolve(class_="hourly").returncode, 1)
@@ -558,6 +607,39 @@ class GitTests(Base):
         changed = self.run_git_watch("changed", str(self.repo), str(candidate))
         self.assertEqual(changed.stdout.split(), ["images/cloud/linux/versions.lock"],
                          "nothing proposes reverting gis")
+
+    def test_seed_fills_in_only_the_locks_a_tree_lacks(self):
+        (self.repo / "images/cloud/linux/Dockerfile").write_text("FROM x\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "not a lock")
+        mine = LOCK.replace("2.1.318", "2.1.399")
+        tree = self.tree("candidate", {"linux": mine})
+        result = self.run_git_watch("seed", "main", str(tree))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        files = sorted(str(p.relative_to(tree)) for p in tree.rglob("*") if p.is_file())
+        self.assertEqual(files, sorted(f"images/cloud/{t}/versions.lock" for t in ("gis", "linux", "linux-gpu")))
+        self.assertEqual((tree / "images/cloud/linux/versions.lock").read_text(), mine, "a lock it holds stays")
+        self.assertEqual((tree / "images/cloud/gis/versions.lock").read_text(), LOCK)
+        self.assertNotEqual(self.run_git_watch("seed", "nope", str(tree)).returncode, 0)
+
+    def test_a_lock_pull_request_merged_during_the_resolve_is_not_proposed_again(self):
+        # r3.f7: the run checked out main, the open pull request (linux at
+        # 2.1.319, gis at 2.1.320) merged while the types resolved, and the
+        # resolve found the same 2.1.319. Compared with the checkout it would be
+        # proposed again; compared with main after the resolve, nothing moved.
+        stale = self.tree("stale", {})
+        shutil.copytree(self.repo / "images", stale / "images", dirs_exist_ok=True)
+        self.git("merge", "-q", "--squash", "lock/watch")
+        self.git("commit", "-qm", "lock(gis, linux) (#1)")
+        candidate = self.tree("candidate", {"linux": LOCK.replace("2.1.318", "2.1.319")})
+        self.assertEqual(self.run_git_watch("changed", str(stale), str(candidate)).stdout,
+                         "images/cloud/linux/versions.lock\n", "the checkout is behind main")
+        main = self.tmp / "main"
+        for tree in (main, candidate):
+            self.assertEqual(self.run_git_watch("seed", "main", str(tree)).returncode, 0)
+        self.assertEqual(self.run_git_watch("changed", str(main), str(candidate)).stdout, "")
+        self.assertIn("2.1.320", (candidate / "images/cloud/gis/versions.lock").read_text(),
+                      "a type this run didn't resolve takes main's lock, not the checkout's")
 
     def test_proposed_when_the_branch_is_main_plus_the_candidate(self):
         branch = {"linux": LOCK.replace("2.1.318", "2.1.319"), "gis": LOCK.replace("2.1.318", "2.1.320"), "linux-gpu": LOCK}
@@ -669,6 +751,63 @@ class ProposeTests(FakeGitHubBase):
         lock.unlink()
         os.mkfifo(lock)
         self.refused_without_a_call(self.propose())
+
+    def merge(self):
+        """The open pull request merges itself: main moves to a commit with its
+        branch's files, and the pull request closes as merged."""
+        state = self.load()
+        files = state["commits"][state["refs"]["lock/watch"]]["files"]
+        state["commits"]["c" * 40] = {"parent": self.MAIN, "files": files}
+        state["refs"]["main"] = "c" * 40
+        state["main_history"].append("c" * 40)
+        for pr in state["pulls"]:
+            pr.update(state="closed", merged=True)
+        self.save()
+
+    def test_a_candidate_main_already_has_is_not_proposed(self):
+        # r3.f7: the lock pull request merged after Decide read main, and the
+        # next propose was handed the same locks.
+        self.assertEqual(self.propose().returncode, 0)
+        self.merge()
+        before = len(self.load()["log"])
+        result = self.propose()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state = self.load()
+        self.assertEqual(state["log"][before:], [], "no commit, no branch moved, no pull request")
+        self.assertEqual(len(state["pulls"]), 1)
+        self.assertIn("already has these locks: nothing to propose", result.stdout)
+
+    def test_a_candidate_main_already_has_closes_the_open_pull_request(self):
+        self.assertEqual(self.propose().returncode, 0)
+        state = self.load()
+        state["commits"]["c" * 40] = {"parent": self.MAIN,
+                                      "files": state["commits"][state["refs"]["lock/watch"]]["files"]}
+        state["refs"]["main"] = "c" * 40
+        self.save()
+        result = self.propose()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.load()["pulls"][0]["state"], "closed")
+
+    def test_a_candidate_main_lacks_one_lock_of_is_proposed(self):
+        self.assertEqual(self.propose().returncode, 0)
+        self.merge()
+        (self.candidate / "images/cloud/gis").mkdir(parents=True)
+        (self.candidate / "images/cloud/gis/versions.lock").write_text(LOCK)
+        result = self.propose()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state = self.load()
+        self.assertEqual([p["state"] for p in state["pulls"]], ["closed", "open"])
+        self.assertEqual(state["commits"][state["refs"]["lock/watch"]]["parent"], "c" * 40)
+
+    def test_open_and_branch(self):
+        env = {"FAKE_GH_STATE": str(self.state_path), "FAKE_REPO": "lolay/agent-images"}
+        self.assertEqual(self.run_watch("branch", env=env).stdout, "lock/watch\n")
+        none = self.run_watch("open", env=env)
+        self.assertEqual((none.stdout, none.returncode), ("", 0))
+        self.assertEqual(self.propose().returncode, 0)
+        self.assertEqual(self.run_watch("open", env=env).stdout, "1\n")
+        self.merge()
+        self.assertEqual(self.run_watch("open", env=env).stdout, "")
 
     def test_close(self):
         self.assertEqual(self.propose().returncode, 0)
@@ -882,6 +1021,33 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("exit 1", unresolved)
         self.assertIn("permissions: {}", unresolved)
         self.assertNotIn("secrets.", unresolved)
+
+    def test_decide_compares_with_main_after_the_resolve(self):
+        # r3.f7: not with the checkout, which a lock pull request merging during
+        # the resolve leaves behind.
+        watch = (REPO / ".github/workflows/lock-watch.yml").read_text()
+        resolve = watch.split("\n  propose:\n", 1)[0]
+        steps = resolve.split("      - name: ")
+        names = [step.split("\n", 1)[0] for step in steps[1:]]
+        self.assertLess(names.index("Resolve"), names.index("Main"))
+        self.assertLess(names.index("Main"), names.index("Decide"))
+        main, decide = steps[1 + names.index("Main")], steps[1 + names.index("Decide")]
+        self.assertIn("git fetch --no-tags origin main\n", main)
+        self.assertIn("lock-watch.sh seed origin/main out/main\n", main)
+        self.assertIn("lock-watch.sh seed origin/main out/candidate\n", main)
+        for command in ("changed", "title", "body"):
+            self.assertIn(f"lock-watch.sh {command} out/main out/candidate", decide)
+        self.assertNotIn(" . out/candidate", decide)
+        self.assertNotIn("cp --parents", resolve, "lock.sh write and seed lay out the candidate")
+
+    def test_decide_asks_lock_watch_for_the_branch_and_the_open_pull_request(self):
+        # r3.f19: one place for the bot's branch name and the open-PR query.
+        watch = (REPO / ".github/workflows/lock-watch.yml").read_text()
+        decide = watch.split("      - name: Decide\n", 1)[1].split("      - name: ", 1)[0]
+        self.assertIn('branch="$(scripts/cloud/lock-watch.sh branch)"', decide)
+        self.assertIn('open="$(scripts/cloud/lock-watch.sh open)"', decide)
+        self.assertNotIn("lock/watch", watch.split("\njobs:\n", 1)[1], "the branch is lock-watch.sh's")
+        self.assertNotIn("pulls?", watch)
 
     def test_a_failed_pins_list_does_not_skip_propose(self):
         # Pins is resolve's last step: failing the job would skip propose for
