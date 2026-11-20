@@ -462,8 +462,10 @@ mounts the file to source it. It runs the update again when every error line of 
 attempt is `Mirror sync in progress`, `File has unexpected size` or `Hash Sum
 mismatch` (apt's closing "Some index files failed to download" aside): four
 attempts in all, 15, 45 and 90 seconds apart, each failure logged with apt's error.
-Any other error fails at once, alone or beside a sync error, so a real outage isn't
-hidden, and the last
+A failure that will be retried prints its stderr on stdout, so a build that fails on any
+stderr (the Android image's provisioner) stays green once the retry works; the last
+attempt's keeps stderr. Any other error fails at once, alone or beside a sync error,
+so a real outage isn't hidden, and the last
 attempt's failure fails the build with apt's exit status, as an update always did.
 The base needs no extra mount for it: `apt-prepare.sh` sources
 `install-toolset.sh`, which the base layer mounts already.

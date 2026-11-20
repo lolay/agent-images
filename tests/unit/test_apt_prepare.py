@@ -245,7 +245,8 @@ echo "sleep $1" >>"$CALLS"
             with self.subTest(mode):
                 fails = {"FAKE_SYNC_FAILS": "1 2 4"}
                 if mode == "build":
-                    self.build(**fails)
+                    # Nothing on stderr after a recovery (the Android build fails on any).
+                    self.assertEqual(self.build(**fails).stderr, "")
                 else:
                     result = self.simulate(**fails)
                     self.assertNotIn("Mirror sync", result.stdout)

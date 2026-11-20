@@ -75,24 +75,36 @@ apt() {
 # of those messages, so any other failure (an unreachable archive, a missing
 # suite), alone or beside a sync error, fails at once and a real outage isn't
 # hidden. Four attempts, 15, 45 and 90 seconds apart, each failure logged with
-# apt's error; the last one fails the build as an update always did, with apt's
-# exit status. The one place a cloud build runs `apt-get update` (test_apt_update.py
+# apt's error, on stdout when another attempt follows (so a build that fails on
+# any stderr stays green after a recovery); the last one fails the build as an
+# update always did, with apt's exit status and stderr. The one place a cloud build runs `apt-get update` (test_apt_update.py
 # checks): the base's bootstrap, every toolset's install and the orchestrator's
 # build all call it.
 apt_update() {
-	local waits=(15 45 90) attempt=1 attempts status line out err errors
+	local waits=(15 45 90) attempt=1 attempts status line out err errors sync_only
 	local sync_errors='Mirror sync in progress|File has unexpected size|Hash Sum mismatch'
 	attempts=$((${#waits[@]} + 1))
 	out="$(mktemp)" err="$(mktemp)"
 	while :; do
-		status=0
+		status=0 sync_only=false
 		apt update >"$out" 2>"$err" || status=$?
+		if ((status != 0)); then
+			errors="$(grep -hE '^E: ' "$out" "$err" | grep -v '^E: Some index files failed to download' || true)"
+			if grep -qE "$sync_errors" <<<"$errors" && ! grep -qvE "$sync_errors" <<<"$errors"; then
+				sync_only=true
+			fi
+		fi
 		cat "$out"
-		cat "$err" >&2
-		((status != 0)) || break
-		errors="$(grep -hE '^E: ' "$out" "$err" | grep -v '^E: Some index files failed to download' || true)"
-		grep -qE "$sync_errors" <<<"$errors" || break
-		! grep -qvE "$sync_errors" <<<"$errors" || break
+		# A failure about to be retried is progress, not an error: its stderr goes
+		# to stdout, so a build that fails on any stderr (the Android image's
+		# provisioner) stays green when the retry works. The last attempt's, and
+		# any other failure's, stays on stderr.
+		if $sync_only && ((attempt < attempts)); then
+			cat "$err"
+		else
+			cat "$err" >&2
+		fi
+		$sync_only || break
 		while read -r line; do
 			log "apt_update: attempt $attempt of $attempts failed: $line"
 		done < <(grep -E "$sync_errors" <<<"$errors")

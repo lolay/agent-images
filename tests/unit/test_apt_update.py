@@ -140,9 +140,12 @@ class AptUpdateTests(unittest.TestCase):
         self.assertIn(f"==> probe: apt_update: attempt 2 of 4 failed: {CUDA_SYNC}\n", result.stdout)
         self.assertIn("==> probe: apt_update: retrying in 15s\n", result.stdout)
         self.assertIn("==> probe: apt_update: retrying in 45s\n", result.stdout)
-        # apt's own output still reaches the log, both streams.
+        # apt's own output still reaches the log. A failure that was retried is on
+        # stdout, so nothing is on stderr after a recovery: the Android image's
+        # provisioner fails a build on any stderr line (Copilot, #145).
         self.assertEqual(result.stdout.count("Hit:1 http://archive.ubuntu.com"), 3)
-        self.assertEqual(result.stderr.count(TRAILER), 2)
+        self.assertEqual(result.stdout.count(TRAILER), 2)
+        self.assertEqual(result.stderr, "")
 
     def test_the_last_attempt_can_be_the_one_that_works(self):
         result = self.run_update(failures=3)
@@ -159,7 +162,10 @@ class AptUpdateTests(unittest.TestCase):
         self.assertIn("==> probe: apt_update: attempt 4 of 4 failed: " + CUDA_SYNC, result.stdout)
         self.assertIn("==> probe: apt_update: failed 4 times in a row, with the archive out of sync\n", result.stdout)
         self.assertEqual(result.stdout.count("apt_update: retrying"), 3)
-        self.assertIn(TRAILER, result.stderr)
+        # The last attempt's failure stays on stderr; the three before it went to stdout.
+        self.assertEqual(result.stderr.count(TRAILER), 1)
+        self.assertEqual(result.stderr.count(CUDA_SYNC), 1)
+        self.assertEqual(result.stdout.count(TRAILER), 3)
 
     def test_any_other_error_fails_at_once(self):
         for error in (NOT_FOUND, UNREACHABLE):
