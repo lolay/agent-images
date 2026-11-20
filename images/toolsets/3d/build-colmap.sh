@@ -34,7 +34,7 @@ fi
 
 # What the install adds or changes: the build list's packages and dependencies.
 before="$(installed_packages)"
-grep -qvE '^[[:space:]]*(#|$)' "$here/build-packages.txt" || die "no packages in $here/build-packages.txt"
+[[ -n "$(apt_list "$here/build-packages.txt")" ]] || die "no packages in $here/build-packages.txt"
 install_apt "$here/build-packages.txt"
 from_build_list="$(packages_changed_since "$before")"
 # Ubuntu's OpenImageIO CMake config wants OpenCV's include directory to exist,

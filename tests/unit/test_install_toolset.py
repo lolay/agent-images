@@ -263,8 +263,71 @@ class SharedHelpersTests(unittest.TestCase):
         )
         result = self.run_bash(str(probe))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "apt apt_install_options apt_update brew_env brew_path die github_latest "
-                         "install_apt install_apt_packages log ")
+        self.assertEqual(result.stdout, "apt apt_entries apt_install_options apt_list apt_update brew_env brew_path "
+                         "brewfile_formulae die github_latest install_apt install_apt_packages log trust_taps ")
+
+    def helper(self, script, stdin=""):
+        return subprocess.run(["bash", "-c", f'set -euo pipefail; source "{self.script}"; {script}'],
+                              env=base_env(self.tmp, self.bin), input=stdin, capture_output=True, text=True,
+                              timeout=30)
+
+    def test_apt_entries_reads_each_line_once_for_every_reader(self):
+        # r3.f20: the build (install_apt, apt-prepare.sh --list) and the lock
+        # (packages_of, the pin readers) read a list through these alone.
+        listing = ("# a comment\n\n   \ncurl\n  sudo  \t\nopenssl=3.0.13-0ubuntu3.6  # pinned: - snapshot=20260101T000000Z\n"
+                   "  # indented comment\nzlib1g#pinned:x\n")
+        entries = self.helper("apt_entries", listing)
+        self.assertEqual(entries.returncode, 0, entries.stderr)
+        self.assertEqual(entries.stdout, "curl\t\nsudo\t\nopenssl=3.0.13-0ubuntu3.6\t pinned: - snapshot=20260101T000000Z\n"
+                                         "zlib1g\tpinned:x\n")
+        names = self.helper("apt_list", listing)
+        self.assertEqual(names.stdout, "curl\nsudo\nopenssl=3.0.13-0ubuntu3.6\nzlib1g\n")
+        self.assertEqual(self.helper("apt_list", "# none\n\n").stdout, "")
+        missing = self.helper(f'apt_list "{self.tmp}/nope"')
+        self.assertNotEqual(missing.returncode, 0, "a missing list isn't an empty one")
+
+    def test_trust_taps_taps_and_trusts_each_named_tap_once(self):
+        calls = self.tmp / "brew-calls"
+        write_executable(self.bin / "brew", f"""case "$1" in
+tap) (($# == 2)) || exit 1 ;;
+trust) [[ $# == 3 && $2 == --tap ]] || {{ echo "brew: unknown trust usage" >&2; exit 1; }} ;;
+*) echo "brew: unexpected $*" >&2; exit 1 ;;
+esac
+echo "$*" >>"{calls}"
+""")
+        one, two = self.tmp / "a.Brewfile", self.tmp / "b.Brewfile"
+        one.write_text('tap "lolay/tap"\nbrew "go"\n')
+        two.write_text('tap "lolay/tap"\ntap "osgeo/osgeo4mac", trusted: true\nbrew "lolay/tap/nowline"\n')
+        result = self.helper(f'trust_taps "{one}" "{two}"')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls.read_text().splitlines(), [
+            "tap lolay/tap", "trust --tap lolay/tap", "tap osgeo/osgeo4mac", "trust --tap osgeo/osgeo4mac"])
+        (self.tmp / "none.Brewfile").write_text('brew "go"\n')
+        calls.unlink()
+        self.assertEqual(self.helper(f'trust_taps "{self.tmp}/none.Brewfile"').returncode, 0)
+        self.assertFalse(calls.exists())
+
+    def test_no_script_reads_a_list_or_a_brewfile_its_own_way(self):
+        # r3.f20: the lock is right only while it reads what the build installs,
+        # so install-toolset.sh's readers are the only ones: no sed or grep over a
+        # package list's lines, and no tap or formula list of a Brewfile.
+        readers = []
+        # The Cloud Run images and their lock; the macOS image reads its own
+        # Brewfiles, with no lock (images/macos).
+        paths = [REPO / "scripts/cloud/lock.sh", *sorted((REPO / "images/toolsets").rglob("*.sh")),
+                 *sorted((REPO / "images/cloud").rglob("*.sh")), *sorted((REPO / "images/cloud").glob("*/Dockerfile"))]
+        for path in paths:
+            if path == SCRIPT:
+                continue
+            for number, line in enumerate(path.read_text().splitlines(), 1):
+                code = line.split(" #", 1)[0]
+                if line.lstrip().startswith("#"):
+                    continue
+                if (re.search(r"\b(sed|grep|awk)\b.*(packages\.txt|package_lines|s/#\.\*//)", code)
+                        or re.search(r"#\*\}", code)
+                        or re.search(r"\^tap|brew tap |brew bundle list", code)):
+                    readers.append(f"{path.relative_to(REPO)}:{number}")
+        self.assertEqual(readers, [])
 
 class GithubLatestTests(unittest.TestCase):
     """install-toolset.sh's github_latest, which a toolset's install.sh gets

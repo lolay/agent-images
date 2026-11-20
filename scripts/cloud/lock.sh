@@ -397,32 +397,40 @@ package_lines() {
 	done < <(cloud_toolsets "$1")
 }
 
-# packages_of <type>: the apt packages the type's image asks for, as the build
-# reads them (install-toolset.sh's install_apt).
-packages_of() { package_lines "$1" | sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d'; }
+# packages_of <type>: the apt packages the type's image asks for, read as the
+# build reads them (install-toolset.sh's apt_list).
+packages_of() { package_lines "$1" | apt_list; }
+
+# entries_of <type>: each entry of the type's lists with its comment
+# (install-toolset.sh's apt_entries): what the pin readers below read.
+entries_of() {
+	local lines
+	# Assigned first: a failure in package_lines would pass as no pins.
+	lines="$(package_lines "$1")"
+	apt_entries <<<"$lines"
+}
 
 # apt_pins_of <type>: each pin whose `# pinned:` comment names its snapshot
 # (`name=version  # pinned: <issue URL> snapshot=<id>`), as name=version@id, one
 # per line: the list images/cloud/base/apt-pins.sh takes. The builds read the
 # line as an ordinary pin, the comment stripped.
 apt_pins_of() {
-	local line package snapshot
-	while IFS= read -r line; do
-		[[ "$line" == *'#'*snapshot=* ]] || continue
-		package="${line%%#*}"
-		package="${package//[[:space:]]/}"
-		[[ -n "$package" ]] || continue
+	local entries package comment line snapshot
+	entries="$(entries_of "$1")"
+	while IFS=$'\t' read -r package comment; do
+		[[ "$comment" == *snapshot=* ]] || continue
+		line="$package  #$comment"
 		# A word of its own, or the note's first word straight after `pinned:`,
 		# which pin_issue accepts too (`#pinned:snapshot=<id>`).
-		[[ "${line#*#}" =~ (^|[[:space:]]|pinned:)snapshot=([^[:space:]]*) ]] ||
+		[[ "$comment" =~ (^|[[:space:]]|pinned:)snapshot=([^[:space:]]*) ]] ||
 			die "$1: '$line': snapshot= is a word of its own in the comment"
 		snapshot="${BASH_REMATCH[2]}"
-		[[ "$package" =~ ^[a-z0-9][a-z0-9.+-]*=[^=@]+$ ]] ||
+		[[ "$package" =~ ^[a-z0-9][a-z0-9.+-]*=[^=@[:space:]]+$ ]] ||
 			die "$1: '$line': a snapshot needs a name=version pin"
 		[[ "$snapshot" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] ||
 			die "$1: '$line': '$snapshot' isn't a snapshot id (YYYYMMDDTHHMMSSZ)"
 		printf '%s@%s\n' "$package" "$snapshot"
-	done < <(package_lines "$1")
+	done <<<"$entries"
 }
 
 # apt_pin_notes <type>: a `pinned apt/<name> <issue URL or ->` line for each
@@ -433,21 +441,20 @@ apt_pins_of() {
 # one the watch should show is not for a script to guess. A list that names an
 # issue beside one that names none gives the issue.
 apt_pin_notes() {
-	local line package url
+	local entries package comment url
 	local -A noted=()
-	while IFS= read -r line; do
-		package="${line%%#*}"
-		package="${package//[[:space:]]/}"
+	entries="$(entries_of "$1")"
+	while IFS=$'\t' read -r package comment; do
 		[[ "$package" =~ ^([a-z0-9.+-]+)= ]] || continue
 		package="${BASH_REMATCH[1]}"
-		url="$(pin_issue "$line")"
+		url="$(pin_issue "#$comment")"
 		url="${url:--}"
 		if [[ "${noted[$package]:--}" != - && "$url" != - && "${noted[$package]}" != "$url" ]]; then
 			die "$1: apt/$package's pin names two issues: ${noted[$package]} and $url"
 		fi
 		[[ "$url" != - ]] || url="${noted[$package]:--}"
 		noted[$package]="$url"
-	done < <(package_lines "$1")
+	done <<<"$entries"
 	for package in "${!noted[@]}"; do
 		printf 'pinned apt/%s %s\n' "$package" "${noted[$package]}"
 	done | LC_ALL=C sort
@@ -510,7 +517,7 @@ resolve_brew() {
 	local toolset formulae=() closure
 	while read -r toolset; do
 		[[ -f "images/toolsets/$toolset/Brewfile" ]] || continue
-		mapfile -t -O "${#formulae[@]}" formulae < <(brew bundle list --formula --file="images/toolsets/$toolset/Brewfile")
+		mapfile -t -O "${#formulae[@]}" formulae < <(brewfile_formulae "images/toolsets/$toolset/Brewfile")
 	done < <(cloud_toolsets "$1")
 	((${#formulae[@]} > 0)) || return 0
 	closure="$({
@@ -526,17 +533,14 @@ resolve_brew() {
 # workflows needn't), the taps the Brewfiles name trusted the way
 # install-toolset.sh trusts them, and its formula data brought up to date.
 prepare_brew() {
-	local tap
 	if ! command -v brew >/dev/null; then
 		[[ -x "$(brew_path)" ]] || die "no brew on PATH or at $(brew_path)"
 		brew_env
 	fi
 	export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_ENV_HINTS=1
 	brew update --quiet >&2 2>&1
-	sed -n 's/^tap "\([^"]*\)".*/\1/p' images/toolsets/*/Brewfile | sort -u | while read -r tap; do
-		brew tap "$tap" >&2 2>&1
-		brew trust --tap "$tap" >&2
-	done
+	# stdout is the lock.
+	trust_taps images/toolsets/*/Brewfile >&2
 }
 
 cmd_resolve() {
