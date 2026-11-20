@@ -198,7 +198,9 @@ jobs:
         if: needs.resolve.outputs.action == 'close'
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
-        run: scripts/cloud/lock-watch.sh close | tee -a "$GITHUB_STEP_SUMMARY"
+        run: |
+          set -euo pipefail
+          scripts/cloud/lock-watch.sh close | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Revoke
         if: ${{ always() && steps.token.outputs.token != '' }}
         env:
