@@ -134,6 +134,20 @@ class SpawnRunnerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertEqual(self.gcp.state.requests, [])
 
+    def test_an_unreadable_work_order_submits_nothing_and_retries(self):
+        # A directory passes the -s check, and jq can't read it: an empty body
+        # would start a runner with no work order and log it as started (r1.f14).
+        self.work_order.unlink()
+        self.work_order.mkdir()
+        result = self.run_hook()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("can't read the work order file", result.stderr)
+        self.assertNotIn("started", result.stdout)
+        self.assertNotIn("created VM", result.stdout)
+        self.assertEqual(self.gcp.requests("POST", ":run"), [])
+        self.assertEqual(self.gcp.requests("POST", INSTANCES_PATH), [])
+        self.assertNotIn(self.marker_key(), self.gcp.state.objects, "a retry can submit again")
+
     def env_dir_without(self, key):
         """A copy of infra/gcp with <key> taken out of whichever env file sets it."""
         env_dir = Path(tempfile.mkdtemp(dir=self.tmp))

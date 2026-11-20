@@ -176,6 +176,16 @@ def route(state: State, request: Request):
     if request.method == "POST" and path.endswith(":run") and "/jobs/" in path:
         job = path.rsplit("/", 1)[1].removesuffix(":run")
         parent = path.split("/jobs/")[0].removeprefix("/v2/")
+        try:
+            body = request.json()
+        except ValueError:
+            return 400, {"error": {"message": "Invalid JSON payload received."}}
+        # The real API runs a job with no overrides, but the runner's container
+        # can't register without the work order, so here that's a refusal.
+        names = {item.get("name") for override in body.get("overrides", {}).get("containerOverrides", [])
+                 for item in override.get("env", []) if item.get("value")}
+        if not {"SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET", "RUNNER_LABEL"} <= names:
+            return 400, {"error": {"message": "fake: a run with no work order or runner label override"}}
         return 200, {
             "name": f"{parent}/operations/op-1",
             "metadata": {"name": f"{parent}/executions/{job}-abc12"},
@@ -249,7 +259,11 @@ def route_compute(state: State, request: Request):
     if rest[:1] == ["instances"]:
         zone = segments[3]
         if len(rest) == 1 and request.method == "POST":
-            body = request.json()
+            try:
+                body = request.json()
+            except ValueError:
+                return 400, {"error": {"code": 400, "message": "Invalid JSON payload received.",
+                                       "errors": [{"reason": "parseError"}]}}
             name = body["name"]
             if name in state.instances:
                 return 409, {"error": {"code": 409, "message": f"{name} already exists",

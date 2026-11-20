@@ -135,15 +135,17 @@ readonly label
 
 # 2a. One Cloud Run execution, the work order and label as container env
 #     overrides. The body goes in on stdin, built from the file, so the work
-#     order is in no command line.
+#     order is in no command line. It's built first: from a process
+#     substitution a jq failure would post an empty body, which runs the job
+#     with no work order, and log it as started (r1.f14).
 run_job() {
-	local job="agent-$RUNNER_TYPE" execution
-	gcp_call "$token" POST "$GCP_RUN_URL/v2/projects/$PROJECT_ID/locations/$REGION/jobs/$job:run" - \
-		< <(jq -cn --rawfile order "$CLAUDE_RUNNER_WORK_ORDER_FILE" --arg label "$label" '
-			{overrides: {containerOverrides: [{name: "runner", env: [
-				{name: "SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET", value: ($order | rtrimstr("\n"))},
-				{name: "RUNNER_LABEL", value: $label}
-			]}]}}')
+	local job="agent-$RUNNER_TYPE" execution body
+	body="$(jq -cn --rawfile order "$CLAUDE_RUNNER_WORK_ORDER_FILE" --arg label "$label" '
+		{overrides: {containerOverrides: [{name: "runner", env: [
+			{name: "SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET", value: ($order | rtrimstr("\n"))},
+			{name: "RUNNER_LABEL", value: $label}
+		]}]}}' 2>/dev/null)" || fail 1 "can't read the work order file"
+	gcp_call "$token" POST "$GCP_RUN_URL/v2/projects/$PROJECT_ID/locations/$REGION/jobs/$job:run" - <<<"$body"
 	[[ "$GCP_STATUS" == 2* ]] || fail_for_status "running $job"
 	execution="$(jq -r '.metadata.name // .name // "?"' <<<"$GCP_BODY" 2>/dev/null || echo '?')"
 	log "$label: started ${execution##*/} for order $order_id${CLAUDE_RUNNER_SESSION_ID:+ (session $CLAUDE_RUNNER_SESSION_ID)}"
@@ -186,25 +188,24 @@ compute_fail() {
 # 2b. One Compute Engine VM. Nested virtualization for the emulator, no
 #     external IP (egress through Cloud NAT), the runner's service account,
 #     and Compute Engine deletes it at MAX_RUN_DURATION_SEC whatever happens.
-#     The work order goes in on stdin, as above.
+#     The work order goes in on stdin, built first, as above.
 create_instance() {
-	local instance safe_order zone_url detail
+	local instance safe_order zone_url detail body
 	safe_order="$(name_safe "$order_id")"
 	instance="agent-$RUNNER_TYPE-$safe_order"
 	instance="${instance:0:63}"
 	instance="${instance%-}"
 	zone_url="$GCP_COMPUTE_URL/compute/v1/projects/$PROJECT_ID/zones/$ZONE"
-	gcp_call "$token" POST "$zone_url/instances" - < <(
-		gcp_instance_body "$instance" "projects/$PROJECT_ID/global/images/family/$IMAGE_FAMILY" \
-			"$RUNNER_TYPE" "$MAX_RUN_DURATION_SEC" "$RUNNER_SERVICE_ACCOUNT" |
-			jq -c --rawfile order "$CLAUDE_RUNNER_WORK_ORDER_FILE" --arg runner_env "$(runner_env)" \
-				--arg order_label "${safe_order:0:63}" '
-				.labels["agent-images-order"] = $order_label
-				| .metadata.items = [
-					{key: "work-order", value: ($order | rtrimstr("\n"))},
-					{key: "runner-env", value: $runner_env}
-				] + .metadata.items'
-	)
+	body="$(gcp_instance_body "$instance" "projects/$PROJECT_ID/global/images/family/$IMAGE_FAMILY" \
+		"$RUNNER_TYPE" "$MAX_RUN_DURATION_SEC" "$RUNNER_SERVICE_ACCOUNT" |
+		jq -c --rawfile order "$CLAUDE_RUNNER_WORK_ORDER_FILE" --arg runner_env "$(runner_env)" \
+			--arg order_label "${safe_order:0:63}" '
+			.labels["agent-images-order"] = $order_label
+			| .metadata.items = [
+				{key: "work-order", value: ($order | rtrimstr("\n"))},
+				{key: "runner-env", value: $runner_env}
+			] + .metadata.items' 2>/dev/null)" || fail 1 "can't read the work order file"
+	gcp_call "$token" POST "$zone_url/instances" - <<<"$body"
 	case "$GCP_STATUS" in
 	2*) ;;
 	409)
