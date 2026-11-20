@@ -70,15 +70,18 @@ apt() {
 # with "File has unexpected size ... Mirror sync in progress?" (or "Hash Sum
 # mismatch"). The node keeps serving the stale file to that request, so apt's own
 # Acquire::Retries can't help: the update has to run again, a few seconds later
-# and on another connection. Only those messages retry, so any other failure (an
-# unreachable archive, a missing suite) fails at once and a real outage isn't
+# and on another connection. Only that failure retries: every error line of the
+# attempt (apt's closing "Some index files failed to download" aside) must be one
+# of those messages, so any other failure (an unreachable archive, a missing
+# suite), alone or beside a sync error, fails at once and a real outage isn't
 # hidden. Four attempts, 15, 45 and 90 seconds apart, each failure logged with
 # apt's error; the last one fails the build as an update always did, with apt's
 # exit status. The one place a cloud build runs `apt-get update` (test_apt_update.py
 # checks): the base's bootstrap, every toolset's install and the orchestrator's
 # build all call it.
 apt_update() {
-	local waits=(15 45 90) attempt=1 attempts status line out err
+	local waits=(15 45 90) attempt=1 attempts status line out err errors
+	local sync_errors='Mirror sync in progress|File has unexpected size|Hash Sum mismatch'
 	attempts=$((${#waits[@]} + 1))
 	out="$(mktemp)" err="$(mktemp)"
 	while :; do
@@ -87,10 +90,12 @@ apt_update() {
 		cat "$out"
 		cat "$err" >&2
 		((status != 0)) || break
-		grep -qE 'Mirror sync in progress|File has unexpected size|Hash Sum mismatch' "$out" "$err" || break
+		errors="$(grep -hE '^E: ' "$out" "$err" | grep -v '^E: Some index files failed to download' || true)"
+		grep -qE "$sync_errors" <<<"$errors" || break
+		! grep -qvE "$sync_errors" <<<"$errors" || break
 		while read -r line; do
 			log "apt_update: attempt $attempt of $attempts failed: $line"
-		done < <(grep -hE 'Mirror sync in progress|File has unexpected size|Hash Sum mismatch' "$out" "$err")
+		done < <(grep -E "$sync_errors" <<<"$errors")
 		if ((attempt == attempts)); then
 			log "apt_update: failed $attempts times in a row, with the archive out of sync"
 			break

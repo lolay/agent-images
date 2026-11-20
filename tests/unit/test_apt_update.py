@@ -173,6 +173,19 @@ class AptUpdateTests(unittest.TestCase):
                 self.assertNotIn("retrying", result.stdout)
                 self.assertNotIn("after", result.stdout)
 
+    def test_a_sync_error_beside_another_error_fails_at_once(self):
+        # Both in one attempt: the 404 isn't going to clear, so no 150 seconds of
+        # waiting (Copilot, #145). Either order, and a hash mismatch for the sync.
+        for error in (CUDA_SYNC + "\n" + NOT_FOUND, NOT_FOUND + "\n" + CUDA_SYNC,
+                      HASH_MISMATCH + "\n" + UNREACHABLE):
+            with self.subTest(error):
+                self.calls.unlink(missing_ok=True)
+                (self.tmp / "state").unlink(missing_ok=True)
+                result = self.run_update(error=error, failures=99)
+                self.assertEqual(result.returncode, 100)
+                self.assertEqual(self.call_log(), ["apt-get update"])
+                self.assertNotIn("retrying", result.stdout)
+
     def test_the_other_messages_of_an_index_out_of_sync_are_retried_too(self):
         for error in (HASH_MISMATCH, SIZE_ONLY):
             with self.subTest(error):

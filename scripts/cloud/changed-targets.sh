@@ -138,9 +138,13 @@ for type in "${types[@]}"; do
 	fi
 done
 
+# The orchestrator image's build inputs beside its own directory: the apt
+# settings and the installer whose apt_update its build sources
+# (images/cloud/orchestrator/Dockerfile).
 orchestrator=false
 if $all || touched "hooks/gcp/*" "images/cloud/orchestrator/*" "infra/gcp/*.env" \
-	"images/cloud/docker-bake.hcl" ".dockerignore"; then
+	"images/cloud/docker-bake.hcl" ".dockerignore" \
+	"images/cloud/base/apt-build.conf" "images/toolsets/install-toolset.sh"; then
 	orchestrator=true
 fi
 

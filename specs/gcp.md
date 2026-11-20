@@ -289,7 +289,7 @@ matrix. A failed deploy makes the next one redeploy more, never less:
 | `images/shared/**`, `images/toolsets/install-toolset.sh`, `images/toolsets/write-claude-md.sh`, `images/toolsets/toolset-checks.sh`, `images/toolsets/write-versions.sh`, `images/toolsets/skills/**`, `images/cloud/base/**`, `images/cloud/runner/**`, `images/cloud/entrypoint.sh`, `images/cloud/docker-bake.hcl`, `.dockerignore` | Every runner type |
 | `images/toolsets/<toolset>/**` | The types whose Dockerfiles (or build parents') install that toolset |
 | `images/cloud/<type>/**`, including its `versions.lock` | That type |
-| `hooks/gcp/**`, `images/cloud/orchestrator/**` | The orchestrator host (new image, then the host restarts its container) |
+| `hooks/gcp/**`, `images/cloud/orchestrator/**`, and the two files its build reads from elsewhere (`images/cloud/base/apt-build.conf`, `images/toolsets/install-toolset.sh`) | The orchestrator host (new image, then the host restarts its container) |
 | `infra/gcp/<type>.env` (CPU, memory, GPU, timeout, `--min-idle`, `REBUILD`, `DEPLOY`) | That type's job and orchestrator settings, no image build, unless the type had no job at the diff's base: its env file is new there, or this change removed `DEPLOY=false`. Then there's no live image for the job to reuse, so the type builds, and its first deploy takes one push. plan reads that from the base commit, not from Cloud Run (it has no GCP token). `DEPLOY=false` builds and pushes the image but writes no job, runs no smoke and starts no orchestrator: a type waiting for its quota. It is for Cloud Run types only: deploy.sh's vm commands and the supervisor refuse it for `BACKEND=compute` |
 | `scripts/cloud/job-spec.sh` | Every type's job, no image build |
 | `images/android/**` (the LXD image's scripts and files, and `gce/`), the toolsets in `images/android/toolsets.txt`, `images/shared/**`, the four toolset scripts and `images/toolsets/skills/**` | The `android` Compute Engine image: Packer build, smoke VM, then family `agent-android` ([below](#compute-engine-vm-per-session-android-and-the-gpu-fallback)) |
@@ -458,10 +458,12 @@ stale file to the request, so the update has to run again. `apt_update` in
 builds (a unit test fails if another script or Dockerfile runs one): the base's
 bootstrap (`apt-prepare.sh`, so the lock's resolve too), every toolset's and
 builder stage's `install_apt_packages`, and the orchestrator's build, which
-mounts the file to source it. It runs the update again when its output has
-`Mirror sync in progress`, `File has unexpected size` or `Hash Sum mismatch`: four
+mounts the file to source it. It runs the update again when every error line of the
+attempt is `Mirror sync in progress`, `File has unexpected size` or `Hash Sum
+mismatch` (apt's closing "Some index files failed to download" aside): four
 attempts in all, 15, 45 and 90 seconds apart, each failure logged with apt's error.
-Any other error fails at once, so a real outage isn't hidden, and the last
+Any other error fails at once, alone or beside a sync error, so a real outage isn't
+hidden, and the last
 attempt's failure fails the build with apt's exit status, as an update always did.
 The base needs no extra mount for it: `apt-prepare.sh` sources
 `install-toolset.sh`, which the base layer mounts already.
@@ -868,8 +870,9 @@ it's one process per type inside one container:
   `MAX_RUN_DURATION_SEC` plus 5 minutes, and remove the `work-order` key from VMs
   whose guest has marked it read. The deploy's smoke VMs are left to the deploy.
   Logged as `supervisor: reaper`.
-- **Deploys:** a push to `main` that touches `hooks/gcp/**`, `images/cloud/orchestrator/**`
-  or `infra/gcp/*.env` rebuilds it and restarts it on the host. Sessions in flight are
+- **Deploys:** a push to `main` that touches `hooks/gcp/**`, `images/cloud/orchestrator/**`,
+  `infra/gcp/*.env`, or the two files its build mounts from elsewhere
+  (`images/cloud/base/apt-build.conf`, `images/toolsets/install-toolset.sh`) rebuilds it and restarts it on the host. Sessions in flight are
   unaffected: they belong to runners, not to the orchestrator.
 
 One process for all types would mean one environment for all types, with the hook

@@ -1,6 +1,7 @@
 """scripts/cloud/changed-targets.sh maps a diff to what redeploys."""
 
 import json
+import re
 import subprocess
 import tempfile
 import unittest
@@ -35,6 +36,7 @@ class ChangedTargetsTests(unittest.TestCase):
             # linux's tools on bake target base-gpu (base on CUDA), then gpu.
             "images/cloud/linux-gpu/Dockerfile": "FROM agent-linux\nRUN bash /t/install-toolset.sh gpu\n",
             "images/cloud/orchestrator/Dockerfile": "FROM ubuntu:24.04\n",
+            "images/cloud/base/apt-build.conf": "// apt\n",
             "images/cloud/entrypoint.sh": "#!/bin/bash\n",
             "images/shared/agent-runner.sh": "#!/bin/bash\n",
             "images/toolsets/core/packages.txt": "git\n",
@@ -226,6 +228,26 @@ class ChangedTargetsTests(unittest.TestCase):
         self.assertEqual(len(result["types"]), 2)
         self.assertTrue(all(entry["build"] for entry in result["types"]))
         self.assertTrue(result["orchestrator"])
+
+    def test_the_orchestrators_shared_build_inputs_redeploy_it(self):
+        # Its Dockerfile mounts apt-build.conf and sources install-toolset.sh
+        # (apt_update); a change to either left it on the old image (Copilot, #145).
+        for name in ("images/toolsets/install-toolset.sh", "images/cloud/base/apt-build.conf"):
+            with self.subTest(name=name):
+                self.assertTrue(self.change(name)["orchestrator"])
+                self.base = self.head()
+
+    def test_every_file_the_orchestrator_dockerfile_mounts_redeploys_it(self):
+        # Read from the real Dockerfile: a new mount that isn't a trigger fails here.
+        dockerfile = (REPO / "images/cloud/orchestrator/Dockerfile").read_text()
+        sources = re.findall(r"--mount=type=bind,source=(\S+),target=", dockerfile)
+        self.assertIn("images/toolsets/install-toolset.sh", sources)
+        for name in sources:
+            with self.subTest(name=name):
+                self.write(name, "changed\n")
+                self.commit(f"change {name}")
+                self.assertTrue(self.targets()["orchestrator"])
+                self.base = self.head()
 
     def test_the_hook_redeploys_the_orchestrator_only(self):
         self.assertEqual(self.change("hooks/gcp/spawn-runner"), {"types": [], "vms": [], "orchestrator": True, "prune": False})
