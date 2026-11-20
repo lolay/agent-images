@@ -15,6 +15,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlsplit
 
 TOKEN = "fake-token-1234"
+# project.env's zone: where a VM a test puts in State.instances without a "zone" is.
+DEFAULT_ZONE = "us-central1-a"
 
 
 @dataclass
@@ -220,11 +222,27 @@ def route_compute(state: State, request: Request):
         state.compute_operations[name] = body
         return 200, body
 
+    def matching_instances():
+        wanted = request.query.get("filter", "")
+        return [i for i in state.instances.values() if all(
+            term.strip("()") in _filter_terms(i) for term in wanted.split(" AND ") if term)]
+
     if rest[:1] == ["operations"] and request.method == "GET":
         body = state.compute_operations.get(rest[1])
         return (200, body) if body else (404, {"error": {"message": "no such operation"}})
 
+    # aggregatedList: every zone's VMs, keyed "zones/<zone>". A zone with none
+    # carries a warning instead of an instances list, as the real API's do.
+    if segments[2] == "aggregated":
+        if rest != ["instances"] or request.method != "GET":
+            return 404, {"error": {"message": f"no fake for {request.method} {path}"}}
+        items = {"zones/europe-west1-b": {"warning": {"code": "NO_RESULTS_ON_PAGE"}}}
+        for instance in matching_instances():
+            items.setdefault(f"zones/{_zone(instance)}", {"instances": []})["instances"].append(instance)
+        return 200, {"items": items}
+
     if rest[:1] == ["instances"]:
+        zone = segments[3]
         if len(rest) == 1 and request.method == "POST":
             body = request.json()
             name = body["name"]
@@ -234,24 +252,25 @@ def route_compute(state: State, request: Request):
             if name not in state.operation_errors:
                 state.instances[name] = {
                     **body,
+                    "zone": f"https://www.googleapis.com/compute/v1/{scope}",
                     "status": "RUNNING",
                     "creationTimestamp": "2026-11-06T10:00:00.000-08:00",
                     "metadata": {**body.get("metadata", {}), "fingerprint": "fp-1"},
                 }
             return operation(name, "insert")
         if len(rest) == 1 and request.method == "GET":
-            wanted = request.query.get("filter", "")
-            items = [i for i in state.instances.values() if all(
-                term.strip("()") in _filter_terms(i) for term in wanted.split(" AND ") if term)]
+            items = [i for i in matching_instances() if _zone(i) == zone]
             return 200, {"items": items} if items else {}
         name = rest[1]
-        if name not in state.instances:
-            return 404, {"error": {"message": f"instance {name} not found"}}
+        # A VM is found only in its own zone.
+        if name not in state.instances or _zone(state.instances[name]) != zone:
+            return 404, {"error": {"message": f"instance {name} not found in {zone}"}}
         instance = state.instances[name]
         if len(rest) == 2 and request.method == "GET":
             return 200, instance
         if len(rest) == 2 and request.method == "DELETE":
-            del state.instances[name]
+            if name not in state.operation_errors:
+                del state.instances[name]
             return operation(name, "delete")
         if rest[2:] == ["setMetadata"] and request.method == "POST":
             body = request.json()
@@ -292,6 +311,10 @@ def route_compute(state: State, request: Request):
             return 200, state.images[name]
 
     return 404, {"error": {"message": f"no fake for {request.method} {scope} {rest}"}}
+
+
+def _zone(instance: dict) -> str:
+    return instance.get("zone", DEFAULT_ZONE).rsplit("/", 1)[-1]
 
 
 def _filter_terms(instance: dict) -> set:

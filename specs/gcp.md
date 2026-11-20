@@ -894,7 +894,8 @@ orchestrator's access is granted by that name prefix. What Terraform needs, in f
 
 The jobs need no Terraform here: the deploy workflow writes each job from its
 `infra/gcp/<type>.env` through the Cloud Run API, which is idempotent, and deletes any
-`agent-*` job labelled `managed-by=agent-images` whose env file is gone. A second Terraform in this repo (its state next to
+`agent-*` job labelled `managed-by=agent-images` whose env file is gone (deleted or
+renamed), with that type's Compute Engine VMs, in any zone, and images. A second Terraform in this repo (its state next to
 `lolay/infrastructure`'s, applied by the deploy workflow with the new digest as a
 variable) becomes worth it if the workloads grow past jobs: the Android type's
 Compute Engine templates and standby pools are the likely trigger.

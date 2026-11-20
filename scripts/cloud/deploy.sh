@@ -22,7 +22,7 @@
 #       point the orchestrator VM at that image; its unit pulls it and restarts
 #       the container.
 #   deploy.sh prune
-#       delete the jobs and Compute Engine images this repo made (label
+#       delete the jobs, Compute Engine VMs and images this repo made (label
 #       managed-by=agent-images) whose type has no infra/gcp/<type>.env any more.
 #   deploy.sh status
 #       read-only: each job's image, commit and last execution, and the
@@ -307,6 +307,20 @@ list_jobs() {
 	done
 }
 
+# list_instances <token> <filter>: this project's VMs matching the filter, in
+# every zone, one JSON object per line. Every zone, not project.env's: a removed
+# type's env file could have set its own ZONE, and it's gone.
+list_instances() {
+	local token="$1" filter="$2" page=""
+	while :; do
+		gcp_call "$token" GET "$compute_api/aggregated/instances?filter=$(gcp_uri "$filter")${page:+&pageToken=$(gcp_uri "$page")}"
+		[[ "$GCP_STATUS" == 200 ]] || die "listing VMs: HTTP $GCP_STATUS: $(gcp_error)"
+		jq -c '.items // {} | .[] | .instances // [] | .[]' <<<"$GCP_BODY"
+		page="$(jq -r '.nextPageToken // empty' <<<"$GCP_BODY")"
+		[[ -n "$page" ]] || break
+	done
+}
+
 cmd_prune() {
 	local token job name type
 	token="$(access_token)"
@@ -320,6 +334,24 @@ cmd_prune() {
 		[[ "$GCP_STATUS" == 2* ]] || die "deleting ${name##*/}: HTTP $GCP_STATUS: $(gcp_error)"
 		wait_operation "$token"
 	done < <(list_jobs "$token")
+	# A compute type's VMs, running or powered off: the reaper that deletes
+	# its stopped ones went with its orchestrator, and a stopped VM never
+	# reaches its max run duration, so it and its disk would stay for good.
+	local instance zone
+	while read -r instance; do
+		type="$(jq -r '.labels["agent-images-type"] // empty' <<<"$instance")"
+		name="$(jq -r '.name' <<<"$instance")"
+		[[ -n "$type" && ! -f "$AGENT_GCP_ENV_DIR/$type.env" ]] || continue
+		zone="$(jq -r '.zone' <<<"$instance")"
+		zone="${zone##*/}"
+		log "$name: no infra/gcp/$type.env; deleting the VM in $zone"
+		gcp_call "$token" DELETE "$compute_api/zones/$zone/instances/$name"
+		case "$GCP_STATUS" in
+		2*) gcp_compute_wait "$token" "$compute_api/zones/$zone" 300 || die "deleting $name: ${GCP_OP_ERROR:-timed out}" ;;
+		404) ;;
+		*) die "deleting $name: HTTP $GCP_STATUS: $(gcp_error)" ;;
+		esac
+	done < <(list_instances "$token" "labels.managed-by=agent-images")
 	local image
 	while read -r image; do
 		type="$(jq -r '.labels["agent-images-type"] // empty' <<<"$image")"

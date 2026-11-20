@@ -407,6 +407,38 @@ class VmDeployTests(DeployTests):
         self.assertNotIn("agent-retired-1", self.gcp.state.images)
         self.assertIn("agent-android-older", self.gcp.state.images)
 
+    def test_prune_deletes_vms_whose_type_is_gone_in_any_zone(self):
+        # A powered-off VM never reaches its max run duration, and the reaper that
+        # deletes it went with its type's orchestrator (r1.f7). The fake finds a VM
+        # only in its own zone, so deleting in project.env's zone would leave the
+        # one in europe-west4-a.
+        def vm(name, zone, status, **labels):
+            self.gcp.state.instances[name] = {
+                "name": name, "status": status, "labels": labels, "metadata": {},
+                "zone": f"https://www.googleapis.com/compute/v1/projects/lolay-agents/zones/{zone}",
+            }
+
+        ours = {"managed-by": "agent-images"}
+        vm("agent-retired-a", "us-central1-a", "TERMINATED", **ours, **{"agent-images-type": "retired"})
+        vm("agent-retired-b", "europe-west4-a", "RUNNING", **ours, **{"agent-images-type": "retired"})
+        vm("agent-android-1", "us-central1-a", "TERMINATED", **ours, **{"agent-images-type": "android"})
+        vm("agent-other", "us-central1-a", "TERMINATED", **{"agent-images-type": "other"})
+        result = self.deploy("prune")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sorted(self.gcp.state.instances), ["agent-android-1", "agent-other"])
+        self.assertIn("agent-retired-b: no infra/gcp/retired.env; deleting the VM in europe-west4-a", result.stdout)
+
+    def test_prune_fails_when_a_vm_delete_fails(self):
+        self.gcp.state.instances["agent-retired-a"] = {
+            "name": "agent-retired-a", "status": "TERMINATED", "metadata": {},
+            "labels": {"managed-by": "agent-images", "agent-images-type": "retired"},
+            "zone": "https://www.googleapis.com/compute/v1/projects/lolay-agents/zones/us-central1-a",
+        }
+        self.gcp.state.operation_errors["agent-retired-a"] = "RESOURCE_IN_USE_BY_ANOTHER_RESOURCE"
+        result = self.deploy("prune")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("deleting agent-retired-a: RESOURCE_IN_USE_BY_ANOTHER_RESOURCE", result.stderr)
+
     def test_status_shows_the_familys_image(self):
         result = self.deploy("status")
         self.assertEqual(result.returncode, 0, result.stderr)
