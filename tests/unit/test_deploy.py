@@ -118,6 +118,25 @@ class DeployTests(unittest.TestCase):
         self.assertIn("agent-linux keeps its image", result.stderr)
         self.assertEqual(self.job_patches(), ["agent-linux-next"])
 
+    def test_a_failed_next_write_stops_before_the_smoke(self):
+        # The request is accepted and the operation fails: smoking or promoting
+        # then would run an image the -next job never got (r1.f11).
+        self.gcp.state.run_operation_errors["agent-linux-next"] = "revision failed to become ready"
+        result = self.deploy("type", "linux", IMAGE, "abc123")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("failed: revision failed to become ready", result.stderr)
+        self.assertEqual(self.job_patches(), ["agent-linux-next"])
+        self.assertEqual(self.gcloud_calls(), [], "no smoke execution")
+
+    def test_a_failed_live_write_fails_the_deploy(self):
+        self.gcp.state.run_operation_errors["agent-linux"] = "revision failed to become ready"
+        result = self.deploy("type", "linux", IMAGE, "abc123")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("failed: revision failed to become ready", result.stderr)
+        self.assertEqual(self.job_patches(), ["agent-linux-next", "agent-linux"])
+        self.assertIn(f"deploy: agent-linux-next: {IMAGE}", result.stdout)
+        self.assertNotIn(f"deploy: agent-linux: {IMAGE}", result.stdout, "not logged as written")
+
     def test_a_failed_smoke_prints_the_executions_log(self):
         result = self.deploy("type", "linux", IMAGE, "abc123", FAKE_SMOKE_STATUS="1")
         self.assertIn("deploy: agent-linux-next-p5rqf log:", result.stdout)

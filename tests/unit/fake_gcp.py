@@ -46,6 +46,10 @@ class State:
     compute_operations: dict = field(default_factory=dict)
     operation_errors: dict = field(default_factory=dict)  # resource name -> error code
     pending_operations: bool = False
+    # Cloud Run operations: full name -> body once done. A write to a job listed
+    # in run_operation_errors (by its short name) finishes with that message.
+    run_operations: dict = field(default_factory=dict)
+    run_operation_errors: dict = field(default_factory=dict)  # job name -> error message
     operations: int = 0
     requests: list = field(default_factory=list)
     failures: dict = field(default_factory=dict)  # (method, path suffix) -> (status, body)
@@ -166,7 +170,8 @@ def route(state: State, request: Request):
         return route_jobs(state, request)
 
     if request.method == "GET" and "/operations/" in path and path.startswith("/v2/"):
-        return 200, {"name": path.removeprefix("/v2/"), "done": True, "response": {}}
+        body = state.run_operations.get(path.removeprefix("/v2/"))
+        return (200, body) if body else (404, {"error": {"message": f"operation {path} not found"}})
 
     if request.method == "POST" and path.endswith(":run") and "/jobs/" in path:
         job = path.rsplit("/", 1)[1].removesuffix(":run")
@@ -335,8 +340,16 @@ def route_jobs(state: State, request: Request):
 
     def operation():
         state.operations += 1
+        name = f"{parent}/operations/op-{state.operations}"
+        done = {"name": name, "done": True}
+        message = state.run_operation_errors.get(path.rsplit("/", 1)[1])
+        if message:
+            done["error"] = {"code": 13, "message": message}
+        else:
+            done["response"] = {}
+        state.run_operations[name] = done
         # Not done yet, so the caller has to poll it.
-        return {"name": f"{parent}/operations/op-{state.operations}", "done": False}
+        return {"name": name, "done": False}
 
     if path.endswith("/jobs"):
         return 200, {"jobs": list(state.jobs.values())}
