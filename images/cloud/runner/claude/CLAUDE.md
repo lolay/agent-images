@@ -1,6 +1,6 @@
 # This machine
 
-A disposable Linux container on Google Cloud Run (Ubuntu 24.04, x86_64, no GPU)
+A disposable Linux container on Google Cloud Run (Ubuntu 24.04, x86_64)
 that serves this one session and is gone when it ends, so push anything worth
 keeping. You're the image's `ubuntu` user, without root: Cloud Run sets the
 no-new-privileges flag, so `sudo` fails, and with it `apt-get install`: a system
