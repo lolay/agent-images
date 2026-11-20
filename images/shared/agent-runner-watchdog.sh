@@ -29,9 +29,20 @@ set -euo pipefail
 readonly runner_env="$HOME/.config/agent-runner/runner.env"
 # Nothing to watch until the VM is configured.
 [[ -f "$runner_env" ]] || exit 0
+# CLAUDE_BASE_DIR and WATCHDOG_ACTION, both from one sourced subshell: the
+# cloud entrypoint writes runner.env's values %q-quoted, which only the shell
+# reads back as written (r1.f33). NUL-separated, so a value can hold anything; a
+# file that doesn't source gives neither, and the defaults apply. read, not
+# mapfile: macOS runs this with its /bin/bash, 3.2.
+base_dir="" action=""
 # shellcheck source=/dev/null
-base_dir="$(set -a && source "$runner_env" >/dev/null 2>&1 && printf '%s' "${CLAUDE_BASE_DIR:-}")" || base_dir=""
+{ IFS= read -r -d '' base_dir && IFS= read -r -d '' action; } < <(
+	set -a && source "$runner_env" >/dev/null 2>&1 &&
+		printf '%s\0%s\0' "${CLAUDE_BASE_DIR:-}" "${WATCHDOG_ACTION:-}"
+) || true
 readonly sessions_dir="${base_dir:-$HOME/workspace}/_sessions"
+action="${action:-log}"
+readonly action
 os="$(uname -s)"
 readonly os
 if [[ "$os" == "Darwin" ]]; then
@@ -47,9 +58,6 @@ readonly curl_connect_failed=7
 
 log() { printf '%s watchdog: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 warn() { log "$@" >&2; }
-
-action="$(sed -n -E 's/^WATCHDOG_ACTION=(.*)$/\1/p' "$runner_env" 2>/dev/null | tail -n 1)"
-action="${action:-log}"
 
 # The ports listening on 127.0.0.1, one per line.
 loopback_ports() {

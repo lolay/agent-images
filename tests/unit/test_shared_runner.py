@@ -465,6 +465,20 @@ class WatchdogTests(unittest.TestCase):
         self.assertEqual(len(self.pkill_calls()), 1, "once at the threshold, not every 30 s")
         self.assertEqual(self.counter().read_text().strip(), "3")
 
+    def test_reads_quoted_settings_as_the_shell_does(self):
+        # The cloud entrypoint writes runner.env with printf %q; read with sed, a
+        # quoted WATCHDOG_ACTION was 'terminate', quotes and all, so never acted (r1.f33).
+        base_dir = subprocess.run(
+            ["bash", "-c", 'printf %q "$1"', "-", str(self.tmp / "ws")],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        self.runner_env.write_text(f"AGENT=claude\nCLAUDE_BASE_DIR={base_dir}\nWATCHDOG_ACTION='terminate'\n")
+        self.run_watchdog()
+        result = self.run_watchdog()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("stopping the runner so the session requeues", result.stderr)
+        self.assertEqual(len(self.pkill_calls()), 1)
+
     def test_log_only_by_default(self):
         self.runner_env.write_text(f"AGENT=claude\nCLAUDE_BASE_DIR={self.tmp / 'ws'}\n")
         self.run_watchdog()

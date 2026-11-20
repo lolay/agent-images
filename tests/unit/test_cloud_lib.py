@@ -2,6 +2,7 @@
 for what a type is built from and how it's configured (AGENTS.md, "One source
 per fact")."""
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -154,6 +155,86 @@ class CheckTypeTests(unittest.TestCase):
         refused = self.refused_types(env_dir)
         self.assertEqual(list(refused), ["android"])
         self.assertIn("DEPLOY=false is for Cloud Run types only", refused["android"])
+
+
+def parse_github_env(text: str) -> dict[str, str]:
+    """$GITHUB_ENV as the runner reads it: NAME=value, or NAME<<DELIMITER, the
+    lines, then DELIMITER."""
+    values, lines = {}, iter(text.splitlines())
+    for line in lines:
+        if "<<" in line and ("=" not in line or line.index("<<") < line.index("=")):
+            name, delimiter = line.split("<<", 1)
+            body = []
+            for next_line in lines:
+                if next_line == delimiter:
+                    break
+                body.append(next_line)
+            else:
+                raise AssertionError(f"{name}: no closing {delimiter}")
+            values[name] = "\n".join(body)
+        else:
+            name, value = line.split("=", 1)
+            values[name] = value
+    return values
+
+
+class GithubEnvTests(unittest.TestCase):
+    """scripts/cloud/github-env.sh: the workflows' one reader of project.env (r1.f33)."""
+
+    SCRIPT = REPO / "scripts/cloud/github-env.sh"
+
+    def github_env(self, env_dir: Path) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(self.SCRIPT)], capture_output=True, text=True,
+            env={"PATH": "/usr/bin:/bin", "AGENT_GCP_ENV_DIR": str(env_dir)},
+        )
+
+    def test_values_are_read_as_the_shell_reads_them(self):
+        env_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, env_dir)
+        (env_dir / "project.env").write_text(
+            "# a comment\n"
+            "PROJECT_ID=p\n"
+            "ZONE=\"us-central1-a\"\n"
+            "NETWORK='projects/p/global/networks/a b'\n"
+            "SUBNET=two\\ words\n"
+            "NOTE=$'line one\\nline two'\n"
+        )
+        result = self.github_env(env_dir)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(parse_github_env(result.stdout), {
+            "PROJECT_ID": "p",
+            "ZONE": "us-central1-a",
+            "NETWORK": "projects/p/global/networks/a b",
+            "SUBNET": "two words",
+            "NOTE": "line one\nline two",
+        })
+
+    def test_the_real_project_env(self):
+        result = self.github_env(REPO / "infra/gcp")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        values = parse_github_env(result.stdout)
+        self.assertEqual(values["PROJECT_ID"], "lolay-agents")
+        self.assertIn("WIF_PROVIDER", values)
+        self.assertIn("CI_SERVICE_ACCOUNT", values)
+
+    def test_a_missing_project_env_fails(self):
+        env_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, env_dir)
+        result = self.github_env(env_dir)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no ", result.stderr)
+
+    def test_workflows_read_project_env_only_through_it(self):
+        # Any other mention (grep, sed, cat, source) is a second reader that can
+        # drift from the shell's reading; the helper is the one (r1.f33). A paths
+        # filter entry naming the file reads nothing.
+        path_entry = re.compile(r"""^\s*-\s*["']?infra/gcp/project\.env["']?\s*$""")
+        for workflow in sorted((REPO / ".github/workflows").glob("*.yml")):
+            for number, line in enumerate(workflow.read_text().splitlines(), 1):
+                if "project.env" in line and not path_entry.match(line):
+                    self.fail(f"{workflow.name}:{number} reads project.env itself; "
+                              f"use scripts/cloud/github-env.sh: {line.strip()}")
 
 
 if __name__ == "__main__":
