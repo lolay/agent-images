@@ -110,7 +110,7 @@
 - Verified: read `cmd_bake_args` and its case arm.
 - Recommendation: say APT_PINS comes from the package lists and the lock's `apt-pin-snapshot` lines are a record; add `releases` to gcp.md:308.
 - Status: fixed
-- Resolution: lolay/agent-images#140 (b1369fb), per its fix claim. Marked fixed by the Owner's call (2026-11-20) without a fix review against the code
+- Resolution: lolay/agent-images#141 (6379bb9) for the APT_PINS wording in `apt-pins.sh` and the base Dockerfile, and #140 (b1369fb) for gcp.md's `releases` subcommand, per their fix claims. Marked fixed by the Owner's call (2026-11-20) without a fix review against the code
 
 ### r5.f9 - gcp.md's "Adding a type" leaves out the first-lock step
 
