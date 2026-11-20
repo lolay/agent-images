@@ -600,7 +600,11 @@ cmd_bake_args() {
 # entries <file>: `<kind> <name> <value>` without the header.
 entries() { grep -v '^#' "$1" | LC_ALL=C sort; }
 
+# cmd_diff <old> <new>: in C's collation throughout, since join reads its input
+# in the caller's locale, and one that orders `apt/` before `apt-` (en_US.UTF-8)
+# misjoins the C-sorted keys (r3.f6).
 cmd_diff() {
+	local -x LC_ALL=C
 	join -a 1 -a 2 -e '(none)' -o '0,1.2,2.2' \
 		<(entries "$1" | awk '{print $1 "/" $2, $3}' | LC_ALL=C sort) \
 		<(entries "$2" | awk '{print $1 "/" $2, $3}' | LC_ALL=C sort) |

@@ -1458,6 +1458,56 @@ class ReadTests(unittest.TestCase):
             "claude 2.1.319, virtualgl 3.1.5, go removed, nowline 0.5.0, apt 1 package",
         )
 
+    def test_diff_is_the_same_under_any_collation(self):
+        # r3.f6: join ran in the caller's locale on keys sorted in C's, and a
+        # collation that orders `apt/` before `apt-` (en_US.UTF-8 does, ignoring
+        # punctuation) misjoined: "join: input is not in sorted order", spurious
+        # added and removed lines, and a wrong summary.
+        locale = self.punctuation_reversed_locale()
+        old = self.write("old", self.LOCK + "apt-floating cuda-libs 12.9.1-1\n")
+        new = self.write("new", self.LOCK.replace("20261101T000000Z", "20261106T220000Z"))
+        expected = ["apt-floating/cuda-libs: 12.9.1-1 -> (none)", "apt-snapshot/-: 20261101T000000Z -> 20261106T220000Z"]
+        for env in ({"LC_ALL": "C"}, locale):
+            with self.subTest(env.get("LC_ALL")):
+                result = self.run_lock_in(env, "diff", old, new)
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+                self.assertEqual(result.stdout.splitlines(), expected)
+                self.assertEqual(self.run_lock_in(env, "summary", old, new).stdout.strip(), "apt 1 package")
+
+    def run_lock_in(self, env, *args):
+        settings = {key: value for key, value in os.environ.items() if not key.startswith(("LC_", "LANG"))}
+        return subprocess.run(["bash", str(SCRIPT), *args], cwd=REPO, capture_output=True, text=True, timeout=30,
+                              env={**settings, "LOCK_DIR": str(self.tmp), **env})
+
+    def punctuation_reversed_locale(self):
+        """A locale whose collation puts letters and digits before punctuation,
+        and punctuation in reverse byte order, so `/` sorts before `-`, as in
+        en_US.UTF-8 and unlike C. Built here from a definition written here, so
+        the test needs no locale data installed (sessions have only C and
+        POSIX); skipped only where there's no glibc localedef."""
+        if shutil.which("localedef") is None:
+            self.skipTest("no localedef (glibc) to build a non-C collation")
+        root = self.tmp / "locale"
+        root.mkdir()
+        chars = [chr(code) for code in range(0x20, 0x7F)]
+        charmap = ["<code_set_name> ASCII-TEST", "<comment_char> %", "<escape_char> /",
+                   "<mb_cur_min> 1", "<mb_cur_max> 1", "CHARMAP", "<U0009> /x09", "<U000A> /x0a"]
+        charmap += [f"<U{ord(c):04X}> /x{ord(c):02x}" for c in chars] + ["END CHARMAP"]
+        order = [c for c in chars if c.isalnum()] + [c for c in chars if not c.isalnum()][::-1]
+        definition = ["comment_char %", "escape_char /", "LC_CTYPE", "END LC_CTYPE", "LC_COLLATE", "order_start forward"]
+        definition += [f"<U{ord(c):04X}>" for c in order] + ["<U0009>", "<U000A>", "order_end", "END LC_COLLATE"]
+        (root / "charmap").write_text("\n".join(charmap) + "\n")
+        (root / "definition").write_text("\n".join(definition) + "\n")
+        # -c: the definition has only the categories the test needs, which
+        # localedef warns about (exit 1) but still writes.
+        subprocess.run(["localedef", "-c", "-f", str(root / "charmap"), "-i", str(root / "definition"),
+                        str(root / "punct")], capture_output=True, text=True)
+        env = {"LOCPATH": str(root), "LC_ALL": "punct"}
+        ordered = subprocess.run(["sort"], input="apt-a\napt/b\n", capture_output=True, text=True,
+                                 env={"PATH": os.environ["PATH"], **env})
+        self.assertEqual(ordered.stdout, "apt/b\napt-a\n", f"the test locale didn't take: {ordered.stderr}")
+        return env
+
     def test_an_unchanged_lock_has_no_diff(self):
         old = self.write("old", self.LOCK)
         self.assertEqual(self.run_lock("diff", old, old).stdout, "")
