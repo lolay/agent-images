@@ -809,7 +809,9 @@ already running does nothing.
 `hooks/gcp/spawn-runner`, the counterpart of `hooks/linux/spawn-runner`, same contract
 (0 submitted, 1 retry, 2 don't retry; nothing secret on stderr):
 
-1. `unset SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET`.
+1. `unset SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET`. A variable the orchestrator or the
+   supervisor didn't set, or a setting the env files leave out, exits 2 before
+   anything is created: every retry would find it missing too.
 2. Create `gs://<bucket>/orders/$CLAUDE_RUNNER_ORDER_ID` with `ifGenerationMatch=0`
    (the Storage JSON API through `curl` with a metadata-server token, like every call
    the hook makes; no `gcloud` on the host). A 412 means this order already has an

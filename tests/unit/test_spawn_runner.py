@@ -134,12 +134,51 @@ class SpawnRunnerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertEqual(self.gcp.state.requests, [])
 
+    def env_dir_without(self, key):
+        """A copy of infra/gcp with <key> taken out of whichever env file sets it."""
+        env_dir = Path(tempfile.mkdtemp(dir=self.tmp))
+        removed = 0
+        for source in (REPO / "infra/gcp").glob("*.env"):
+            lines = source.read_text().splitlines()
+            kept = [line for line in lines if not line.startswith(f"{key}=")]
+            removed += len(lines) - len(kept)
+            (env_dir / source.name).write_text("\n".join(kept) + "\n")
+        self.assertGreater(removed, 0, f"no env file sets {key}")
+        return env_dir
+
+    # Settings every backend reads (project.env's).
+    REQUIRED = ("PROJECT_ID", "REGION", "ORDER_BUCKET")
+
+    def test_a_missing_setting_does_not_retry(self):
+        # A retry would find it missing too, so it's a broken setup: exit 2 (r1.f22).
+        for key in self.REQUIRED:
+            with self.subTest(key=key):
+                self.gcp.state.requests.clear()
+                result = self.run_hook(AGENT_GCP_ENV_DIR=str(self.env_dir_without(key)))
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(f"{key} is not set; set it in infra/gcp/project.env", result.stderr)
+                self.assertEqual(self.gcp.state.requests, [], "nothing submitted")
+
+    def test_a_missing_orchestrator_variable_does_not_retry(self):
+        for key in ("CLAUDE_RUNNER_WORK_ORDER_FILE", "CLAUDE_RUNNER_ORDER_ID"):
+            with self.subTest(key=key):
+                result = self.run_hook(**{key: None})
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(f"{key} is not set; the orchestrator sets it", result.stderr)
+                self.assertEqual(self.gcp.state.requests, [])
+
 
 class SpawnComputeTests(SpawnRunnerTests):
     """The compute backend (infra/gcp/android.env): a Compute Engine VM per order."""
 
     def run_hook(self, **env):
         return super().run_hook(**{"RUNNER_TYPE": "android", "GCP_POLL_SEC": "0.1", **env})
+
+    # And the VM's, checked before the marker, not in create_instance after it.
+    REQUIRED = SpawnRunnerTests.REQUIRED + (
+        "ZONE", "NETWORK", "SUBNET", "RUNNER_SERVICE_ACCOUNT",
+        "MACHINE_TYPE", "DISK_GB", "DISK_TYPE", "IMAGE_FAMILY", "MAX_RUN_DURATION_SEC",
+    )
 
     def insert(self):
         inserts = self.gcp.requests("POST", INSTANCES_PATH)

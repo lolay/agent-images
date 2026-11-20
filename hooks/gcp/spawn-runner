@@ -18,7 +18,8 @@
 #
 # Exit codes (the orchestrator's contract): 0 submitted or already submitted;
 # 1 retry later (including Compute Engine quota and capacity); 2 don't retry
-# (this setup is broken: no job or image, no permission, no env file). stderr's
+# (this setup is broken: no job or image, no permission, no env file or a
+# setting missing from one, a variable the caller didn't set). stderr's
 # tail shows in the environment's Activity tab, so it never carries the work
 # order, the token or a request body.
 set -euo pipefail
@@ -70,11 +71,24 @@ on_exit() {
 }
 trap on_exit EXIT
 
-: "${CLAUDE_RUNNER_WORK_ORDER_FILE:?}" "${CLAUDE_RUNNER_ORDER_ID:?}"
-[[ -n "${RUNNER_TYPE:-}" ]] || fail 2 "RUNNER_TYPE is not set; the supervisor sets it"
+# A missing variable or setting exits 2, not `${X:?}`'s 1 (127 at top level),
+# which on_exit would turn into a retry: every retry would find it missing too
+# (r1.f22). The orchestrator's own variables follow the same rule: a hook it
+# calls without them is a broken setup (an orchestrator this hook doesn't
+# match), like RUNNER_TYPE from the supervisor.
+require() {
+	local where="$1" name
+	shift
+	for name; do
+		[[ -n "${!name:-}" ]] || fail 2 "$name is not set; $where"
+	done
+}
+require "the orchestrator sets it" CLAUDE_RUNNER_WORK_ORDER_FILE CLAUDE_RUNNER_ORDER_ID
+require "the supervisor sets it" RUNNER_TYPE
 readonly order_id="$CLAUDE_RUNNER_ORDER_ID"
 gcp_load_env "$RUNNER_TYPE" || fail 2 "no infra/gcp/project.env or $RUNNER_TYPE.env in the image"
-: "${PROJECT_ID:?}" "${REGION:?}" "${ORDER_BUCKET:?}"
+readonly env_files="set it in infra/gcp/project.env or infra/gcp/$RUNNER_TYPE.env"
+require "$env_files" PROJECT_ID REGION ORDER_BUCKET
 : "${BACKEND:=run}"
 case "$BACKEND" in
 run | compute) ;;
@@ -85,10 +99,13 @@ esac
 # the order marked with no VM. The hook timeout is 60 s.
 : "${INSTANCE_INSERT_WAIT_SEC:=40}"
 [[ -s "$CLAUDE_RUNNER_WORK_ORDER_FILE" ]] || fail 1 "the work order file is empty"
-# A compute VM retires this long before Compute Engine deletes it. Checked
-# before anything is created: a runner past its retire time would never serve.
+# A compute type's VM settings, and the time its VM retires before Compute
+# Engine deletes it. Checked before anything is created: a runner past its
+# retire time would never serve.
 retire_margin=""
 if [[ "$BACKEND" == "compute" ]]; then
+	require "$env_files" ZONE NETWORK SUBNET RUNNER_SERVICE_ACCOUNT \
+		MACHINE_TYPE DISK_GB DISK_TYPE IMAGE_FAMILY MAX_RUN_DURATION_SEC
 	retire_margin="$(gcp_retire_margin "${MAX_RUN_DURATION_SEC:-}" 2>&1)" ||
 		fail 2 "infra/gcp/$RUNNER_TYPE.env: $retire_margin"
 fi
@@ -171,8 +188,6 @@ compute_fail() {
 #     and Compute Engine deletes it at MAX_RUN_DURATION_SEC whatever happens.
 #     The work order goes in on stdin, as above.
 create_instance() {
-	: "${ZONE:?}" "${NETWORK:?}" "${SUBNET:?}" "${RUNNER_SERVICE_ACCOUNT:?}"
-	: "${MACHINE_TYPE:?}" "${DISK_GB:?}" "${DISK_TYPE:?}" "${IMAGE_FAMILY:?}" "${MAX_RUN_DURATION_SEC:?}"
 	local instance safe_order zone_url detail
 	safe_order="$(name_safe "$order_id")"
 	instance="agent-$RUNNER_TYPE-$safe_order"
