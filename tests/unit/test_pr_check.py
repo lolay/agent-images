@@ -1,9 +1,12 @@
 """scripts/cloud/pr-check.sh: cloud-build's `changes` decision and `gate`
 verdict, which main's ruleset and the lock bot's auto-merge rest on (r3.f15)."""
 
+import ast
 import itertools
+import re
 import subprocess
 import unittest
+from pathlib import Path
 
 from support import REPO
 from test_bake import run_types
@@ -35,7 +38,7 @@ class RelevantTests(unittest.TestCase):
 
     def test_a_specs_only_diff_is_not(self):
         self.assertEqual(self.relevant("specs/gcp.md", "specs/reviews/r3/f15.md"), "false\n")
-        self.assertEqual(self.relevant("README.md", "images/macos/setup.sh", "scripts/gcp/x.sh"), "false\n")
+        self.assertEqual(self.relevant("README.md", "Makefile.md", "AGENTS.md", "tests/sessions/linux.md"), "false\n")
         self.assertEqual(self.relevant(), "false\n", "an empty diff")
 
     def test_what_builds_smokes_or_tests_an_image_is_checked(self):
@@ -44,7 +47,8 @@ class RelevantTests(unittest.TestCase):
                      "scripts/cloud/lock.sh", "tests/unit/support.py", ".dockerignore", "Makefile", "triage.yaml",
                      ".github/workflows/cloud-build.yml", ".github/workflows/cloud-deploy.yml",
                      ".github/workflows/lock-watch.yml", "scripts/ci/tools.env", "scripts/anthropic/setup.sh",
-                     ".github/renovate.json"):
+                     ".github/renovate.json", "images/macos/build.pkr.hcl", "images/macos/scripts/install-packages.sh",
+                     "scripts/lib.sh", "scripts/linux/host-setup.sh", "hooks/spawn-runner", "hooks/linux/spawn-runner"):
             with self.subTest(path):
                 self.assertEqual(self.relevant("specs/gcp.md", path), "true\n")
 
@@ -58,11 +62,78 @@ class RelevantTests(unittest.TestCase):
                 self.assertEqual(self.relevant(str(workflow.relative_to(REPO))), "true\n")
 
     def test_lookalikes_are_not(self):
-        for path in ("docs/images/cloud/x.png", "Makefile.md", "tests/sessions/x.md", "images/cloudy/x",
+        for path in ("docs/images/cloud/x.png", "Makefile.md", "tests/sessions/x.md", "imagesx/cloud/x",
                      ".github/workflows/cloud-build.yml.orig", ".github/workflows/old/ci.yml",
-                     ".github/renovate.json5", "scripts/circle/x.sh"):
+                     ".github/renovate.json5", "scriptsx/x.sh", "hooksx/x", "infra/aws/x"):
             with self.subTest(path):
                 self.assertEqual(self.relevant(path), "false\n")
+
+
+# Docs: a test may read one (a table row, a heading), but a docs-only pull
+# request doesn't run the check.
+DOCS = re.compile(r"^specs/|^(?!images/).*\.md$")
+# String literals in tests/unit that name a tracked path but aren't one: "vms"
+# is a key of changed-targets.sh's JSON.
+NOT_PATHS = {"vms"}
+
+
+def tracked():
+    return subprocess.run(["git", "-C", str(REPO), "ls-files"], capture_output=True, text=True,
+                          check=True).stdout.splitlines()
+
+
+def named_paths(files):
+    """Each string literal in tests/unit that names a tracked file or directory,
+    with the tracked files it covers. This file's own are fixtures and the
+    exceptions above, so they're left out."""
+    literals = set()
+    for test in sorted((REPO / "tests/unit").glob("*.py")):
+        if test.name == Path(__file__).name:
+            continue
+        for node in ast.walk(ast.parse(test.read_text())):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                literals.add(node.value.rstrip("/"))
+    named = {}
+    for literal in literals:
+        if literal in ("", ".") or any(c.isspace() for c in literal):
+            continue
+        covered = [f for f in files if f == literal or f.startswith(literal + "/")]
+        if covered:
+            named[literal] = covered
+    return named
+
+
+class EveryPathTheTestsReadTests(unittest.TestCase):
+    """Every path a unit test names is one the check covers (the review of
+    #155): a pull request changing only it would otherwise pass gate without
+    the tests that guard it, as images/macos did. Derived from the tests' own
+    string literals, so the next test that reads a new directory is held to it."""
+
+    def test_every_named_path_is_checked(self):
+        named = named_paths(tracked())
+        self.assertIn("images/macos/build.pkr.hcl", named, "the reader finds REPO / \"...\" paths")
+        self.assertIn("images/cloud", named, "and plain path strings")
+        files = sorted({f for literal, covered in named.items() if literal not in NOT_PATHS
+                        for f in covered if not DOCS.search(f)})
+        result = subprocess.run(["bash", "-c", 'while IFS= read -r f; do printf "%s %s" "$f" '
+                                 '"$(printf "%s\\n" "$f" | bash "$0" relevant)"; echo; done', str(SCRIPT)],
+                                input="".join(f + "\n" for f in files), capture_output=True, text=True, timeout=300)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        verdicts = dict(line.rsplit(" ", 1) for line in result.stdout.splitlines())
+        self.assertEqual(set(verdicts), set(files))
+        self.assertEqual([f for f in files if verdicts[f] != "true"], [])
+
+    def test_the_exceptions_are_still_needed(self):
+        named = named_paths(tracked())
+        for literal in NOT_PATHS:
+            with self.subTest(literal):
+                self.assertIn(literal, named, "a literal no test has any more: drop it from NOT_PATHS")
+        docs = sorted({f for covered in named.values() for f in covered if DOCS.search(f)})
+        self.assertTrue(docs, "the tests name docs (specs/gcp.md, README.md)")
+        for doc in docs:
+            with self.subTest(doc):
+                result = run("relevant", stdin=doc + "\n")
+                self.assertEqual(result.stdout, "false\n", "a docs-only change doesn't run the check")
 
 
 class GateTests(unittest.TestCase):

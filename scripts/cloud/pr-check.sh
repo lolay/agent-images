@@ -18,10 +18,12 @@ set -euo pipefail
 
 # What the check covers: the paths that build, smoke or test a cloud image
 # (images/cloud/<type>/versions.lock included: a lock pull request must build),
-# every workflow (the unit tests read them all, test_workflows.py's pipefail
-# guard among them), CI's tool versions and the Renovate config that bumps
-# them, and Anthropic's setup script (it installs linux's toolsets).
-readonly relevant_paths='^(images/(cloud|android|shared|toolsets)/|hooks/gcp/|infra/gcp/|scripts/(cloud|ci|anthropic)/|tests/unit/|\.dockerignore$|Makefile$|triage\.yaml$|\.github/(workflows/[^/]*\.yml|renovate\.json)$)'
+# and every path the unit tests read, so a change to one can't pass gate
+# without them: every image (the macOS template and scripts included), every
+# script and hook, every workflow, and the Renovate config that bumps CI's
+# tools. Docs (specs/, *.md outside images/) aren't. test_pr_check.py derives
+# the paths the tests name and checks each is covered.
+readonly relevant_paths='^(images/|hooks/|infra/gcp/|scripts/|tests/unit/|\.dockerignore$|Makefile$|triage\.yaml$|\.github/(workflows/[^/]*\.yml|renovate\.json)$)'
 
 usage() {
 	printf 'usage: pr-check.sh relevant < paths | gate <changes> <relevant> <check> <build>\n' >&2
