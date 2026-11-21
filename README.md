@@ -158,7 +158,9 @@ too).
 Runner VMs outlive an orchestrator restart; `make runner-stop` deletes them (their sessions requeue), and
 `make runner-uninstall` stops everything (see [Stop, rebuild, restart](#stop-rebuild-restart)).
 `make vm-create` / `vm-up` still give you a persistent VM for debugging, under any
-name except `runner-N`.
+name except `runner-N`. It registers with its own key, from a separate environment in
+claude.ai (`make secret-set NAME=claude-environment-secret VM=<vm>`): the orchestrator's
+key never enters a VM, where any session could read it.
 
 ## Host runner (no VM)
 

@@ -122,7 +122,9 @@ SIGTERM (`runner-stop`, `runner-uninstall`) does the same early. At startup the
 orchestrator script reclaims claims whose job died (a host crash).
 
 The environment secret never enters a VM. Each VM registers with a single-use work
-order that's spent at registration, so a session that reads it gets nothing usable.
+order that's spent at registration, so a session that reads it gets nothing usable. A
+debug VM (`make vm-up`) takes its own Keychain item, a separate environment's key;
+`vm-configure` has no fallback to the orchestrator's and refuses a copy of it.
 
 In the guest:
 
@@ -153,7 +155,7 @@ gone. It logs to `~/Library/Logs/agent-runner-watchdog.{out,err}`, and with
 | File in the guest | Written by | Mode |
 | --- | --- | --- |
 | `~/.config/agent-runner/runner.env` | `vm-configure` from `vms/runner.env` (`vms/<vm>.env` for a debug VM) | 600 |
-| `~/.claude-runner/environment-secret` | `vm-configure`: the work order (runner VMs) or the Keychain secret (debug VMs) | 600 |
+| `~/.claude-runner/environment-secret` | `vm-configure`: the work order (runner VMs), or the debug VM's own Keychain item (account `<vm>`, a separate environment's key; never `default`, the orchestrator's) | 600 |
 
 `runner.env` is written last, so launchd never starts a runner with missing secrets.
 
@@ -170,7 +172,7 @@ its VM back and resumes on a fresh one), and `--kill-session-after-min 480`; and
 `--lock-to-account` if set. Each is a setting in `vms/runner.env`. The label, which is
 also the guest's hostname, is `RUNNER_LABEL_PREFIX` (default the host's
 `LocalHostName`) plus the VM name. `--environment-secret-file` holds the
-orchestrator's work order on runner VMs, the environment secret on debug VMs.
+orchestrator's work order on runner VMs, a separate environment's key on debug VMs.
 `/healthz` on port 8080 in the guest. The LaunchAgent writes the runner's stdout to
 `~/Library/Logs/agent-runner.out` and stderr to `.err`, and gives it 120 s to drain on
 stop; in ephemeral mode `agent-runner` forwards SIGTERM to it.

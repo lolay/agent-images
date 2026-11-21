@@ -124,7 +124,7 @@ context), which keeps a second one from starting. LaunchAgent logs:
 | `image-prune` | `tart prune --entries caches --space-budget $(TART_CACHE_GB)` (default 200 GB). Each newer base image `make build` pulls adds ~80 GB to the cache; this drops the least recently used |
 | `vm-create` | `tart clone` then `tart set --cpu --memory` |
 | `vm-start` | `tart run --no-graphics` in the background; log in `build/logs/` |
-| `vm-configure` | `scripts/vm-configure.sh`: hostname, secrets, `runner.env`, runner restart. Idempotent |
+| `vm-configure` | `scripts/vm-configure.sh`: hostname, secrets, `runner.env`, runner restart. Idempotent. The VM's own Keychain item (`make secret-set NAME=claude-environment-secret VM=<vm>`, a separate environment's key) is required; it never falls back to `default`, the orchestrator's, and refuses a copy of it |
 | `vm-up` | `vm-start` + `vm-configure` |
 | `vm-stop` / `vm-delete` | `tart stop`; `tart delete` after stopping |
 | `vm-status` | `scripts/vm-status.sh`: runner, process, Claude `/healthz`, last log lines |
@@ -181,9 +181,10 @@ powers off). Claims live in `build/runners/runner-N/`, as on macOS. Logs:
 | `build/logs/runner-N.guest.log` | The VM's journal for `agent-runner` and the watchdog, streamed while it runs; a `=== time runner-N order … ===` header per VM |
 | `build/logs/runner-N.lxc.log` | `lxc launch` output |
 
-For a debug VM: `lxc launch agent-android debug-1 --vm`, then
-`scripts/linux/vm-configure.sh debug-1` (settings from `vms/debug-1.env`), and
-`lxc exec debug-1 -- bash` to look around.
+For a debug VM: `lxc launch agent-android debug-1 --vm`, `make secret-set
+NAME=claude-environment-secret VM=debug-1` (a separate environment's key: the
+orchestrator's never enters a VM), then `scripts/linux/vm-configure.sh debug-1`
+(settings from `vms/debug-1.env`), and `lxc exec debug-1 -- bash` to look around.
 
 ## Cloud (GCP)
 

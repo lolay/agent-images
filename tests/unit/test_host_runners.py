@@ -88,8 +88,16 @@ delete)
 	rm -rf "${vms:?}/$1"
 	;;
 exec)
+	# In the guest as its user: id answers as admin, and a shell runs here with
+	# $FAKE_OUT/guest as its home; anything else (sudo scutil, launchctl, tail)
+	# is only recorded.
 	[[ "${1:-}" != -i ]] || shift
 	(($# >= 2)) || die "usage: tart exec [-i] <name> <command>..."
+	shift
+	case "$1" in
+	id) if [[ "${2:-}" == -un ]]; then echo admin; else echo 501; fi ;;
+	/bin/bash) HOME="$FAKE_OUT/guest" "$@" ;;
+	esac
 	;;
 *) die "Unknown subcommand '$command'" ;;
 esac
@@ -184,10 +192,18 @@ delete)
 	rm -f "$instances/$1"
 	;;
 exec)
+	# `sudo -u <user> -H <command>` runs here with $FAKE_OUT/guest as its home;
+	# anything else (true, hostnamectl, systemctl, journalctl) is only recorded.
 	(($# >= 3)) || die "Invalid number of arguments"
 	shift
 	[[ "$1" != --force-noninteractive ]] || shift
 	[[ "$1" == -- ]] || die "unknown flag: $1"
+	shift
+	if [[ "$1" == sudo ]]; then
+		[[ "${2:-}" == -u && -n "${3:-}" && "${4:-}" == -H ]] || die "sudo: usage"
+		shift 4
+		HOME="$FAKE_OUT/guest" "$@"
+	fi
 	;;
 *) die "unknown command \"$command\" for \"lxc\"" ;;
 esac
@@ -219,6 +235,23 @@ while (($#)); do
 done
 (($#)) || { echo "systemd-run: command line to execute required" >&2; exit 1; }
 exit "${FAKE_SYSTEMD_RUN_STATUS:-0}"
+"""
+
+# security find-generic-password -s <service> -a <account> -w: the item in
+# $FAKE_KEYCHAIN/<service>.<account>, else 44 (errSecItemNotFound); any other use
+# fails.
+FAKE_SECURITY = RECORD + r"""
+(($# == 6)) && [[ "$1" == find-generic-password && "$2" == -s && "$4" == -a && "$6" == -w ]] ||
+	{ echo "security: unknown command or option" >&2; exit 2; }
+item="$FAKE_KEYCHAIN/$3.$5"
+[[ -f "$item" ]] || { echo "security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain." >&2; exit 44; }
+cat "$item"
+"""
+
+# The host's scutil --get LocalHostName.
+FAKE_SCUTIL = r"""
+[[ "$*" == "--get LocalHostName" ]] || { echo "scutil: unknown" >&2; exit 1; }
+echo testmac
 """
 
 # A short sleep, so a wait loop doesn't hold a test up; it takes what sleep takes.
@@ -273,6 +306,7 @@ class HostCase(unittest.TestCase):
             ("tart", FAKE_TART), ("launchctl", FAKE_LAUNCHCTL), ("plutil", FAKE_PLUTIL),
             ("lxc", FAKE_LXC), ("systemctl", FAKE_SYSTEMCTL),
             ("systemd-run", FAKE_SYSTEMD_RUN), ("sleep", FAKE_SLEEP),
+            ("security", FAKE_SECURITY), ("scutil", FAKE_SCUTIL),
         ):
             write_executable(self.bin / name, body)
         self.tart_home = self.tmp / "tart"
@@ -294,6 +328,7 @@ class HostCase(unittest.TestCase):
             "FAKE_OUT": str(self.out),
             "FAKE_LXD": str(self.lxd),
             "TART_HOME": str(self.tart_home),
+            "FAKE_KEYCHAIN": str(self.tmp / "keychain"),
         }
         settings.update(extra)
         settings = {key: value for key, value in settings.items() if value is not None}
@@ -672,6 +707,107 @@ class LxdReclaimTests(ReclaimCase):
         self.assertIn(f"delete --force {vm}", self.calls("lxc"))
 
 
+class VmConfigureCase(HostCase):
+    """vm-configure without a work order: the VM's own key, never the
+    orchestrator's, read before anything touches the guest (r1.f24)."""
+
+    VM = "debug-1"
+
+    def setUp(self):
+        super().setUp()
+        configure = self.tree / ("scripts/linux/vm-configure.sh" if self.linux else "scripts/vm-configure.sh")
+        configure.unlink()
+        configure.symlink_to(REPO / configure.relative_to(self.tree))
+        self.configure = configure
+        (self.tree / f"vms/{self.VM}.env").write_text("AGENT=claude\n")
+        self.guest_secret = self.out / "guest/.claude-runner/environment-secret"
+
+    def set_key(self, account, value):
+        """make secret-set NAME=claude-environment-secret [VM=<account>]."""
+        if self.linux:
+            name = "claude-environment-secret" + ("" if account == "default" else f".{account}")
+            path = self.tmp / "home/.config/agent-images" / name
+        else:
+            path = self.tmp / "keychain" / f"agent-images.claude-environment-secret.{account}"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(value)
+
+    def run_configure(self, **env):
+        return subprocess.run(
+            ["bash", str(self.configure), self.VM], env=self.env(**env),
+            capture_output=True, text=True, timeout=30)
+
+    def guest_calls(self):
+        return self.calls("lxc" if self.linux else "tart")
+
+    def test_no_key_of_its_own_fails_before_touching_the_guest(self):
+        for account in ("default", "orchestrator"):
+            with self.subTest(orchestrator_account=account):
+                self.set_key(account, ENV_KEY)
+                result = self.run_configure()
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(f"make secret-set NAME=claude-environment-secret VM={self.VM}", result.stderr)
+                self.assertIn("never the orchestrator's", result.stderr)
+                self.assertEqual(self.guest_calls(), [], "nothing reached the guest")
+                self.assertFalse(self.guest_secret.exists())
+
+    def test_a_copy_of_the_orchestrators_key_is_refused(self):
+        for account in ("default", "orchestrator"):
+            with self.subTest(orchestrator_account=account):
+                self.set_key(account, ENV_KEY)
+                self.set_key(self.VM, ENV_KEY)
+                result = self.run_configure()
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("is the orchestrator's environment key", result.stderr)
+                self.assertEqual(self.guest_calls(), [])
+                self.assertFalse(self.guest_secret.exists())
+                for path in (self.tmp / "keychain", self.tmp / "home/.config"):
+                    subprocess.run(["rm", "-rf", str(path)], check=True)
+
+    def test_the_vms_own_key_is_written(self):
+        self.set_key("default", ENV_KEY)
+        self.set_key(self.VM, "sk-ant-cc-a.separate.key")
+        result = self.run_configure()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.guest_secret.read_text(), "sk-ant-cc-a.separate.key")
+        self.assertEqual(self.guest_secret.stat().st_mode & 0o777, 0o600)
+        runner_env = (self.out / "guest/.config/agent-runner/runner.env").read_text()
+        self.assertIn("RUNNER_LABEL=", runner_env)
+        self.assertNotIn(ENV_KEY, result.stdout + result.stderr)
+
+    def test_a_work_order_needs_no_key(self):
+        self.work_order.write_text(WORK_ORDER + "\n")
+        result = self.run_configure(ENVIRONMENT_SECRET_FILE=str(self.work_order), EPHEMERAL="true")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.guest_secret.read_text(), WORK_ORDER + "\n")
+
+    def test_an_empty_work_order_fails_before_touching_the_guest(self):
+        self.work_order.write_text("")
+        result = self.run_configure(ENVIRONMENT_SECRET_FILE=str(self.work_order), EPHEMERAL="true")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.guest_calls(), [])
+
+    def test_the_orchestrator_still_reads_default(self):
+        # orchestrator-run.sh's lookup: account orchestrator, else default.
+        self.set_key("default", ENV_KEY)
+        lib = self.tree / ("scripts/linux/lib.sh" if self.linux else "scripts/lib.sh")
+        lookup = ("host_secret claude-environment-secret orchestrator" if self.linux
+                  else "keychain_secret claude-environment-secret orchestrator default")
+        orchestrator_run = REPO / ("scripts/linux/orchestrator-run.sh" if self.linux else "scripts/orchestrator-run.sh")
+        self.assertIn(f'SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET="$({lookup})"', orchestrator_run.read_text())
+        result = subprocess.run(["bash", "-c", f'source "$1"; {lookup}', "_", str(lib)],
+                                env=self.env(), capture_output=True, text=True, timeout=30)
+        self.assertEqual((result.returncode, result.stdout.strip()), (0, ENV_KEY), result.stderr)
+
+
+class TartVmConfigureTests(VmConfigureCase):
+    pass
+
+
+class LxdVmConfigureTests(VmConfigureCase):
+    linux = True
+
+
 class HostQuarantineTests(HostCase):
     """clear_claude_quarantine in scripts/lib.sh runs the shared check
     (images/shared/clear-quarantine.sh) and stops on a claude it won't clear (r1.f29)."""
@@ -698,7 +834,7 @@ class HostQuarantineTests(HostCase):
         self.assertEqual(quarantined(self.out), [str(self.bin / "claude")])
 
 
-del SpawnRunnerCase, RunnerOnceCase, ReclaimCase
+del SpawnRunnerCase, RunnerOnceCase, ReclaimCase, VmConfigureCase
 
 if __name__ == "__main__":
     unittest.main()

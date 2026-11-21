@@ -10,8 +10,11 @@
 # power off after one session instead of restarting its runner.
 #
 # The registration secret is ENVIRONMENT_SECRET_FILE when set (the orchestrator's
-# single-use work order), else the Keychain item agent-images.claude-environment-secret
-# with account <vm> or "default" (make secret-set NAME=claude-environment-secret).
+# single-use work order), else the VM's own Keychain item
+# agent-images.claude-environment-secret, account <vm> (make secret-set
+# NAME=claude-environment-secret VM=<vm>): a separate environment's key. Never
+# the orchestrator's (account orchestrator or default), which any session on the
+# VM could read and reuse.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -52,15 +55,27 @@ claude) ;;
 *) die "$config: AGENT must be claude (got '${agent}'); see specs/cursor.md" ;;
 esac
 
+# Read before anything touches the guest, so a VM with no secret of its own is
+# left as it was.
+vm_secret=""
+if [[ -n "${ENVIRONMENT_SECRET_FILE:-}" ]]; then
+	[[ -s "$ENVIRONMENT_SECRET_FILE" ]] || die "$ENVIRONMENT_SECRET_FILE is missing or empty"
+else
+	vm_secret="$(keychain_secret claude-environment-secret "$vm")" ||
+		die "$vm takes a work order or its own environment key, never the orchestrator's"
+	orchestrator_secret="$(keychain_secret claude-environment-secret orchestrator default 2>/dev/null)" || true
+	[[ "$vm_secret" != "$orchestrator_secret" ]] ||
+		die "$vm's Keychain item is the orchestrator's environment key; give $vm a separate environment's key: make secret-set NAME=claude-environment-secret VM=$vm"
+fi
+readonly vm_secret
+
 push_registration_secret() {
-	local guest_path=".claude-runner/environment-secret" value
+	local guest_path=".claude-runner/environment-secret"
 	if [[ -n "${ENVIRONMENT_SECRET_FILE:-}" ]]; then
-		[[ -s "$ENVIRONMENT_SECRET_FILE" ]] || die "$ENVIRONMENT_SECRET_FILE is missing or empty"
 		guest_write "$vm" "$guest_path" <"$ENVIRONMENT_SECRET_FILE"
-		return
+	else
+		printf '%s' "$vm_secret" | guest_write "$vm" "$guest_path"
 	fi
-	value="$(keychain_secret claude-environment-secret "$vm" default)" || exit 1
-	printf '%s' "$value" | guest_write "$vm" "$guest_path"
 }
 
 log "$vm: waiting for the $GUEST_USER session"
