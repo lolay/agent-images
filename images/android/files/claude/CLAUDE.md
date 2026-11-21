@@ -25,7 +25,7 @@ needs them (deploys, Terraform plans and applies) runs in the repo's own CI.
 
 ## Android
 
-- SDK: `$ANDROID_HOME` (`/opt/android-sdk`), owned by you. JDK 21 is `$JAVA_HOME`.
+- SDK: `$ANDROID_HOME`, owned by you. JDK 21 is `$JAVA_HOME`.
 - Google's `android` CLI is installed, with its `android-cli` skill: use it for
   SDK packages (`android sdk install …`; sdkmanager is deprecated), screenshots,
   UI layout, and docs. Pass `--no-metrics`.

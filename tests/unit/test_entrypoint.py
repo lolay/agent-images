@@ -13,6 +13,8 @@ from support import REPO, base_env, read_env_file, write_executable
 ENTRYPOINT = REPO / "images/cloud/entrypoint.sh"
 TOOLSET_CHECKS = REPO / "images/toolsets/toolset-checks.sh"
 PROFILE = REPO / "images/cloud/runner/profile.sh"
+TOOLSET_PROFILE = REPO / "images/toolsets/toolset-profile.sh"
+RUST_PROFILE = REPO / "images/toolsets/rust/profile.sh"
 GH_SHIM_PROFILE = REPO / "images/shared/profile-gh-shim.sh"
 TOOLCHAINS = (
     "node", "pnpm", "python3", "uv", "go", "cargo", "rustc", "protoc", "buf",
@@ -63,6 +65,9 @@ class EntrypointCase(unittest.TestCase):
         self.brew_prefix = self.tmp / "linuxbrew"
         for sub in ("Cellar", "bin"):
             (self.brew_prefix / sub).mkdir(parents=True)
+        # The rust toolset's environment, as its install.sh and record() leave it.
+        (self.toolsets / "rust.path").write_text(f"{self.brew_prefix}/opt/rustup/bin\n")
+        (self.toolsets / "rust.profile.sh").write_text(RUST_PROFILE.read_text())
         write_executable(
             self.fake_bin / "brew",
             'if [[ "$1" == --prefix ]]; then echo "$FAKE_BREW_PREFIX"; else echo "Homebrew 9.9"; fi\n',
@@ -77,6 +82,7 @@ class EntrypointCase(unittest.TestCase):
             "AGENT_DATASETS": str(self.datasets),
             "AGENT_OUTPUTS_ROOT": str(self.outputs),
             "AGENT_PROFILE": str(PROFILE),
+            "AGENT_TOOLSET_PROFILE": str(TOOLSET_PROFILE),
             "AGENT_TOOLSETS_DIR": str(self.toolsets),
             "AGENT_TOOLSET_CHECKS": str(TOOLSET_CHECKS),
             "AGENT_RUNNER_COMMAND": str(self.runner),
@@ -431,6 +437,10 @@ class ProfileTests(unittest.TestCase):
 
     def setUp(self):
         self.toolsets = Path(tempfile.mkdtemp())
+        # The rust toolset's environment: rustup's proxies in front, cargo's
+        # install bin (CARGO_HOME, on scratch) at the back.
+        (self.toolsets / "rust.path").write_text(f"{self.BREW}/opt/rustup/bin\n")
+        (self.toolsets / "rust.profile.sh").write_text(RUST_PROFILE.read_text())
 
     def tearDown(self):
         subprocess.run(["rm", "-rf", str(self.toolsets)], check=True)
@@ -438,7 +448,8 @@ class ProfileTests(unittest.TestCase):
     def path_after(self, start_path, *, shell="sh", times=1, bash_env=False, then="printf %s \"$PATH\"", **extra):
         script = ". \"$PROFILE\"; " * times + then
         env = {"HOME": self.HOME, "HOMEBREW_PREFIX": self.BREW, "PATH": start_path,
-               "PROFILE": str(PROFILE), "AGENT_SCRATCH": "/scratch",
+               "PROFILE": str(PROFILE), "AGENT_TOOLSET_PROFILE": str(TOOLSET_PROFILE),
+               "AGENT_SCRATCH": "/scratch",
                "AGENT_TOOLSETS_DIR": str(self.toolsets),
                "AGENT_GH_SHIM_PROFILE": str(GH_SHIM_PROFILE), **extra}
         command = [f"/bin/{shell}", "-c", script]

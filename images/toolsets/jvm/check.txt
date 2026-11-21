@@ -1,3 +1,5 @@
 # Binary checks (toolset-checks.sh): label: command, which must exit 0; its first
 # line of output is the reported version.
 java: java -version
+# The JAVA_HOME CLAUDE.md promises (install.sh records it in the profile).
+JAVA_HOME: test -x "${JAVA_HOME:?is not set}/bin/javac" && echo "$JAVA_HOME"

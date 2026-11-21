@@ -387,8 +387,13 @@ tooling as PyO3 extensions, or Rust splatting like Brush). If that becomes true,
   can also carry binary checks (`check.txt`), a smoke test (`smoke.sh`),
   environment (`profile.sh`) and PATH entries (`path.txt`), which
   `install-toolset.sh` records: the smoke runs the image's own checks through
-  `agent-toolset-checks` (`images/toolsets/toolset-checks.sh`), and the cloud
-  profile puts toolset paths after `~/bin` and ahead of Homebrew. A binary check
+  `agent-toolset-checks` (`images/toolsets/toolset-checks.sh`), and both images'
+  profiles assemble the session's environment from the record through
+  `images/toolsets/toolset-profile.sh`: toolset paths after `~/bin` and ahead of
+  Homebrew, then each toolset's profile. What's only known once installed (where the
+  JDK is, the NDK's version) its `install.sh` writes to the record itself; a toolset
+  that needs another's environment at install reads that toolset's record
+  (`toolset_env`), never an image's profile. A binary check
   proves a tool is there and runs (its version), nothing more; a smoke test (from
   [gcp.md m4](gcp.md#m4---functional-smoke-and-versions-report)) proves the
   toolchain works: the least real work with its main tools, offline, in a fresh
@@ -479,6 +484,13 @@ Steps for [gcp.md](gcp.md) m2, ahead of `gis` and `android`:
   drops `python`, `proto`, `terraform` and `browser`. Checked by
   `android-image-smoke`, which now starts the display, takes a screenshot, and
   builds a Rust library (cargo-ndk) and a Go one (gomobile) for arm64 and x86_64.
+  Since r1.f27 and f28 the image's profile is the cloud one's assembly
+  (`toolset-profile.sh`), with nothing of its own: `JAVA_HOME` is the `jvm`
+  toolset's, the SDK's variables and paths the `android` toolset's, and the cargo
+  and go install bins the `rust` and `go` toolsets'. `android-image-smoke` runs
+  `agent-toolset-checks` (the binary checks and smoke tests, `android-go`'s and
+  `android-rust`'s NDK builds among them), as `agent-gce-smoke` does, beside its
+  own emulator checks and the `gomobile bind` build, which needs the network.
 
 `linux-gpu` and `3d-gpu` followed in m3 on the same structure, and both install
 `display` (it's in their lists above): the virtual display comes from s7, and m3
