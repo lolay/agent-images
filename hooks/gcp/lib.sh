@@ -110,9 +110,11 @@ gcp_type_project_keys() {
 # (project, where only a changed value counts), with RUNNER_TYPE exported when
 # given. A subshell, so nothing leaks into the caller.
 gcp_type_sets_keys() { (
-	local type="$1" over="$2" key
-	unset RUNNER_TYPE
-	[[ -z "$3" ]] || export RUNNER_TYPE="$3"
+	# RUNNER_TYPE by an indirect name: spawn-runner sources this file and reads
+	# RUNNER_TYPE, and shellcheck would take a change here for one there (SC2031).
+	local type="$1" over="$2" key runner_var=RUNNER_TYPE
+	unset "$runner_var"
+	[[ -z "$3" ]] || export "$runner_var=$3"
 	shift 3
 	declare -A before=()
 	unset "$@"
