@@ -34,7 +34,7 @@ runner_names() {
 
 # SIGTERM each runner job; runner-once stops and deletes its VM, and any session
 # on it requeues. bootout returns at once, so wait for each runner-once to exit
-# (up to its 120 s stop budget plus a margin).
+# (up to its stop budget, RUNNER_JOB_STOP_SEC, plus a margin).
 stop_runners() {
 	local vm pid waited
 	for vm in $(runner_names); do
@@ -43,7 +43,7 @@ stop_runners() {
 		launchctl bootout "$domain/$(runner_job_label "$vm")" >/dev/null 2>&1 || true
 		# bootout returns before runner-once finishes stopping and deleting the VM.
 		waited=0
-		while [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null && ((waited < 130)); do
+		while [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null && ((waited < RUNNER_JOB_STOP_SEC + 10)); do
 			sleep 2
 			waited=$((waited + 2))
 		done

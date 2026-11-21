@@ -34,9 +34,9 @@ guest_log_pid=""
 cleanup() {
 	rm -f "$work_order"
 	# Stopped early (SIGTERM): a clean shutdown lets the runner drain and push its
-	# session's work (agent-runner.service allows 120 s) before the VM goes.
+	# session's work before the VM goes.
 	if vm_exists "$vm"; then
-		lxc stop --timeout 120 "$vm" >/dev/null 2>&1 || true
+		lxc stop --timeout "$VM_STOP_TIMEOUT_SEC" "$vm" >/dev/null 2>&1 || true
 	fi
 	if [[ -n "$guest_log_pid" ]]; then
 		kill "$guest_log_pid" 2>/dev/null || true

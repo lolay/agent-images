@@ -37,7 +37,9 @@ cleanup() {
 		kill "${guest_log_pids[@]}" 2>/dev/null || true
 	fi
 	if [[ -n "$tart_pid" ]] && kill -0 "$tart_pid" 2>/dev/null; then
-		tart stop "$vm" >/dev/null 2>&1 || true
+		# Stopped early (SIGTERM): a clean shutdown lets the runner drain and push
+		# its session's work before the VM goes.
+		tart stop --timeout "$VM_STOP_TIMEOUT_SEC" "$vm" >/dev/null 2>&1 || true
 		wait "$tart_pid" 2>/dev/null || true
 	fi
 	if vm_exists "$vm"; then

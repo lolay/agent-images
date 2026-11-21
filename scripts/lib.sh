@@ -22,6 +22,14 @@ readonly RUNNER_CONFIG="$AGENT_IMAGES_DIR/vms/runner.env"
 # Mac rather than in a VM.
 # shellcheck disable=SC2034 # used by the scripts that source this
 readonly HOST_RUNNER_CONFIG="$AGENT_IMAGES_DIR/vms/host.env"
+# How long a runner VM gets to shut down cleanly, so its runner can drain and
+# push its session's work: the guest gives the runner 120 s (ExitTimeOut in
+# images/macos/files/com.agent-images.runner.plist, TimeoutStopSec in
+# images/android/files/agent-runner.service). Tart's own default is 30 s.
+readonly VM_STOP_TIMEOUT_SEC=120
+# A runner job's stop budget: the VM's, then time to delete it and release its name.
+# shellcheck disable=SC2034 # used by the scripts that source this
+readonly RUNNER_JOB_STOP_SEC=$((VM_STOP_TIMEOUT_SEC + 30))
 
 die() {
 	printf 'error: %s\n' "$*" >&2
@@ -183,7 +191,7 @@ write_host_plist() {
 			printf '    <string>%s</string>\n' \
 				"$(printf '%s' "$job_arg" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')"
 		done
-		# ExitTimeOut leaves time to stop and delete a VM after SIGTERM.
+		# ExitTimeOut leaves runner-once time to stop and delete a VM after SIGTERM.
 		printf '%s\n' \
 			'  </array>' \
 			"  <key>WorkingDirectory</key><string>$AGENT_IMAGES_DIR</string>" \
@@ -194,7 +202,7 @@ write_host_plist() {
 			'  <key>RunAtLoad</key><true/>' \
 			"  <key>KeepAlive</key><$keep_alive/>" \
 			'  <key>ThrottleInterval</key><integer>30</integer>' \
-			'  <key>ExitTimeOut</key><integer>120</integer>' \
+			"  <key>ExitTimeOut</key><integer>$RUNNER_JOB_STOP_SEC</integer>" \
 			"  <key>StandardOutPath</key><string>$job_log.out</string>" \
 			"  <key>StandardErrorPath</key><string>$job_log.err</string>" \
 			'</dict>' \
@@ -223,7 +231,8 @@ reclaim_stale_runners() {
 		fi
 		log "$claim_vm: reclaiming (its runner job is gone)"
 		launchctl bootout "$(launchd_domain)/$(runner_job_label "$claim_vm")" >/dev/null 2>&1 || true
-		tart stop "$claim_vm" >/dev/null 2>&1 || true
+		# Its `tart run` may outlive a killed job, mid-session: let the runner drain.
+		tart stop --timeout "$VM_STOP_TIMEOUT_SEC" "$claim_vm" >/dev/null 2>&1 || true
 		if vm_exists "$claim_vm"; then
 			tart delete "$claim_vm"
 		fi

@@ -92,7 +92,7 @@ readonly unit
 systemctl --user reset-failed "$unit" >/dev/null 2>&1 || true
 # TimeoutStopSec leaves time to stop and delete a VM after SIGTERM.
 systemd-run --user --quiet --collect --unit "$unit" \
-	--property TimeoutStopSec=150 --property KillMode=mixed \
+	--property "TimeoutStopSec=$RUNNER_JOB_STOP_SEC" --property KillMode=mixed \
 	--property "StandardOutput=append:$AGENT_IMAGES_LOG_DIR/$vm.runner.log" \
 	--property "StandardError=append:$AGENT_IMAGES_LOG_DIR/$vm.runner.log" \
 	--working-directory "$AGENT_IMAGES_DIR" --setenv "PATH=$PATH" \
