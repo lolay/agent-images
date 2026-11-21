@@ -579,7 +579,7 @@ deploys; it only proposes a pull request:
    to `main` starts the deploy, which smokes once more at `-next` in Cloud Run before
    promoting.
 
-The job summary lists every pin with its locked value, upstream's newest now and its
+The job summary lists every pin the lock marks (every kind but a Homebrew pin, [Pinning a dependency](#pinning-a-dependency)) with its locked value, upstream's newest now and its
 issue's state, read with `GITHUB_TOKEN` (the bot has no Issues permission); a closed
 issue reads **closed**: remove the pin? A lookup that fails there doesn't fail
 `resolve`, which would skip `propose` for every type: the `unresolved` job turns
@@ -772,9 +772,9 @@ it's fixed. How, per source:
 | --- | --- | --- |
 | Base image | `BASE_IMAGE = "mirror.gcr.io/library/ubuntu:24.04@sha256:..."  # pinned: <issue URL>` in the base target's `args` in `images/cloud/docker-bake.hcl` (`base-gpu`'s CUDA image the same way): the Dockerfile is `FROM ${BASE_IMAGE}`, and the build takes the lock's digest for it (`lock.sh bake-args`) | The watch reports it as pinned instead of rebuilding |
 | apt package | `name=version  # pinned: <issue URL> snapshot=<id>` in `packages.txt` (or `build-packages.txt`), the id a snapshot.ubuntu.com timestamp whose index has that version | A snapshot's index lists each pocket's current version alone, so once Ubuntu replaces an update, the type's snapshot no longer has it (checked 2026-11-15: `noble-updates` had openssl `3.0.13-0ubuntu3.6` at 20260101T000000Z and only `3.0.13-0ubuntu3.16` at 20261101T000000Z). `snapshot=` resolves and installs that package from its own snapshot, and everything else keeps moving ([The lock](#the-lock)). Pin a package's same-version siblings too (`libssl3t64` with `openssl`): an exact-version dependency isn't pinned for you. Without `snapshot=`, the pin resolves against today's archive and holds only while Ubuntu keeps that version. To hold all of apt still, freeze the snapshot timestamp in the lock |
-| Homebrew formula | A versioned formula if one exists (`python@3.12`), else `brew extract --version=X <formula> lolay/tap` and name `lolay/tap/<formula>@X` in the Brewfile | `brew pin` doesn't help a fresh build. An extracted formula has no bottle, so it builds from source |
+| Homebrew formula | A versioned formula if one exists (`python@3.12`), else `brew extract --version=X <formula> lolay/tap` and name `lolay/tap/<formula>@X` in the Brewfile | `brew pin` doesn't help a fresh build. An extracted formula has no bottle, so it builds from source. The watch doesn't report a Homebrew pin: the lock records the formula the Brewfile names, with no `pinned` line, so the pin's issue is what tracks it; remove the pin when the issue closes |
 | `lolay/tap` formula | Revert in the tap, or add a versioned formula there | It's ours |
-| Claude Code | `CLAUDE_VERSION=2.1.317` (a version) or `stable` (the channel) | The watch then skips Claude. `nightly` types already run with `CLAUDE_UPGRADE=false`; a `weekly` type still updates itself at start, past the pin, and has no setting to stop it yet: add one (an env file key read by `gcp_runner_settings`) if a weekly pin is ever needed |
+| Claude Code | `CLAUDE_VERSION=2.1.317` (a version) | The lock holds Claude at that version, and the watch reports the pin. `stable` isn't a pin: it's a channel the watch follows, as it follows the default `latest`, resolving it each run to the version it names, with no `pinned` line; only a numbered `CLAUDE_VERSION` is a pin. `nightly` types already run with `CLAUDE_UPGRADE=false`; a `weekly` type still updates itself at start, past the pin, and has no setting to stop it yet: add one (an env file key read by `gcp_runner_settings`) if a weekly pin is ever needed |
 | Rust toolchain | `RUST_TOOLCHAIN=1.91.0` (a version) or `1.91` (a minor line) in `images/toolsets/rust/install.sh` | The watch resolves within it: a minor line still takes patch releases |
 | Terraform | `TERRAFORM_VERSION=1.14.2` (a version) or `~> 1.14.0` (the 1.14 line) in `images/toolsets/terraform/install.sh` | `~>` means what it means to HashiCorp and tenv, which take the constraint as is where the lock doesn't reach: `~> 1.14.0` is >= 1.14.0, < 1.15.0, and holds the 1.14 line; `~> 1.14` is >= 1.14, < 2.0, and takes any 1.x from 1.14 on. The watch resolves within it |
 | Type tool from a release | Its `*_VERSION` default in the script that reads it, beside its `*_RELEASES` (the release rows of the lock table) | |
@@ -782,10 +782,10 @@ it's fixed. How, per source:
 Pins live where the dependency is declared, each with `# pinned: <issue URL>` on the
 declaring line or the line above it (for Claude, anywhere in docker-bake.hcl's
 `variable "CLAUDE_VERSION"` block, `default` included), and the lock marks them
-pinned. The note is `#`, then `pinned:`, each followed by any spaces or tabs or
+pinned, all but Homebrew's (above), which only their issues track. The note is `#`, then `pinned:`, each followed by any spaces or tabs or
 none (`#pinned:<tab><URL>` reads as `# pinned: <URL>`), and its first word is the
 issue: `-`, or an apt pin's `snapshot=<id>` in its place, names none. `lock.sh`'s
-`pin_issue` is the one reader, for every kind of pin (r5.f12). The watch lists every pin in the job summary next to
+`pin_issue` is the one reader, for every kind of pin (r5.f12). The watch lists every pin the lock marks in the job summary next to
 upstream's current version and the issue's state, so a pin whose issue closed stands
 out instead of rotting. A package pinned in two lists (curl, in the base's and core's)
 is one pin; if the lists name different issues, `resolve` and `bake-args` fail rather
