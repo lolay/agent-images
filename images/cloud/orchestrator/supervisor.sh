@@ -59,6 +59,10 @@ set -euo pipefail
 
 # shellcheck source=hooks/gcp/lib.sh
 source "$AGENT_ORCHESTRATOR_ROOT/hooks/gcp/lib.sh"
+# The flags each orchestrator gets: one list, which the deploy checks against
+# the image's own Claude (orchestrator-args.sh says why).
+# shellcheck source=images/cloud/orchestrator/orchestrator-args.sh
+source "$(dirname "${BASH_SOURCE[0]}")/orchestrator-args.sh"
 readonly hooks_dir="$AGENT_ORCHESTRATOR_ROOT/hooks/gcp"
 
 log() { printf 'supervisor: %s\n' "$*"; }
@@ -269,18 +273,13 @@ start_type() {
 	local min_idle expected
 	min_idle="$(gcp_type_setting "$type" MIN_IDLE 0)"
 	expected="$(gcp_type_setting "$type" EXPECTED_SPAWN_SECONDS 120)"
+	orchestrator_args "$hooks_dir" "$secret_file" "$min_idle" "$expected" \
+		"${port_of[$type]}" "$HOOK_TIMEOUT_SEC" "$SHUTDOWN_DRAIN_SEC"
 	# The subshell becomes the orchestrator at exec, so $! is its pid: signals
 	# reach it directly, and the log prefixer is its child, not ours.
 	(
 		exec > >(prefix_lines "$type") 2>&1
-		exec env RUNNER_TYPE="$type" "$CLAUDE_BIN" self-hosted-runner orchestrator \
-			--hooks-dir "$hooks_dir" \
-			--environment-secret-file "$secret_file" \
-			--min-idle "$min_idle" \
-			--expected-spawn-seconds "$expected" \
-			--health-port "${port_of[$type]}" \
-			--hook-timeout "$HOOK_TIMEOUT_SEC" \
-			--shutdown-drain-sec "$SHUTDOWN_DRAIN_SEC"
+		exec env RUNNER_TYPE="$type" "$CLAUDE_BIN" self-hosted-runner orchestrator "${ORCHESTRATOR_ARGS[@]}"
 	) &
 	pid=$!
 	pid_of[$type]=$pid

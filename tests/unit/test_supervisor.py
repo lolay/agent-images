@@ -20,15 +20,34 @@ SUPERVISOR = REPO / "images/cloud/orchestrator/supervisor.sh"
 PROJECT_ENV = "PROJECT_ID=lolay-agents\nPROJECT_NUMBER=613087327945\nREGION=us-central1\n"
 JOBS = "projects/lolay-agents/locations/us-central1/jobs"
 
-# Records how it was started, logs a line on each stream, and drains on SIGTERM
-# the way the orchestrator does.
-FAKE_CLAUDE = r"""
+ORCHESTRATOR_ARGS = REPO / "images/cloud/orchestrator/orchestrator-args.sh"
+CHECK_FLAGS = REPO / "scripts/cloud/check-orchestrator-flags.sh"
+
+# Refuses what the real CLI would: another command, a flag the supervisor's one
+# list doesn't have (the deploy checks that list against the real --help), or a
+# flag with no value (r1.f10). Then records how it was started, logs a line on
+# each stream, and drains on SIGTERM the way the orchestrator does.
+FAKE_CLAUDE = f'source "{ORCHESTRATOR_ARGS}"\n' + r"""
+if [[ "${1:-} ${2:-}" != "self-hosted-runner orchestrator" ]]; then
+	echo "error: unknown command '$*'" >&2
+	exit 1
+fi
+mapfile -t allowed < <(orchestrator_flags)
 type="$RUNNER_TYPE"
 trap 'echo term >>"$FAKE_OUT/$type.term.$$"; sleep "${FAKE_DRAIN:-0.3}"; exit 0' TERM
 secret_file=""
-args=("$@")
-for ((i = 0; i < ${#args[@]}; i++)); do
-	[[ "${args[i]}" == --environment-secret-file ]] && secret_file="${args[i + 1]}"
+args=("${@:3}")
+for ((i = 0; i < ${#args[@]}; i += 2)); do
+	flag="${args[i]}"
+	if [[ " ${allowed[*]} " != *" $flag "* ]]; then
+		echo "error: unknown option '$flag'" >&2
+		exit 1
+	fi
+	if ((i + 1 >= ${#args[@]})) || [[ "${args[i + 1]}" == -* || -z "${args[i + 1]}" ]]; then
+		echo "error: option '$flag' argument missing" >&2
+		exit 1
+	fi
+	[[ "$flag" == --environment-secret-file ]] && secret_file="${args[i + 1]}"
 done
 # Written whole, then moved into place: the test reads it as soon as it exists.
 {
@@ -482,6 +501,92 @@ class NoComputeTypesTests(SupervisorCase):
         time.sleep(1.5)
         self.assertEqual(self.gcp.requests(contains="/compute/"), [])
         self.stop()
+
+
+def flags():
+    listed = subprocess.run(
+        ["bash", "-c", f'source "{ORCHESTRATOR_ARGS}"; orchestrator_flags'],
+        capture_output=True, text=True, check=True,
+    )
+    return listed.stdout.split()
+
+
+def help_text(flags_listed):
+    """--help as the CLI prints it: an option line per flag, padded to the description."""
+    lines = ["Usage: claude self-hosted-runner orchestrator [options]", "", "Options:"]
+    lines += [f"  {flag} <value>".ljust(40) + "what it does" for flag in flags_listed]
+    lines.append("  -h, --help".ljust(40) + "display help for command")
+    return "\n".join(lines) + "\n"
+
+
+class FlagCheckTests(unittest.TestCase):
+    """scripts/cloud/check-orchestrator-flags.sh: the deploy's check of the
+    supervisor's flags against the image's own Claude (r1.f10)."""
+
+    def check(self, text):
+        return subprocess.run(["bash", str(CHECK_FLAGS)], input=text, capture_output=True, text=True)
+
+    def test_the_supervisor_passes_the_flags_in_the_list(self):
+        self.assertEqual(flags(), [
+            "--hooks-dir", "--environment-secret-file", "--min-idle", "--expected-spawn-seconds",
+            "--health-port", "--hook-timeout", "--shutdown-drain-sec",
+        ])
+
+    def test_passes_when_every_flag_is_listed(self):
+        result = self.check(help_text(flags()))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("all 7 flags the supervisor passes are listed", result.stdout)
+
+    def test_fails_when_a_flag_is_missing(self):
+        for missing in flags():
+            with self.subTest(missing=missing):
+                result = self.check(help_text([flag for flag in flags() if flag != missing]))
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(f"lists no {missing}, which the supervisor passes", result.stderr)
+
+    def test_a_flag_named_only_in_a_description_is_missing(self):
+        # A renamed flag's old name in the new one's description isn't the flag.
+        others = [flag for flag in flags() if flag != "--environment-secret-file"]
+        text = help_text(others) + "  --secret-file <path>".ljust(40) + "replaces --environment-secret-file\n"
+        result = self.check(text)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("lists no --environment-secret-file", result.stderr)
+
+    def test_fails_with_no_help_text(self):
+        result = self.check("")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no --help text", result.stderr)
+
+    def test_the_deploy_checks_before_pointing_the_host_at_the_image(self):
+        workflow = (REPO / ".github/workflows/cloud-deploy.yml").read_text()
+        check = workflow.index("scripts/cloud/check-orchestrator-flags.sh")
+        self.assertIn("self-hosted-runner orchestrator --help", workflow[check - 300:check])
+        self.assertLess(check, workflow.index("scripts/cloud/deploy.sh orchestrator"))
+
+
+class FakeClaudeTests(unittest.TestCase):
+    """The fake refuses what the real CLI would, so a flag outside the list fails here."""
+
+    def run_fake(self, *args):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(subprocess.run, ["rm", "-rf", str(tmp)], check=True)
+        claude = write_executable(tmp / "claude", FAKE_CLAUDE)
+        return subprocess.run([str(claude), *args], capture_output=True, text=True, timeout=10,
+                              env={"PATH": os.environ["PATH"], "RUNNER_TYPE": "linux", "FAKE_OUT": str(tmp)})
+
+    def test_refuses_an_unknown_flag(self):
+        result = self.run_fake("self-hosted-runner", "orchestrator", "--pool-secret-file", "/x")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("unknown option '--pool-secret-file'", result.stderr)
+
+    def test_refuses_a_flag_without_its_value(self):
+        result = self.run_fake("self-hosted-runner", "orchestrator", "--min-idle", "--health-port", "1")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("option '--min-idle' argument missing", result.stderr)
+
+    def test_refuses_another_command(self):
+        result = self.run_fake("self-hosted-runner", "runner")
+        self.assertEqual(result.returncode, 1)
 
 
 if __name__ == "__main__":

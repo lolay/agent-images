@@ -386,6 +386,18 @@ jobs:
           set: |
             orchestrator.cache-from=type=gha,scope=orchestrator
             orchestrator.cache-to=type=gha,mode=max,scope=orchestrator
+      # The orchestrator has no smoke: it ships with the latest Claude, and a
+      # release that dropped or renamed a flag the supervisor passes would
+      # restart every type's orchestrator forever. So the pushed image's own
+      # Claude must list every one before the host takes it (r1.f10).
+      - name: Check the supervisor's flags
+        env:
+          METADATA: ${{ steps.bake.outputs.metadata }}
+        run: |
+          set -euo pipefail
+          digest="$(jq -er '.orchestrator["containerimage.digest"]' <<<"$METADATA")"
+          docker run --rm --entrypoint claude "$ARTIFACT_REGISTRY/agent-orchestrator@$digest" \
+            self-hosted-runner orchestrator --help 2>&1 | scripts/cloud/check-orchestrator-flags.sh
       - name: Point the VM at it
         env:
           METADATA: ${{ steps.bake.outputs.metadata }}

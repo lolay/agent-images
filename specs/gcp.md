@@ -867,7 +867,13 @@ it's one process per type inside one container:
 - **Types:** the supervisor reads every `infra/gcp/*.env` baked into the image except
   `project.env` and starts `claude self-hosted-runner orchestrator` for each, with
   `RUNNER_TYPE`, that type's `--min-idle` and `--expected-spawn-seconds`, its own
-  `--health-port` (8080 upward), and `--shutdown-drain-sec 70`.
+  `--health-port` (8080 upward), and `--shutdown-drain-sec 70`. The flags are one
+  list, `images/cloud/orchestrator/orchestrator-args.sh`. The orchestrator gets no
+  smoke and always the newest Claude, so before the deploy points the host at a new
+  image it runs that image's `claude self-hosted-runner orchestrator --help` and
+  fails unless every flag in the list is defined there
+  (`scripts/cloud/check-orchestrator-flags.sh`, r1.f10); the unit tests' fake
+  `claude` refuses any flag outside the list, or one without its value.
 - **Secrets:** each type's `claude-env-<type>`, read from Secret Manager at start by
   the host's service account and written to a file per type (mode 600, `/dev/shm`). The
   supervisor passes each orchestrator only its own, and the hook unsets it before
