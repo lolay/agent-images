@@ -32,6 +32,7 @@ RUN curl -fsSL https://claude.ai/install.sh | bash -s "$CLAUDE_VERSION" \
 # The repo's layout, so hooks/gcp/lib.sh finds infra/gcp the same way here.
 COPY --chmod=755 images/cloud/orchestrator/supervisor.sh /opt/agent-orchestrator/supervisor.sh
 COPY images/cloud/orchestrator/orchestrator-args.sh /opt/agent-orchestrator/orchestrator-args.sh
+COPY hooks/lib.sh /opt/agent-orchestrator/hooks/lib.sh
 COPY hooks/gcp/ /opt/agent-orchestrator/hooks/gcp/
 COPY infra/gcp/ /opt/agent-orchestrator/infra/gcp/
 
