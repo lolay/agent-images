@@ -169,8 +169,11 @@ apt_entries() {
 # lists asks apt for.
 apt_list() {
 	local entries
-	# Assigned first: a missing list fails here rather than reading as empty.
-	entries="$(apt_entries "$@")"
+	# Assigned first, and returned: a missing list fails here rather than
+	# reading as empty. Inside a caller's $(apt_list ...) errexit is off unless
+	# the caller set inherit_errexit (install_apt and apt-prepare.sh don't), so
+	# the failed assignment alone wouldn't stop this function.
+	entries="$(apt_entries "$@")" || return
 	[[ -z "$entries" ]] || cut -f 1 <<<"$entries"
 }
 
@@ -185,7 +188,10 @@ install_apt() {
 # trust_taps <Brewfile>...: tap each tap the Brewfiles name, once, and trust
 # it: Homebrew refuses to load formulae from an untrusted third-party tap. Its
 # progress goes to stdout (tap reports it on stderr, which a green build doesn't
-# allow). The build's install_brewfile and lock.sh's prepare_brew both call it.
+# allow). The build's install_brewfile, lock.sh's prepare_brew and the macOS
+# image's install-packages.sh call it; the last runs it under macOS's bash 3.2,
+# so it uses nothing newer, and nothing above the return below is newer syntax
+# (test_install_toolset.py, MacosTapsTests).
 trust_taps() {
 	local taps tap
 	taps="$(sed -n 's/^tap "\([^"]*\)".*/\1/p' "$@" | LC_ALL=C sort -u)"
@@ -275,8 +281,12 @@ install_brewfile() {
 	log "installing $brewfile"
 	brew bundle --file="$brewfile"
 	formulae="$(brewfile_formulae "$brewfile")"
-	mapfile -t formulae <<<"$formulae"
-	log "$(brew list --versions "${formulae[@]}" | tr '\n' ';')"
+	# A Brewfile with no formula for Linux (taps, casks, or `if OS.mac?` alone)
+	# lists none: `brew list --versions ""` would fail it.
+	if [[ -n "$formulae" ]]; then
+		mapfile -t formulae <<<"$formulae"
+		log "$(brew list --versions "${formulae[@]}" | tr '\n' ';')"
+	fi
 	# The bottles Homebrew downloaded and its API and bootsnap caches aren't
 	# needed once poured. On the cloud images each toolset is its own layer, so
 	# clean up last, in the same layer; any brew command after this refills the

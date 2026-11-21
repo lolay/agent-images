@@ -641,6 +641,58 @@ class GitTests(Base):
         self.assertIn("2.1.320", (candidate / "images/cloud/gis/versions.lock").read_text(),
                       "a type this run didn't resolve takes main's lock, not the checkout's")
 
+    def test_a_lock_main_changed_during_the_resolve_is_not_reverted(self):
+        # r3.f7, review of #155: the run checked out main and resolved linux and
+        # gis from the checkout's locks; meanwhile main rolled linux back (a
+        # pin). Proposing the resolved linux would revert it. stale drops it, so
+        # the candidate takes main's, and gis, which main didn't touch, stands.
+        checkout = self.git("rev-parse", "HEAD")
+        rollback = LOCK.replace("2.1.318", "2.0.0")
+        self.write("linux", rollback)
+        self.git("commit", "-qam", "Roll linux's Claude back")
+        self.git("checkout", "-q", "--detach", checkout)
+        resolved = {"linux": LOCK.replace("2.1.318", "2.1.321"), "gis": LOCK.replace("2.1.318", "2.1.322")}
+        results = self.results("resolved linux\nresolved gis\nfailed linux-gpu\n")
+        main = self.tmp / "main"
+        self.assertEqual(self.run_git_watch("seed", "main", str(main)).returncode, 0)
+        unchecked = self.tree("unchecked", resolved)
+        self.assertEqual(self.run_git_watch("seed", "main", str(unchecked)).returncode, 0)
+        self.assertIn("images/cloud/linux/versions.lock",
+                      self.run_git_watch("changed", str(main), str(unchecked)).stdout.split(),
+                      "without stale, the resolved linux reverts main's rollback")
+        candidate = self.tree("candidate", resolved)
+        result = self.run_git_watch("stale", results, str(candidate), "main")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "dropped images/cloud/linux/versions.lock: main changed it during the resolve\n")
+        self.assertEqual(self.run_git_watch("seed", "main", str(candidate)).returncode, 0)
+        self.assertEqual(self.run_git_watch("changed", str(main), str(candidate)).stdout,
+                         "images/cloud/gis/versions.lock\n")
+        self.assertEqual((candidate / "images/cloud/linux/versions.lock").read_text(), rollback)
+
+    def test_stale_keeps_every_lock_main_left_alone(self):
+        # main moved, but not a resolved type's lock: nothing is dropped. A
+        # check that compared whole trees would drop every candidate.
+        (self.repo / "README").write_text("x")
+        self.git("add", "README")
+        self.git("commit", "-qm", "main moves on")
+        self.git("checkout", "-q", "--detach", "HEAD~1")
+        resolved = {"linux": LOCK.replace("2.1.318", "2.1.321"), "gis": LOCK.replace("2.1.318", "2.1.322")}
+        candidate = self.tree("candidate", resolved)
+        result = self.run_git_watch("stale", self.results("resolved linux\nresolved gis\n"), str(candidate), "main")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        for type_, text in resolved.items():
+            self.assertEqual((candidate / f"images/cloud/{type_}/versions.lock").read_text(), text)
+
+    def test_stale_needs_the_results_and_main(self):
+        candidate = str(self.tree("c", {}))
+        result = self.run_git_watch("stale", str(self.tmp / "nope"), candidate, "main")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no resolve results", result.stderr)
+        result = self.run_git_watch("stale", self.results("resolved linux\n"), candidate, "origin/nope")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no commit origin/nope", result.stderr)
+
     def test_proposed_when_the_branch_is_main_plus_the_candidate(self):
         branch = {"linux": LOCK.replace("2.1.318", "2.1.319"), "gis": LOCK.replace("2.1.318", "2.1.320"), "linux-gpu": LOCK}
         self.assertEqual(self.run_git_watch("proposed", str(self.tree("same", branch)), "main", "lock/watch").returncode, 0)
@@ -1035,6 +1087,12 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("git fetch --no-tags origin main\n", main)
         self.assertIn("lock-watch.sh seed origin/main out/main\n", main)
         self.assertIn("lock-watch.sh seed origin/main out/candidate\n", main)
+        # A resolved lock main changed meanwhile is dropped before seed fills
+        # the candidate in, and after the fetch that shows the change.
+        stale = "lock-watch.sh stale out/results out/candidate origin/main\n"
+        self.assertIn(stale, main)
+        self.assertLess(main.index("git fetch"), main.index(stale))
+        self.assertLess(main.index(stale), main.index("seed origin/main out/candidate"))
         for command in ("changed", "title", "body"):
             self.assertIn(f"lock-watch.sh {command} out/main out/candidate", decide)
         self.assertNotIn(" . out/candidate", decide)
@@ -1058,6 +1116,18 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("id: pins", pins)
         self.assertIn("continue-on-error: true", pins)
         self.assertIn("pins: ${{ steps.pins.outcome }}", resolve)
+
+    def test_the_pins_list_reads_every_types_lock(self):
+        # The candidate holds the types outside the class (and failed ones)
+        # only once Main has seeded it: until then, the checkout's locks.
+        watch = (REPO / ".github/workflows/lock-watch.yml").read_text()
+        resolve = watch.split("\n  propose:\n", 1)[0]
+        main = resolve.split("      - name: Main\n", 1)[1].split("      - name: ", 1)[0]
+        pins = resolve.split("      - name: Pins\n", 1)[1]
+        self.assertIn("id: main\n", main)
+        self.assertIn("MAIN: ${{ steps.main.outcome }}\n", pins)
+        self.assertIn('tree=out/candidate\n          [[ "$MAIN" == success ]] || tree=.\n', pins)
+        self.assertIn('lock-watch.sh pins "$tree"', pins)
 
     def registry_waits(self):
         text = (REPO / "scripts/cloud/lock.sh").read_text()

@@ -88,12 +88,17 @@ jobs:
           echo "failed=${failed% }" >>"$GITHUB_OUTPUT"
       # main as it is now, not as checked out: a lock pull request can merge
       # while the types resolve, and comparing with the checkout would propose
-      # its locks again (r3.f7). The candidate takes main's lock for each type
-      # it doesn't hold: outside the class, or failed.
+      # its locks again (r3.f7). A resolved type whose lock main changed
+      # meanwhile was resolved against the old one, so its candidate is
+      # dropped (stale) rather than proposed over main's. The candidate takes
+      # main's lock for each type it doesn't hold: outside the class, failed,
+      # or dropped.
       - name: Main
+        id: main
         run: |
           set -euo pipefail
           git fetch --no-tags origin main
+          scripts/cloud/lock-watch.sh stale out/results out/candidate origin/main
           scripts/cloud/lock-watch.sh seed origin/main out/main
           scripts/cloud/lock-watch.sh seed origin/main out/candidate
       - name: Decide
@@ -144,17 +149,20 @@ jobs:
       # GITHUB_TOKEN (the App has no Issues permission), so a pin whose issue
       # closed stands out (specs/gcp.md, "Pinning a dependency"). A failed
       # lookup here mustn't fail the job, which would skip propose for every
-      # type: the unresolved job reports it instead.
+      # type: the unresolved job reports it instead. The candidate holds every
+      # type's lock only once Main has seeded it; before that, the checkout's
+      # are listed, so no type's pins drop out of the list.
       - name: Pins
         id: pins
         if: ${{ !cancelled() }}
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          MAIN: ${{ steps.main.outcome }}
         run: |
           set -euo pipefail
           tree=out/candidate
-          [[ -d "$tree" ]] || tree=.
+          [[ "$MAIN" == success ]] || tree=.
           scripts/cloud/lock-watch.sh pins "$tree" | tee -a "$GITHUB_STEP_SUMMARY"
 
   propose:

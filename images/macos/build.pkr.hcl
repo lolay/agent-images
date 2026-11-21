@@ -41,6 +41,13 @@ build {
     destination = "${local.guest_staging}/Brewfile.core"
   }
 
+  # install-toolset.sh, for its Brewfile tap reader (trust_taps), which
+  # install-packages.sh sources.
+  provisioner "file" {
+    source      = "${path.root}/../toolsets/install-toolset.sh"
+    destination = "${local.guest_staging}/install-toolset.sh"
+  }
+
   provisioner "shell" {
     environment_vars = [
       "STAGING_DIR=${local.guest_staging}",

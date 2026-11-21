@@ -278,8 +278,11 @@ echo "sleep $1" >>"$CALLS"
         self.assertEqual(result.returncode, 1)
         self.assertIn(f"no packages in {listing}", result.stderr)
         self.assertEqual(self.call_log(), [])
+        # A missing list is unreadable, not empty: apt_list returns awk's
+        # failure out of the $(...) that runs it without errexit.
         result = self.run_prepare("--list", str(self.tmp / "nope"), APT_SNAPSHOT=SNAPSHOT)
         self.assertEqual(result.returncode, 1)
+        self.assertIn(f"couldn't read {self.tmp / 'nope'}", result.stderr)
         self.assertEqual(self.call_log(), [])
 
     def test_usage(self):

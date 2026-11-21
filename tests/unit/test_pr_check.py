@@ -6,6 +6,7 @@ import subprocess
 import unittest
 
 from support import REPO
+from test_bake import run_types
 
 SCRIPT = REPO / "scripts/cloud/pr-check.sh"
 WORKFLOW = REPO / ".github/workflows/cloud-build.yml"
@@ -24,14 +25,17 @@ class RelevantTests(unittest.TestCase):
 
     def test_a_lock_only_diff_is_checked(self):
         # The lock bot's pull requests: if this were "false", gate would pass
-        # without building the new lock, and auto-merge would land it.
-        for type_ in ("linux", "gis", "3d-gpu"):
+        # without building the new lock, and auto-merge would land it. Every
+        # Cloud Run type (BACKEND=run in infra/gcp), as the deploy plans them.
+        types = run_types()
+        self.assertIn("linux", types)
+        for type_ in types:
             with self.subTest(type_):
                 self.assertEqual(self.relevant(f"images/cloud/{type_}/versions.lock"), "true\n")
 
     def test_a_specs_only_diff_is_not(self):
         self.assertEqual(self.relevant("specs/gcp.md", "specs/reviews/r3/f15.md"), "false\n")
-        self.assertEqual(self.relevant("README.md", "images/macos/setup.sh", ".github/workflows/ci.yml"), "false\n")
+        self.assertEqual(self.relevant("README.md", "images/macos/setup.sh", "scripts/gcp/x.sh"), "false\n")
         self.assertEqual(self.relevant(), "false\n", "an empty diff")
 
     def test_what_builds_smokes_or_tests_an_image_is_checked(self):
@@ -39,13 +43,24 @@ class RelevantTests(unittest.TestCase):
                      "images/toolsets/core/packages.txt", "hooks/gcp/lib.sh", "infra/gcp/linux.env",
                      "scripts/cloud/lock.sh", "tests/unit/support.py", ".dockerignore", "Makefile", "triage.yaml",
                      ".github/workflows/cloud-build.yml", ".github/workflows/cloud-deploy.yml",
-                     ".github/workflows/lock-watch.yml"):
+                     ".github/workflows/lock-watch.yml", "scripts/ci/tools.env", "scripts/anthropic/setup.sh",
+                     ".github/renovate.json"):
             with self.subTest(path):
                 self.assertEqual(self.relevant("specs/gcp.md", path), "true\n")
 
+    def test_every_workflow_is_checked(self):
+        # The unit tests read every workflow (test_workflows.py's pipefail guard
+        # among them), so a change to any one of them runs the check.
+        workflows = sorted((REPO / ".github/workflows").glob("*.yml"))
+        self.assertGreater(len(workflows), 3)
+        for workflow in workflows:
+            with self.subTest(workflow.name):
+                self.assertEqual(self.relevant(str(workflow.relative_to(REPO))), "true\n")
+
     def test_lookalikes_are_not(self):
         for path in ("docs/images/cloud/x.png", "Makefile.md", "tests/sessions/x.md", "images/cloudy/x",
-                     ".github/workflows/cloud-build.yml.orig"):
+                     ".github/workflows/cloud-build.yml.orig", ".github/workflows/old/ci.yml",
+                     ".github/renovate.json5", "scripts/circle/x.sh"):
             with self.subTest(path):
                 self.assertEqual(self.relevant(path), "false\n")
 

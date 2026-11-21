@@ -111,9 +111,10 @@ Two patterns fall out of this:
 
 ### What each type has
 
-Built from the lists above; versions are in the README. The Cloud Run types (`linux`, `gis`,
-`linux-gpu`, `3d-gpu`) build at their lock's versions ([gcp.md](gcp.md#the-lock), "The
-lock"), which the lock watch moves; `android` and `mac` take the newest stable at build time.
+Built from the lists above; versions are in the README. The Cloud Run types (`BACKEND=run`
+in `infra/gcp`; `make cloud-targets`) build at their lock's versions
+([gcp.md](gcp.md#the-lock), "The lock"), which the lock watch moves; the VM images take the
+newest stable at build time.
 "Base" means it comes with the type's base image, not from a toolset.
 
 | | `linux` | `gis` | `android` | `mac` | `linux-gpu` | `3d-gpu` |

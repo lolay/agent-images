@@ -150,6 +150,20 @@ class SharedHelpersTests(unittest.TestCase):
             "clean",
         ])
 
+    def test_a_missing_list_fails_install_apt(self):
+        # install_apt reads the list in $(apt_list ...), where errexit is off:
+        # apt_list has to return the failure, or the list reads as empty and
+        # nothing is installed, green.
+        directory = self.toolsets / "demo"
+        directory.mkdir()
+        (directory / "install.sh").write_text(
+            f'set -euo pipefail\ninstall_apt "{self.tmp}/nope.txt"\necho "after install_apt"\n')
+        result = self.run_bash(str(self.script), "demo")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("after install_apt", result.stdout)
+        self.assertIn("nope.txt", result.stderr)
+        self.assertEqual(self.apt_calls(), [])
+
     def test_die_stops_a_toolsets_install_sh_under_its_name(self):
         directory = self.toolsets / "demo"
         directory.mkdir()
@@ -312,10 +326,11 @@ echo "$*" >>"{calls}"
         # so install-toolset.sh's readers are the only ones: no sed or grep over a
         # package list's lines, and no tap or formula list of a Brewfile.
         readers = []
-        # The Cloud Run images and their lock; the macOS image reads its own
-        # Brewfiles, with no lock (images/macos).
+        # The Cloud Run images and their lock, and the macOS image, which taps
+        # its Brewfiles' taps through trust_taps too.
         paths = [REPO / "scripts/cloud/lock.sh", *sorted((REPO / "images/toolsets").rglob("*.sh")),
-                 *sorted((REPO / "images/cloud").rglob("*.sh")), *sorted((REPO / "images/cloud").glob("*/Dockerfile"))]
+                 *sorted((REPO / "images/cloud").rglob("*.sh")), *sorted((REPO / "images/cloud").glob("*/Dockerfile")),
+                 *sorted((REPO / "images/macos/scripts").glob("*.sh"))]
         for path in paths:
             if path == SCRIPT:
                 continue
@@ -328,6 +343,129 @@ echo "$*" >>"{calls}"
                         or re.search(r"\^tap|brew tap |brew bundle list", code)):
                     readers.append(f"{path.relative_to(REPO)}:{number}")
         self.assertEqual(readers, [])
+
+# brew as install_brewfile calls it, through AGENT_BREW. Like the real one,
+# `list --versions` refuses a name that isn't an installed formula (the empty
+# name included), and anything else unexpected fails. Each call goes to
+# $BREW_CALLS.
+FAKE_BREW = r'''#!/bin/bash
+printf '%s\n' "$*" >>"$BREW_CALLS"
+case "$1" in
+shellenv) printf 'export PATH="%s:$PATH"\n' "$(dirname "$0")" ;;
+update) [[ "$*" == "update --quiet" ]] || exit 1 ;;
+bundle)
+	if [[ "$2" == list ]]; then
+		[[ "$3" == --formula && "$4" == --file=* ]] || exit 1
+		sed -n '/OS.mac?/d; s/^brew "\([^"]*\)".*/\1/p' "${4#--file=}"
+	else
+		[[ "$2" == --file=* ]] || exit 1
+	fi
+	;;
+list)
+	[[ "$2" == --versions && $# -gt 2 ]] || { echo "brew: unexpected $*" >&2; exit 1; }
+	for name in "${@:3}"; do
+		[[ -n "$name" ]] || { echo "Error: No available formula with the name \"\"." >&2; exit 1; }
+		echo "$name 1.0"
+	done
+	;;
+cleanup) ;;
+--cache) printf '%s\n' "$BREW_CACHE" ;;
+*) echo "brew: unexpected $*" >&2; exit 1 ;;
+esac
+'''
+
+
+class InstallBrewfileTests(unittest.TestCase):
+    """install_brewfile, against a fake brew."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.toolsets = self.tmp / "toolsets"
+        self.toolsets.mkdir()
+        self.script = self.toolsets / "install-toolset.sh"
+        shutil.copy(SCRIPT, self.script)
+        self.bin = self.tmp / "bin"
+        write_executable(self.bin / "sudo", '(($# > 0)) || exit 1\nexec "$@"\n')
+        self.brew = self.tmp / "brew/bin/brew"
+        write_executable(self.brew, FAKE_BREW.split("\n", 1)[1])
+        self.calls = self.tmp / "brew-calls"
+
+    def install(self, brewfile):
+        (self.toolsets / "demo").mkdir()
+        (self.toolsets / "demo/Brewfile").write_text(brewfile)
+        return subprocess.run(
+            ["bash", str(self.script), "demo"],
+            env=base_env(self.tmp, self.bin, AGENT_TOOLSETS_DIR=str(self.tmp / "record"), AGENT_BREW=str(self.brew),
+                         BREW_CALLS=str(self.calls), BREW_CACHE=str(self.tmp / "cache")),
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+
+    def test_the_installed_formulae_are_logged(self):
+        result = self.install('brew "go"\nbrew "git" if OS.mac?\nbrew "node"\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("==> install-toolset: go 1.0;node 1.0;\n", result.stdout)
+
+    def test_a_brewfile_with_no_formula_here_installs(self):
+        for brewfile in ('brew "git" if OS.mac?\n', 'cask "firefox"\n', "# nothing\n"):
+            with self.subTest(brewfile):
+                shutil.rmtree(self.toolsets / "demo", ignore_errors=True)
+                self.calls.unlink(missing_ok=True)
+                result = self.install(brewfile)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                calls = self.calls.read_text().splitlines()
+                self.assertFalse([call for call in calls if call.startswith("list")])
+                self.assertIn("cleanup --prune=all -s", calls)
+
+
+class MacosTapsTests(unittest.TestCase):
+    """The macOS image taps and trusts its Brewfiles' taps with trust_taps, from
+    install-toolset.sh staged beside them. Its scripts run under macOS's
+    /bin/bash, 3.2, which install-toolset.sh is read with too."""
+
+    PACKER = REPO / "images/macos/build.pkr.hcl"
+    INSTALL = REPO / "images/macos/scripts/install-packages.sh"
+    # Syntax newer than bash 3.2: a sourced file using any of it fails to load
+    # there (|&, ;& and ;;&, &>>, coproc, case-changing expansions), and a
+    # function using these builtins or declarations fails when it runs.
+    NEWER_SYNTAX = re.compile(r"\|&|;;?&|&>>|\bcoproc\b|\$\{[#!]?[A-Za-z_][A-Za-z_0-9]*(\[[^]]*\])?(\^|,)")
+    NEWER_BUILTINS = re.compile(r"\b(mapfile|readarray|declare -[A-Za-z]*[An]|local -[A-Za-z]*[An]|wait -n)\b")
+
+    def test_the_image_stages_install_toolset_and_install_packages_sources_it(self):
+        packer = self.PACKER.read_text()
+        self.assertRegex(packer, r'source\s*=\s*"\$\{path\.root\}/\.\./toolsets/install-toolset\.sh"\n'
+                                 r'\s*destination\s*=\s*"\$\{local\.guest_staging\}/install-toolset\.sh"')
+        script = self.INSTALL.read_text()
+        self.assertIn('\nsource "$STAGING_DIR/install-toolset.sh"\ntrust_taps "${brewfiles[@]}"\n', script)
+
+    def sourced_part(self):
+        text = SCRIPT.read_text()
+        guard = '[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0\n'
+        self.assertIn(guard, text)
+        return text.split(guard, 1)[0]
+
+    def test_what_sourcing_reads_is_bash_3_2(self):
+        code = "\n".join(line.split(" #", 1)[0] for line in self.sourced_part().splitlines()
+                         if not line.lstrip().startswith("#"))
+        self.assertIsNone(self.NEWER_SYNTAX.search(code))
+
+    def test_trust_taps_runs_on_bash_3_2(self):
+        body = re.search(r"^trust_taps\(\) \{\n(.*?)^\}\n", self.sourced_part(), re.S | re.M)
+        self.assertIsNotNone(body)
+        self.assertIsNone(self.NEWER_BUILTINS.search(body.group(1)))
+        self.assertIsNone(self.NEWER_SYNTAX.search(body.group(1)))
+
+    def test_the_checks_see_what_they_must(self):
+        for code in ("a |& b", "case x in a) b ;& esac", "x;;&", "a &>> f", "coproc a", "${x^^}", "${x,}",
+                     "${a[0]^}"):
+            with self.subTest(code):
+                self.assertIsNotNone(self.NEWER_SYNTAX.search(code))
+        for code in ("a || b", "a && b", "${x:-y}", "${#x}", "a >&2", "a 2>&1 | b"):
+            with self.subTest(code):
+                self.assertIsNone(self.NEWER_SYNTAX.search(code))
+        for code in ("mapfile -t x", "readarray x", "declare -A m", "local -n r=x"):
+            with self.subTest(code):
+                self.assertIsNotNone(self.NEWER_BUILTINS.search(code))
+
 
 class GithubLatestTests(unittest.TestCase):
     """install-toolset.sh's github_latest, which a toolset's install.sh gets

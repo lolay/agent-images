@@ -8,14 +8,20 @@
 #   lock-watch.sh resolve <class> <candidate> resolve each type in the class with
 #                                             lock.sh into <candidate> (lock.sh
 #                                             write), one at a time: a type that
-#                                             fails keeps its lock there and the
-#                                             rest carry on. Prints `resolved
-#                                             <type>` or `failed <type>` for each
+#                                             fails gets no lock written there (seed
+#                                             then gives it main's) and the rest
+#                                             carry on. Prints `resolved <type>` or
+#                                             `failed <type>` for each
+#   lock-watch.sh stale <results> <candidate> <main ref>
+#                                             remove from <candidate> the lock of
+#                                             each type <results> lists as resolved
+#                                             whose lock <main ref> changed since
+#                                             HEAD, the checkout the resolve read
 #   lock-watch.sh seed <ref> <tree>           copy into <tree> each lock at <ref>
 #                                             that <tree> doesn't hold yet: main's
 #                                             locks as they are after the resolve,
 #                                             and the candidate's for each type the
-#                                             run didn't resolve
+#                                             run didn't resolve or stale dropped
 #   lock-watch.sh branch                      the bot's branch, lock/watch
 #   lock-watch.sh open                        the number of the open lock pull
 #                                             request, or nothing (GH_TOKEN reads it)
@@ -81,7 +87,7 @@ die() {
 	printf 'lock-watch: %s\n' "$*" >&2
 	exit 1
 }
-usage() { die "usage: lock-watch.sh types|resolve|branch|open|changed|carry|proposed|guard|title|body|pins|token|revoke|propose|close|retry ..."; }
+usage() { die "usage: lock-watch.sh types|resolve|stale|seed|branch|open|changed|carry|proposed|guard|title|body|pins|token|revoke|propose|close|retry ..."; }
 
 repo() {
 	[[ "${GITHUB_REPOSITORY:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "GITHUB_REPOSITORY isn't owner/name"
@@ -101,7 +107,8 @@ cmd_types() {
 
 # cmd_resolve <class> <candidate>: each type on its own (lock-watch run
 # 43715897836: blender.org's 403 on 3d-gpu, the first type, stopped gis and
-# linux-gpu too). A failed type's lock in <candidate> is left as it was, and
+# linux-gpu too). A failed type gets no lock written in <candidate> (whatever
+# is there stays: in the workflow, nothing, until seed gives it main's), and
 # carry treats it as not resolved. The run still fails: the workflow's
 # `unresolved` job reads the failed lines.
 cmd_resolve() {
@@ -118,10 +125,10 @@ cmd_resolve() {
 				printf 'resolved %s\n' "$type"
 				continue
 			else
-				printf 'lock-watch: %s: lock.sh write refused the resolved lock (exit %s); its lock stays as it was\n' "$type" "$?" >&2
+				printf 'lock-watch: %s: lock.sh write refused the resolved lock (exit %s); none is written\n' "$type" "$?" >&2
 			fi
 		else
-			printf 'lock-watch: %s: lock.sh resolve failed (exit %s); its lock stays as it was\n' "$type" "$?" >&2
+			printf 'lock-watch: %s: lock.sh resolve failed (exit %s); no lock is written\n' "$type" "$?" >&2
 		fi
 		printf 'failed %s\n' "$type"
 	done
@@ -137,6 +144,30 @@ files_in() {
 # locks_in <tree>: the lock paths under a tree, relative to it, sorted.
 locks_in() {
 	(cd "$1" && find images/cloud -mindepth 2 -maxdepth 2 -name versions.lock 2>/dev/null) | LC_ALL=C sort
+}
+
+# cmd_stale <results> <candidate> <main ref>: the resolve read each type's
+# lock (and the apt snapshot in it) from the checkout, HEAD. A resolved type
+# whose lock main changed since (a rollback pin, or a lock pull request moving
+# the apt snapshot, merged during the resolve) was resolved against the old
+# one, and proposing it could revert main's: its lock is dropped from the
+# candidate, so seed gives it main's and the next run resolves it afresh, as
+# carry drops a lock main changed under the open branch (r3.f7).
+cmd_stale() {
+	local results="$1" candidate="$2" main="$3" resolved type path status
+	[[ -f "$results" ]] || die "no resolve results $results"
+	git rev-parse --verify --quiet "$main^{commit}" >/dev/null || die "no commit $main"
+	resolved="$(sed -n 's/^resolved //p' "$results")"
+	while read -r type; do
+		[[ -n "$type" ]] || continue
+		path="images/cloud/$type/versions.lock"
+		status=0
+		git diff --quiet HEAD "$main" -- "$path" || status=$?
+		((status != 0)) || continue
+		((status == 1)) || die "couldn't compare $path between HEAD and $main"
+		rm -f "$candidate/$path"
+		printf 'dropped %s: %s changed it during the resolve\n' "$path" "$main" >&2
+	done <<<"$resolved"
 }
 
 cmd_seed() {
@@ -515,6 +546,10 @@ branch)
 open)
 	(($# == 1)) || usage
 	cmd_open
+	;;
+stale)
+	(($# == 4)) || usage
+	cmd_stale "$2" "$3" "$4"
 	;;
 seed)
 	(($# == 3)) || usage

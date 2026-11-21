@@ -540,7 +540,12 @@ deploys; it only proposes a pull request:
    with `lock.sh write`) into a candidate tree. It then fetches `main` again, fills
    in `main`'s lock as it is now for each type the candidate lacks (`lock-watch.sh
    seed`), and compares with that rather than the checkout: a lock pull request
-   that merged while the types resolved would otherwise be proposed again. A type
+   that merged while the types resolved would otherwise be proposed again. Before
+   the fill, a resolved type whose lock `main` changed since the checkout (a
+   rollback pin, or a lock pull request moving the apt snapshot, merged mid-resolve)
+   loses its candidate (`lock-watch.sh stale`): it was resolved against the old
+   lock, and proposing it would revert `main`'s, so it takes `main`'s and the next
+   run resolves it afresh. A type
    whose resolve fails keeps
    `main`'s lock in the candidate and the loop carries on, so one type's upstream
    can't hold back the others' locks: on 2026-11-15 (run 43715897836) a 403 while

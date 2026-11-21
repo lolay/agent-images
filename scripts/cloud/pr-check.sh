@@ -6,8 +6,8 @@
 #   pr-check.sh relevant              the changed paths on stdin, one a line:
 #                                     print true when any is something the check
 #                                     builds, smokes or tests (a cloud image's
-#                                     inputs, a lock, the tests, the workflows
-#                                     that run them), else false
+#                                     inputs, a lock, the tests, any workflow),
+#                                     else false
 #   pr-check.sh gate <changes> <relevant> <check> <build>
 #                                     the jobs' results (success, failure,
 #                                     cancelled, skipped) and `changes`' output:
@@ -18,8 +18,10 @@ set -euo pipefail
 
 # What the check covers: the paths that build, smoke or test a cloud image
 # (images/cloud/<type>/versions.lock included: a lock pull request must build),
-# and the workflows that do it.
-readonly relevant_paths='^(images/(cloud|android|shared|toolsets)/|hooks/gcp/|infra/gcp/|scripts/cloud/|tests/unit/|\.dockerignore$|Makefile$|triage\.yaml$|\.github/workflows/(cloud-[^/]*|lock-watch)\.yml$)'
+# every workflow (the unit tests read them all, test_workflows.py's pipefail
+# guard among them), CI's tool versions and the Renovate config that bumps
+# them, and Anthropic's setup script (it installs linux's toolsets).
+readonly relevant_paths='^(images/(cloud|android|shared|toolsets)/|hooks/gcp/|infra/gcp/|scripts/(cloud|ci|anthropic)/|tests/unit/|\.dockerignore$|Makefile$|triage\.yaml$|\.github/(workflows/[^/]*\.yml|renovate\.json)$)'
 
 usage() {
 	printf 'usage: pr-check.sh relevant < paths | gate <changes> <relevant> <check> <build>\n' >&2
