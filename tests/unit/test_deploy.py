@@ -397,6 +397,28 @@ class VmDeployTests(DeployTests):
                 self.assertIn("IMAGE_FAMILY is not a setting", result.stderr)
                 self.assertFalse((self.out / "packer.log").exists())
 
+    def test_every_type_refuses_a_project_key_in_its_env_file(self):
+        # deploy.sh promotes and smokes in project.env's project and region; a
+        # type's own REGION would move only the hook's runs (#161).
+        env_dir = self.tmp / "infra"
+        env_dir.mkdir()
+        (env_dir / "project.env").write_text((REPO / "infra/gcp/project.env").read_text())
+        types = sorted(path.stem for path in (REPO / "infra/gcp").glob("*.env") if path.stem != "project")
+        self.assertTrue(types)
+        for type_ in types:
+            text = (REPO / f"infra/gcp/{type_}.env").read_text()
+            (env_dir / f"{type_}.env").write_text(text + "REGION=us-east1\n")
+            commands = ("vm-build", "vm-promote") if "BACKEND=compute" in text else ("type",)
+            image = ANDROID_IMAGE if "BACKEND=compute" in text else f"{REGISTRY}/agent-{type_}@sha256:" + "b" * 64
+            for command in commands:
+                with self.subTest(type=type_, command=command):
+                    result = self.deploy(command, type_, image, "abc123def456", AGENT_GCP_ENV_DIR=str(env_dir))
+                    self.assertEqual(result.returncode, 1)
+                    self.assertIn(f"{type_}: REGION is a project key", result.stderr)
+        self.assertEqual(self.gcp.requests("PATCH"), [])
+        self.assertEqual(self.gcp.requests("POST"), [])
+        self.assertFalse((self.out / "packer.log").exists())
+
     def test_type_refuses_a_compute_type(self):
         result = self.deploy("type", "android", IMAGE, "abc")
         self.assertEqual(result.returncode, 1)

@@ -8,6 +8,9 @@
 #       current image (an env-file-only change). A type whose env file says
 #       DEPLOY=false is built and pushed by the workflow but not deployed: this
 #       writes no job and runs no smoke (a GPU type waiting for its quota).
+#       This, vm-build and vm-promote refuse a type whose env file
+#       gcp_check_type refuses (hooks/gcp/lib.sh), such as one setting a
+#       project.env key: they deploy in project.env's project and region.
 #   deploy.sh vm-build <type> <image name> <commit>
 #       a Compute Engine type (BACKEND=compute): build its image with Packer
 #       from images/<type>/gce into family agent-<type>-next, and keep its
@@ -130,6 +133,8 @@ cmd_type() {
 	local type="$1" image="$2" sha="$3"
 	[[ -f "$AGENT_GCP_ENV_DIR/$type.env" ]] || die "no infra/gcp/$type.env"
 	[[ "$(gcp_backend "$type")" == run ]] || die "$type is a Compute Engine type; it deploys with vm-build and vm-promote"
+	local reason
+	reason="$(gcp_check_type "$type" 2>&1)" || die "$reason"
 	if ! gcp_deploys "$type"; then
 		log "agent-$type: DEPLOY=false in infra/gcp/$type.env; built $image, not deployed (no job, no smoke)"
 		return 0
