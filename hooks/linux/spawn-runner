@@ -8,8 +8,9 @@
 #
 # Exit codes (the orchestrator's contract): 0 submitted or already running;
 # 1 retry later (every runner name is busy, or a transient error); 2 don't retry
-# (this host's setup is broken). stderr's tail shows in the environment's
-# Activity tab, so it never carries secrets.
+# (this host's setup is broken: no vms/runner.env, or a variable the
+# orchestrator didn't set). stderr's tail shows in the environment's Activity
+# tab, so it never carries secrets.
 set -euo pipefail
 
 # The orchestrator's own credential; nothing downstream of this hook needs it.
@@ -19,16 +20,11 @@ hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly hook_dir
 # shellcheck source=scripts/linux/lib.sh
 source "$hook_dir/../../scripts/linux/lib.sh"
+# shellcheck source=hooks/lib.sh
+source "$hook_dir/../lib.sh"
 
-failed_on_purpose=false
 claimed_dir=""
 submitted=false
-
-fail() {
-	printf 'agent-images: %s\n' "$2" >&2
-	failed_on_purpose=true
-	exit "$1"
-}
 
 # On any failure, give the name back. An unexpected error (set -e) could exit 2
 # or more, which the orchestrator reads as "never retry", so map it to 1.
@@ -45,7 +41,9 @@ on_exit() {
 }
 trap on_exit EXIT
 
-: "${CLAUDE_RUNNER_WORK_ORDER_FILE:?}" "${CLAUDE_RUNNER_ORDER_ID:?}"
+# A missing variable exits 2 (hooks/lib.sh's require): an orchestrator that
+# doesn't set them is one this hook doesn't match, and a retry won't change it.
+require "the orchestrator sets it" CLAUDE_RUNNER_WORK_ORDER_FILE CLAUDE_RUNNER_ORDER_ID
 readonly order_id="$CLAUDE_RUNNER_ORDER_ID"
 max="$(setting RUNNER_MAX 2)"
 readonly max

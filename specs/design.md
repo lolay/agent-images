@@ -117,7 +117,10 @@ session, and each missing standby runner, the orchestrator runs `hooks/spawn-run
    none free exits 1, so the session waits in Anthropic's queue and is re-offered.
 3. Copy the work order (mode 600), submit `scripts/runner-once.sh <vm>` as launchd job
    `com.agent-images.<vm>`, and return. Any unexpected failure releases the claim and
-   exits 1; exit 2 (don't retry) is only for a missing `vms/runner.env`.
+   exits 1; exit 2 (don't retry) is only for a broken setup: a missing
+   `vms/runner.env`, or a `CLAUDE_RUNNER_WORK_ORDER_FILE` or `CLAUDE_RUNNER_ORDER_ID`
+   the orchestrator didn't set (`require` in `hooks/lib.sh`, shared with the Linux and
+   GCP hooks, r1.f22).
 
 `runner-once.sh` clones the image, starts it, runs `EPHEMERAL=true
 ENVIRONMENT_SECRET_FILE=<work order> vm-configure --config vms/runner.env <vm>`, deletes

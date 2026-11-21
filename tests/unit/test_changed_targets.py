@@ -237,11 +237,15 @@ class ChangedTargetsTests(unittest.TestCase):
                 self.assertTrue(self.change(name)["orchestrator"])
                 self.base = self.head()
 
-    def test_every_file_the_orchestrator_dockerfile_mounts_redeploys_it(self):
-        # Read from the real Dockerfile: a new mount that isn't a trigger fails here.
+    def test_every_file_the_orchestrator_dockerfile_mounts_or_copies_redeploys_it(self):
+        # Read from the real Dockerfile: a new mount or copied file that isn't a
+        # trigger fails here. Copied directories are their own globs, above.
         dockerfile = (REPO / "images/cloud/orchestrator/Dockerfile").read_text()
         sources = re.findall(r"--mount=type=bind,source=(\S+),target=", dockerfile)
+        for line in re.findall(r"^COPY\s+(.+)$", dockerfile, re.M):
+            sources += [arg for arg in line.split()[:-1] if not arg.startswith("--") and not arg.endswith("/")]
         self.assertIn("images/toolsets/install-toolset.sh", sources)
+        self.assertIn("hooks/lib.sh", sources)
         for name in sources:
             with self.subTest(name=name):
                 self.write(name, "changed\n")

@@ -295,7 +295,7 @@ matrix. A failed deploy makes the next one redeploy more, never less:
 | `images/shared/**`, `images/toolsets/install-toolset.sh`, `images/toolsets/write-claude-md.sh`, `images/toolsets/toolset-checks.sh`, `images/toolsets/write-versions.sh`, `images/toolsets/skills/**`, `images/cloud/base/**`, `images/cloud/runner/**`, `images/cloud/entrypoint.sh`, `images/cloud/docker-bake.hcl`, `.dockerignore` | Every runner type |
 | `images/toolsets/<toolset>/**` | The types whose Dockerfiles (or build parents') install that toolset |
 | `images/cloud/<type>/**`, including its `versions.lock` | That type |
-| `hooks/gcp/**`, `images/cloud/orchestrator/**`, `images/cloud/docker-bake.hcl` and `.dockerignore` (which also rebuild every runner type, above), and the two files its build reads from elsewhere (`images/cloud/base/apt-build.conf`, `images/toolsets/install-toolset.sh`) | The orchestrator host (new image, then the host restarts its container) |
+| `hooks/gcp/**`, `hooks/lib.sh`, `images/cloud/orchestrator/**`, `images/cloud/docker-bake.hcl` and `.dockerignore` (which also rebuild every runner type, above), and the two files its build reads from elsewhere (`images/cloud/base/apt-build.conf`, `images/toolsets/install-toolset.sh`) | The orchestrator host (new image, then the host restarts its container) |
 | `infra/gcp/<type>.env` (CPU, memory, GPU, timeout, `--min-idle`, `REBUILD`, `DEPLOY`) | That type's job and orchestrator settings, no image build, unless the type had no job at the diff's base: its env file is new there, or this change removed `DEPLOY=false`. Then there's no live image for the job to reuse, so the type builds, and its first deploy takes one push. plan reads that from the base commit, not from Cloud Run (it has no GCP token). `DEPLOY=false` builds and pushes the image but writes no job, runs no smoke and starts no orchestrator: a type waiting for its quota. It is for Cloud Run types only: deploy.sh's vm commands and the supervisor refuse it for `BACKEND=compute` |
 | `scripts/cloud/job-spec.sh` | Every type's job, no image build |
 | `images/android/**` (the LXD image's scripts and files, and `gce/`), the toolsets in `images/android/toolsets.txt`, `images/shared/**`, the four toolset scripts and `images/toolsets/skills/**` | The `android` Compute Engine image: Packer build, smoke VM, then family `agent-android` ([below](#compute-engine-vm-per-session-android-and-the-gpu-fallback)) |
@@ -827,7 +827,8 @@ orchestrator container and its own service account, allowed only its own secret.
 
 1. `unset SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET`. A variable the orchestrator or the
    supervisor didn't set, or a setting the env files leave out, exits 2 before
-   anything is created: every retry would find it missing too.
+   anything is created: every retry would find it missing too. `require` in
+   `hooks/lib.sh`, which the host hooks share.
 2. Create `gs://<bucket>/orders/$CLAUDE_RUNNER_ORDER_ID` with `ifGenerationMatch=0`
    (the Storage JSON API through `curl` with a metadata-server token, like every call
    the hook makes; no `gcloud` on the host). A 412 means this order already has an
@@ -867,7 +868,7 @@ One container image, `agent-orchestrator` (`images/cloud/orchestrator/`), runs e
 type's orchestrator. Claude's orchestrator takes one `--environment-secret-file`, so
 it's one process per type inside one container:
 
-- **Contents:** Claude Code, `curl`, `jq`, `hooks/gcp`, every `infra/gcp/*.env`, and a
+- **Contents:** Claude Code, `curl`, `jq`, `hooks/gcp` and `hooks/lib.sh`, every `infra/gcp/*.env`, and a
   supervisor script as the entrypoint. No `gcloud` (Python, around 100 MB a run): the
   hook and the supervisor call REST APIs with a metadata-server token. Small, CPU
   only, and it never runs session code.
@@ -906,7 +907,7 @@ it's one process per type inside one container:
   `MAX_RUN_DURATION_SEC` plus 5 minutes, and remove the `work-order` key from VMs
   whose guest has marked it read. The deploy's smoke VMs are left to the deploy.
   Logged as `supervisor: reaper`.
-- **Deploys:** a push to `main` that touches `hooks/gcp/**`, `images/cloud/orchestrator/**`,
+- **Deploys:** a push to `main` that touches `hooks/gcp/**`, `hooks/lib.sh`, `images/cloud/orchestrator/**`,
   `infra/gcp/*.env`, its build's definition and context (`images/cloud/docker-bake.hcl`,
   `.dockerignore`), or the two files its build mounts from elsewhere
   (`images/cloud/base/apt-build.conf`, `images/toolsets/install-toolset.sh`) rebuilds it

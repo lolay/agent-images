@@ -4,5 +4,6 @@
 !images/shared/
 !images/toolsets/
 !images/cloud/
+!hooks/lib.sh
 !hooks/gcp/
 !infra/gcp/
