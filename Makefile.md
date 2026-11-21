@@ -62,6 +62,8 @@ Linux hosts only, from `.env` (see `.env.linux.example`):
 | --- | --- | --- |
 | `LINUX_BASE_IMAGE` | `ubuntu:24.04` | `build`: the LXD image the build VM starts from |
 | `BUILD_CPU` / `BUILD_MEMORY_GB` / `BUILD_DISK_GB` | `8` / `16` / `64` | `build`: the build VM |
+| `ALLOW_STDERR` | unset | `build` (Linux), for one build (`ALLOW_STDERR=1 make build`): `1` publishes an image whose provisioners wrote stderr. `make build` refuses it when `.env` assigns it in any form (make's `origin`), since make exports `.env` to every target |
+| `LXD_DOWN_LIMIT_MIN` | `1440` | Linux `runner-once`: minutes it waits on an LXD that doesn't answer before giving up and leaving the claim to the next reclaim |
 | `LXD_POOL_GB` | 70% of the free space on `/` | `host-setup`: the ZFS pool (a sparse file) |
 
 ## Targets
@@ -85,7 +87,7 @@ Linux hosts only, from `.env` (see `.env.linux.example`):
 | Target | Description |
 | --- | --- |
 | `runner-run` | `scripts/orchestrator-run.sh` in the foreground: Keychain secret into the environment, then `claude self-hosted-runner orchestrator --hooks-dir hooks`. Runner VMs outlive Ctrl-C |
-| `runner-install` | `scripts/orchestrator-service.sh install`: host LaunchAgent `com.agent-images.orchestrator`; logs in `build/logs/orchestrator.{out,err}`. Over SSH, run `security unlock-keychain ~/Library/Keychains/login.keychain-db` first. The install and every orchestrator start clear Homebrew's quarantine on a Developer ID-signed `claude` |
+| `runner-install` | `scripts/orchestrator-service.sh install`: host LaunchAgent `com.agent-images.orchestrator`; logs in `build/logs/orchestrator.{out,err}`. Over SSH, run `security unlock-keychain ~/Library/Keychains/login.keychain-db` first. The install and every orchestrator start clear Homebrew's quarantine on a `claude` signed by Anthropic (`images/shared/clear-quarantine.sh`, which the macOS guest runs too) |
 | `runner-uninstall` | Boots out the orchestrator, then stops and deletes every runner VM |
 | `runner-stop` | Stops and deletes every runner VM (sessions requeue); a running orchestrator boots replacements |
 | `runner-status` | Orchestrator state, its `/healthz` body and log tail, then `vm-status` for each runner VM |
@@ -109,7 +111,7 @@ Every LaunchAgent and job writes stdout to `.out` and stderr to `.err`.
 | --- | --- |
 | `host-runner-run` | `scripts/host-runner-service.sh run`: from launchd's minimal environment, `cd $(DIR)`, start your login shell there, and run `scripts/host-runner-run.sh` in the foreground. It reads the secret (Keychain account `host-<context>`, else `host`), locks to the email of the Claude config directory's account, and runs `images/shared/runners/claude.sh` again after every session. Refuses when the LaunchAgent is installed |
 | `host-runner-install` | The same command as LaunchAgent `com.agent-images.host-runner` (`KeepAlive`): starts at once in the GUI session and at every login. Runs `host-runner-run.sh --check` first, which fails on a missing secret but not on a keychain locked over SSH |
-| `host-runner-uninstall` | Boots out the LaunchAgent, waits up to 130 s for the runner to drain, removes the plist |
+| `host-runner-uninstall` | Boots out the LaunchAgent, waits up to 130 s for the runner to drain (its LaunchAgent's 120 s stop budget, `RUNNER_DRAIN_SEC` in `scripts/lib.sh`, plus a margin), removes the plist |
 | `host-runner-status` | LaunchAgent state, the running runner's context, `/healthz`, log tail |
 
 A running host runner holds `build/host-runner/` (its PID and a summary of its
@@ -124,7 +126,7 @@ context), which keeps a second one from starting. LaunchAgent logs:
 | `image-prune` | `tart prune --entries caches --space-budget $(TART_CACHE_GB)` (default 200 GB). Each newer base image `make build` pulls adds ~80 GB to the cache; this drops the least recently used |
 | `vm-create` | `tart clone` then `tart set --cpu --memory` |
 | `vm-start` | `tart run --no-graphics` in the background; log in `build/logs/` |
-| `vm-configure` | `scripts/vm-configure.sh`: hostname, secrets, `runner.env`, runner restart. Idempotent |
+| `vm-configure` | `scripts/vm-configure.sh`: hostname, secrets, `runner.env`, runner restart. Idempotent. The VM's own Keychain item (`make secret-set NAME=claude-environment-secret VM=<vm>`, a separate environment's key) is required; it never falls back to `default`, the orchestrator's, and refuses a copy of it and the host keys' account names as VM names (`orchestrator`, `default`, `host`, `host-*`) |
 | `vm-up` | `vm-start` + `vm-configure` |
 | `vm-stop` / `vm-delete` | `tart stop`; `tart delete` after stopping |
 | `vm-status` | `scripts/vm-status.sh`: runner, process, Claude `/healthz`, last log lines |
@@ -164,7 +166,7 @@ step. It passes `--var image_ref=$(IMAGE_REF)` so the image check follows `.env`
 | --- | --- |
 | `host-setup` | `scripts/linux/host-setup.sh`: checks VT-x/AMD-V and turns on nested KVM, installs the LXD snap (refreshes held) and initializes it with a ZFS pool and the `lxdbr0` bridge, installs Claude Code, enables lingering. Idempotent; uses sudo |
 | `doctor` | `triage --profile linux` (one profile; `MODE` is ignored) |
-| `build` | `scripts/linux/build-image.sh`: refreshes LXD, launches `agent-android-build` from `ubuntu:24.04`, runs `images/android/scripts` in it, which install the toolsets in `images/android/toolsets.txt` (the `android` toolset boots the emulator once for its snapshot), publishes `agent-android-next`, then moves the `agent-android` alias to it |
+| `build` | `scripts/linux/build-image.sh`: refreshes LXD, launches `agent-android-build` from `ubuntu:24.04`, stages `images/android/staging.txt`'s layout (`images/android/stage.sh`) and runs `images/android/scripts` in it, which install the toolsets in `images/android/toolsets.txt` (the `android` toolset boots the emulator once for its snapshot), publishes `agent-android-next`, then moves the `agent-android` alias to it. Any provisioner stderr stops it before publishing (the live image stays); `ALLOW_STDERR=1 make build` publishes anyway after printing it |
 | `runner-run` | `scripts/linux/orchestrator-run.sh`: the secret from `~/.config/agent-images` into the environment, then `claude self-hosted-runner orchestrator --hooks-dir hooks/linux` |
 | `runner-install` | `scripts/linux/orchestrator-service.sh install`: systemd user unit `agent-images-orchestrator.service`, started at boot (lingering) |
 | `runner-uninstall` / `runner-stop` / `runner-status` | As on macOS, with systemd and `lxc` |
@@ -181,9 +183,10 @@ powers off). Claims live in `build/runners/runner-N/`, as on macOS. Logs:
 | `build/logs/runner-N.guest.log` | The VM's journal for `agent-runner` and the watchdog, streamed while it runs; a `=== time runner-N order … ===` header per VM |
 | `build/logs/runner-N.lxc.log` | `lxc launch` output |
 
-For a debug VM: `lxc launch agent-android debug-1 --vm`, then
-`scripts/linux/vm-configure.sh debug-1` (settings from `vms/debug-1.env`), and
-`lxc exec debug-1 -- bash` to look around.
+For a debug VM: `lxc launch agent-android debug-1 --vm`, `make secret-set
+NAME=claude-environment-secret VM=debug-1` (a separate environment's key: the
+orchestrator's never enters a VM), then `scripts/linux/vm-configure.sh debug-1`
+(settings from `vms/debug-1.env`), and `lxc exec debug-1 -- bash` to look around.
 
 ## Cloud (GCP)
 
@@ -194,7 +197,7 @@ or deploys: only a push to `main` does, through `.github/workflows/cloud-deploy.
 
 | Target | What it does |
 | --- | --- |
-| `cloud-build` | Builds through `scripts/cloud/bake.sh`, one target at a time: a runner type from its lock (`images/cloud/<TYPE>/versions.lock`, the base digest, apt snapshot, Claude and toolchain versions as `lock.sh bake-args`), loaded as `agent-<TYPE>:local`, with the versions report the pull request check shows in `out/versions/<TYPE>/versions.md` (it names `COMMIT`, the checked-out commit by default); the orchestrator at `CLAUDE_VERSION`. A type with no lock fails. `TYPE=linux` (default), any type, `orchestrator`, or `all` (`cloud-targets`). `agent-base` comes along as the type's build context and isn't loaded on its own |
+| `cloud-build` | Builds through `scripts/cloud/bake.sh`, one target at a time: a runner type from its lock (`images/cloud/<TYPE>/versions.lock`, the base digest, apt snapshot, Claude and toolchain versions as `lock.sh bake-args`), loaded as `agent-<TYPE>:local`, with the versions report the pull request check shows in `out/versions/<TYPE>/versions.md` (it names `COMMIT`, the checked-out commit by default); the orchestrator with the newest Claude Code (`docker-bake.hcl`'s `ORCHESTRATOR_CLAUDE_VERSION`), or `CLAUDE_VERSION` when set. A type with no lock fails. `TYPE=linux` (default), any type, `orchestrator`, or `all` (`cloud-targets`). `agent-base` comes along as the type's build context and isn't loaded on its own |
 | `cloud-smoke` | Checks the image's toolset record against the Dockerfiles and toolsets (`scripts/cloud/record-check.sh`: every toolset recorded in order, with its binary checks and smoke test, so an empty record can't pass), then runs `agent-<TYPE>:local smoke $(SMOKE)` (the entrypoint's checks: Claude, every toolset's binary checks and smoke tests, the mounts; what the deploy runs on `agent-<type>-next`) with anonymous volumes standing in for scratch and outputs and an empty read-only tmpfs for the datasets. What the pull request check runs on each loaded runner type |
 | `cloud-lint` | `shellcheck` and `shfmt -d` on the cloud scripts (the android VM's guest scripts and `scripts/ci`, which installs CI's tools, included), `actionlint` on the cloud workflows and `lock-watch.yml` (`go run` at `ACTIONLINT_VERSION`, so it needs Go), and the cloud settings JSON. `MODE=android` adds `packer init`, `packer fmt -check` and `packer validate` on the android Compute Engine image's template (`images/android/gce`): behind `MODE` so a session that doesn't touch the template doesn't need Packer, which the linux image doesn't ship. Any other `MODE` but the default `run` fails |
 | `cloud-test` | `python3 -m unittest discover -s tests/unit`: the entrypoint, the toolset checks runner, SessionStart hook, spawn hook (both backends), supervisor and its reaper, the android VM's order script, job spec, path map and deploy script, against fakes (`tests/unit/fake_gcp.py` for the GCP APIs and the metadata server), and that the bake file has every type's targets (needs `docker buildx`). Linux only |
@@ -208,7 +211,7 @@ or deploys: only a push to `main` does, through `.github/workflows/cloud-deploy.
 | `TYPE` | `linux` | `cloud-build`, `cloud-smoke`, `cloud-lock` |
 | `SMOKE` | `pr` | `cloud-smoke`: `pr` skips the smoke tests marked `# smoke: live` (they need a GPU); empty runs them all, as the deploy does |
 | `COMMIT` | checked-out commit | `cloud-build`: the commit the versions report names (the pull request check passes the head commit it builds) |
-| `CLAUDE_VERSION` | `latest` | `cloud-build`, `cloud-ci`, the orchestrator only: an exact version or a channel. A runner type's Claude Code comes from its lock |
+| `CLAUDE_VERSION` | (empty: `docker-bake.hcl`'s `ORCHESTRATOR_CLAUDE_VERSION`, the newest) | `cloud-build`, `cloud-ci`, the orchestrator only: an exact version or a channel. A runner type's Claude Code comes from its lock |
 | `WRITE` | (empty) | `cloud-lock`: set, writes the resolved lock, for a local `cloud-build`; never committed |
 
 Where things live:

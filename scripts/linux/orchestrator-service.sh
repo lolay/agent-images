@@ -29,14 +29,18 @@ runner_names() {
 	return 0
 }
 
-# SIGTERM each runner unit; runner-once stops and deletes its VM, and any session
-# on it requeues. systemctl stop waits for the unit, up to its TimeoutStopSec.
+# SIGTERM every runner unit; runner-once stops and deletes its VM, and any session
+# on it requeues. A plain systemctl stop would wait for each unit in turn, so
+# signal them all (--no-block), then wait for them together (wait_for_runner_jobs).
 stop_runners() {
-	local vm
+	local vm pid pids=()
 	for vm in $(runner_names); do
+		pid="$(cat "$RUNNERS_DIR/$vm/pid" 2>/dev/null || true)"
+		[[ -z "$pid" ]] || pids+=("$pid")
 		log "$vm: stopping"
-		systemctl --user stop "$(runner_unit "$vm")" >/dev/null 2>&1 || true
+		systemctl --user stop --no-block "$(runner_unit "$vm")" >/dev/null 2>&1 || true
 	done
+	((${#pids[@]} == 0)) || wait_for_runner_jobs "${pids[@]}"
 	reclaim_stale_runners
 }
 
@@ -62,8 +66,10 @@ case "$action" in
 install)
 	command -v claude >/dev/null 2>&1 || die "claude not found; run make host-setup"
 	[[ -f "$RUNNER_CONFIG" ]] || die "no $RUNNER_CONFIG; cp vms/example-linux.env vms/runner.env"
-	host_secret claude-environment-secret orchestrator >/dev/null ||
-		die "no $SECRETS_DIR/claude-environment-secret; run make secret-set NAME=claude-environment-secret"
+	status=0
+	host_secret claude-environment-secret orchestrator >/dev/null || status=$?
+	((status != 1)) || die "can't read the environment key in $SECRETS_DIR (see above)"
+	((status == 0)) || die "no $SECRETS_DIR/claude-environment-secret; run make secret-set NAME=claude-environment-secret"
 	systemctl --user is-enabled "$unit" >/dev/null 2>&1 && die "$unit is already installed; run make runner-uninstall first"
 	mkdir -p "$(dirname "$unit_file")" "$AGENT_IMAGES_LOG_DIR"
 	# PATH carries lxc (/snap/bin) and claude (~/.local/bin) for the orchestrator,

@@ -103,12 +103,20 @@ jobs:
             echo "orchestrator=$(jq '.orchestrator' <<<"$plan")"
             echo "prune=$(jq '.prune' <<<"$plan")"
           } >>"$GITHUB_OUTPUT"
-      # The orchestrator's Claude Code (it has no lock): the version is part of
-      # its build, so a new release rebuilds that layer instead of the cache
-      # keeping the first one. Runner types take theirs from their lock.
+      # The orchestrator's Claude Code (it has no lock): the version its channel
+      # names now, from the bake file's ORCHESTRATOR_CLAUDE_VERSION through
+      # lock.sh, which holds the release URL. The version is part of its build,
+      # so a new release rebuilds that layer instead of the cache keeping the
+      # first one. Runner types take theirs from their lock. Only when the
+      # orchestrator is planned: a hiccup at Claude's release server must not
+      # fail plan, and with it every type's deploy.
       - name: Claude Code version
         id: claude
-        run: echo "version=$(curl -fsSL https://downloads.claude.ai/claude-code-releases/latest)" >>"$GITHUB_OUTPUT"
+        if: steps.targets.outputs.orchestrator == 'true'
+        run: |
+          set -euo pipefail
+          version="$(scripts/cloud/lock.sh orchestrator-claude)"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
 
   types:
     needs: plan
@@ -130,7 +138,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Project settings
-        run: grep -E '^[A-Z_]+=' infra/gcp/project.env >>"$GITHUB_ENV"
+        run: scripts/cloud/github-env.sh >>"$GITHUB_ENV"
       - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
@@ -277,10 +285,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Project settings
-        run: grep -E '^[A-Z_]+=' infra/gcp/project.env >>"$GITHUB_ENV"
+        run: scripts/cloud/github-env.sh >>"$GITHUB_ENV"
       # CI's tool versions, one file every workflow reads.
       - name: Tool versions
-        run: grep -E '^[A-Z_]+=' scripts/ci/tools.env >>"$GITHUB_ENV"
+        run: scripts/cloud/github-env.sh scripts/ci/tools.env >>"$GITHUB_ENV"
       - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
@@ -337,15 +345,16 @@ jobs:
           retention-days: 90
           if-no-files-found: error
 
-  # After the types and VM images, so a first deploy creates the job or image
-  # before the orchestrator can spawn into it; skipped if one failed, and the
-  # next push retries.
+  # Whatever the types and VM images did: the supervisor starts a type's
+  # orchestrator only once its job or image family exists, and checks a missing
+  # one again every RUNNER_WAIT_SEC (supervisor.sh), so one failed type can't
+  # hold back the others' hook and env changes (r1.f3). It still runs after
+  # them, so a new type's first deploy finds its job when the supervisor starts
+  # rather than a check later.
   orchestrator:
     needs: [plan, types, vm-images]
     if: >-
-      always() && needs.plan.result == 'success' && needs.plan.outputs.orchestrator == 'true'
-      && (needs.types.result == 'success' || needs.types.result == 'skipped')
-      && (needs.vm-images.result == 'success' || needs.vm-images.result == 'skipped')
+      !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.orchestrator == 'true'
     runs-on: ubuntu-24.04
     environment: production
     permissions:
@@ -354,7 +363,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Project settings
-        run: grep -E '^[A-Z_]+=' infra/gcp/project.env >>"$GITHUB_ENV"
+        run: scripts/cloud/github-env.sh >>"$GITHUB_ENV"
       - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
@@ -372,7 +381,7 @@ jobs:
         env:
           REGISTRY: ${{ env.ARTIFACT_REGISTRY }}
           TAG: ${{ steps.tag.outputs.tag }}
-          CLAUDE_VERSION: ${{ needs.plan.outputs.claude-version }}
+          ORCHESTRATOR_CLAUDE_VERSION: ${{ needs.plan.outputs.claude-version }}
           # As in the types' bake: the metadata the next step reads stays small.
           BUILDX_METADATA_PROVENANCE: disabled
         with:
@@ -387,6 +396,17 @@ jobs:
           set: |
             orchestrator.cache-from=type=gha,scope=orchestrator
             orchestrator.cache-to=type=gha,mode=max,scope=orchestrator
+      # The orchestrator has no smoke: it ships with the latest Claude, and a
+      # release that dropped or renamed a flag the supervisor passes would
+      # restart every type's orchestrator forever. So the pushed image's own
+      # Claude must list every one before the host takes it (r1.f10).
+      - name: Check the supervisor's flags
+        env:
+          METADATA: ${{ steps.bake.outputs.metadata }}
+        run: |
+          set -euo pipefail
+          digest="$(jq -er '.orchestrator["containerimage.digest"]' <<<"$METADATA")"
+          scripts/cloud/check-orchestrator-flags.sh "$ARTIFACT_REGISTRY/agent-orchestrator@$digest"
       - name: Point the VM at it
         env:
           METADATA: ${{ steps.bake.outputs.metadata }}
@@ -410,11 +430,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Project settings
-        run: grep -E '^[A-Z_]+=' infra/gcp/project.env >>"$GITHUB_ENV"
+        run: scripts/cloud/github-env.sh >>"$GITHUB_ENV"
       - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.CI_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
-      - name: Delete jobs and images whose type is gone
+      - name: Delete jobs, VMs and images whose type is gone
         run: scripts/cloud/deploy.sh prune

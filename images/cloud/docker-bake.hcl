@@ -26,7 +26,22 @@ variable "TAG" {
 }
 
 variable "CLAUDE_VERSION" {
-  # An exact version, or the installer's channel name (latest, stable).
+  # The runner types' Claude Code: an exact version, or the installer's channel
+  # name (latest, stable). Their locks resolve it (scripts/cloud/lock.sh), so a
+  # version here pins every runner type (specs/gcp.md, "Pinning a dependency").
+  # A pin holds the runner types only: the orchestrator always takes the newest
+  # Claude (ORCHESTRATOR_CLAUDE_VERSION, below).
+  default = "latest"
+}
+
+variable "ORCHESTRATOR_CLAUDE_VERSION" {
+  # The orchestrator's Claude Code, always the newest (Owner, 2026-11-20, #83,
+  # r3.f22): it has no lock, and the deploy checks its flags against it instead
+  # (scripts/cloud/check-orchestrator-flags.sh). The deploy passes the version
+  # this channel names now (lock.sh orchestrator-claude), so a release rebuilds
+  # its layer rather than the cache keeping the first; bake.sh passes a
+  # CLAUDE_VERSION from the environment (make CLAUDE_VERSION=...) for a local
+  # build of another.
   default = "latest"
 }
 
@@ -48,6 +63,15 @@ function "versions_output" {
 # The CPU types' base image: Docker Hub's ubuntu through Google's mirror (Docker
 # Hub rate-limits anonymous pulls). The tag is the constraint; the build passes
 # the digest the type's lock resolved it to (scripts/cloud/lock.sh bake-args).
+#
+# Why every image stays on Ubuntu 24.04, though ubuntu:latest is 26.04 (Owner,
+# 2026-11-20, r1.f18): the GPU types need CUDA 13.0, the version Cloud Run's
+# 580.x driver runs (base-gpu, below), and NVIDIA ships no ubuntu26.04 image of
+# it; linux-gpu builds from linux's own Dockerfile, so linux can't move without
+# it, and one OS for every image keeps the toolsets tested on one. So they move
+# to 26.04 together, when a CUDA 13.0 ubuntu26.04 image ships (or the driver
+# moves to a CUDA that has one): this base, the orchestrator, the android
+# Compute Engine and LXD images. Each of those points here instead of saying why.
 target "base" {
   context    = "."
   dockerfile = "images/cloud/base/Dockerfile"
@@ -248,7 +272,7 @@ target "orchestrator" {
   context    = "."
   dockerfile = "images/cloud/orchestrator/Dockerfile"
   args = {
-    CLAUDE_VERSION = CLAUDE_VERSION
+    CLAUDE_VERSION = ORCHESTRATOR_CLAUDE_VERSION
   }
   tags = tags("orchestrator")
 }

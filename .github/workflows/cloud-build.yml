@@ -57,7 +57,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # CI's tool versions, one file every workflow reads.
       - name: Tool versions
-        run: grep -E '^[A-Z_]+=' scripts/ci/tools.env >>"$GITHUB_ENV"
+        run: scripts/cloud/github-env.sh scripts/ci/tools.env >>"$GITHUB_ENV"
       # The same shellcheck and shfmt as ci.yml, which lints the same cloud
       # scripts; ahead of the runner image's own shellcheck.
       - name: Install tools
@@ -165,6 +165,13 @@ jobs:
           make cloud-build TYPE="$TARGET"
           df -h /
           docker system df
+      # The orchestrator has no smoke; its check is that the Claude it was built
+      # with lists every flag the supervisor passes, as the deploy checks before
+      # promoting it (r1.f10). The unit tests' fake claude reads the same list,
+      # so only a real --help catches a typo in it.
+      - name: Check the supervisor's flags
+        if: matrix.target == 'orchestrator'
+        run: scripts/cloud/check-orchestrator-flags.sh agent-orchestrator:local
       - name: Smoke ${{ matrix.target }}
         if: matrix.target != 'orchestrator'
         env:

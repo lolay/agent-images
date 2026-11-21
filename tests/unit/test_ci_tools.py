@@ -20,7 +20,7 @@ TOOLS_ENV = REPO / "scripts/ci/tools.env"
 INSTALL = REPO / "scripts/ci/install-lint-tools.sh"
 WORKFLOWS = REPO / ".github/workflows"
 # The step that loads tools.env into a job's environment.
-LOAD = """run: grep -E '^[A-Z_]+=' scripts/ci/tools.env >>"$GITHUB_ENV\""""
+LOAD = """run: scripts/cloud/github-env.sh scripts/ci/tools.env >>"$GITHUB_ENV\""""
 # The step that installs CI's shellcheck and shfmt and puts them first on PATH.
 INSTALL_LINT = """scripts/ci/install-lint-tools.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH\""""

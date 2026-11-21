@@ -32,22 +32,18 @@ runner_names() {
 	return 0
 }
 
-# SIGTERM each runner job; runner-once stops and deletes its VM, and any session
-# on it requeues. bootout returns at once, so wait for each runner-once to exit
-# (up to its 120 s stop budget plus a margin).
+# SIGTERM every runner job; runner-once stops and deletes its VM, and any session
+# on it requeues. bootout returns before runner-once has stopped and deleted the
+# VM, so signal them all, then wait for them together (wait_for_runner_jobs).
 stop_runners() {
-	local vm pid waited
+	local vm pid pids=()
 	for vm in $(runner_names); do
 		pid="$(cat "$RUNNERS_DIR/$vm/pid" 2>/dev/null || true)"
+		[[ -z "$pid" ]] || pids+=("$pid")
 		log "$vm: stopping"
 		launchctl bootout "$domain/$(runner_job_label "$vm")" >/dev/null 2>&1 || true
-		# bootout returns before runner-once finishes stopping and deleting the VM.
-		waited=0
-		while [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null && ((waited < 130)); do
-			sleep 2
-			waited=$((waited + 2))
-		done
 	done
+	((${#pids[@]} == 0)) || wait_for_runner_jobs "${pids[@]}"
 	reclaim_stale_runners
 }
 
@@ -59,7 +55,8 @@ install)
 	clear_claude_quarantine
 	is_loaded "$label" && die "$label is already installed; run make runner-uninstall first"
 	mkdir -p "$(dirname "$plist")" "$AGENT_IMAGES_LOG_DIR"
-	write_host_plist "$plist" "$label" "$log_base" true \
+	# The orchestrator has no VM to stop: runner VMs run as their own jobs.
+	write_host_plist "$plist" "$label" "$log_base" true "$RUNNER_DRAIN_SEC" \
 		/bin/bash "$AGENT_IMAGES_DIR/scripts/orchestrator-run.sh"
 	launchctl bootstrap "$domain" "$plist"
 	log "installed $label (logs: $log_base.out, $log_base.err)"

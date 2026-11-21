@@ -1,6 +1,5 @@
 # The deploy sets these from infra/gcp/project.env and infra/gcp/android.env
-# (PKR_VAR_*; scripts/cloud/deploy.sh vm-image-build), so the settings live in
-# one place.
+# (-var; scripts/cloud/deploy.sh vm-build), so the settings live in one place.
 
 variable "project_id" {
   type        = string
@@ -29,8 +28,7 @@ variable "image_name" {
 
 variable "image_family" {
   type        = string
-  description = "Built into the staging family; the deploy moves it to agent-android once a VM from it passes the smoke checks."
-  default     = "agent-android-next"
+  description = "The staging family the image is built into, <family>-next, where <family> is gcp_image_family's (hooks/gcp/lib.sh); the deploy moves it to <family> once a VM from it passes the smoke checks. deploy.sh always passes it, so the family is named in one place."
 }
 
 variable "commit" {
@@ -46,7 +44,7 @@ variable "machine_type" {
 
 variable "disk_size_gb" {
   type        = number
-  description = "The image's disk size, and so every runner VM's minimum boot disk (DISK_GB)."
+  description = "The image's disk size (DISK_GB), and so every runner VM's minimum boot disk: the hook uses the larger of DISK_GB and this."
   default     = 100
 }
 

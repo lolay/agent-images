@@ -198,6 +198,25 @@ class BakeTests(unittest.TestCase):
     def test_the_orchestrator_has_its_target(self):
         self.assertEqual(bake_print("orchestrator")["orchestrator"]["tags"], ["agent-orchestrator:local"])
 
+    def test_the_orchestrator_takes_the_newest_claude_not_the_runner_types(self):
+        """A CLAUDE_VERSION pin holds the runner types; the orchestrator always
+        takes the newest (r3.f22), and the deploy's ORCHESTRATOR_CLAUDE_VERSION
+        sets it."""
+        def claude(env):
+            result = subprocess.run(
+                ["docker", "buildx", "bake", "-f", BAKE_FILE, "--print", "orchestrator", "linux"],
+                cwd=REPO, capture_output=True, text=True, timeout=60,
+                env={key: value for key, value in {**os.environ, **env}.items()
+                     if key not in ("CLAUDE_VERSION", "ORCHESTRATOR_CLAUDE_VERSION") or key in env},
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            targets = json.loads(result.stdout)["target"]
+            return targets["orchestrator"]["args"]["CLAUDE_VERSION"], targets["linux"]["args"]["CLAUDE_VERSION"]
+
+        self.assertEqual(claude({}), ("latest", "latest"))
+        self.assertEqual(claude({"CLAUDE_VERSION": "2.1.317"}), ("latest", "2.1.317"))
+        self.assertEqual(claude({"ORCHESTRATOR_CLAUDE_VERSION": "2.1.320"}), ("2.1.320", "latest"))
+
     def test_changed_targets_follows_the_bake_graph(self):
         """A change to any Dockerfile directory in a type's bake graph rebuilds that type.
 

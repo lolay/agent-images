@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # CI's tool versions, one file every workflow reads.
       - name: Tool versions
-        run: grep -E '^[A-Z_]+=' scripts/ci/tools.env >>"$GITHUB_ENV"
+        run: scripts/cloud/github-env.sh scripts/ci/tools.env >>"$GITHUB_ENV"
       # Pinned, not via brew: the runner image preinstalls an older Packer that
       # `brew install` leaves in place.
       - uses: hashicorp/setup-packer@ce93c3c08a6c2ff2275bf4b54ff0d9a75f6c9789 # v3.4.0

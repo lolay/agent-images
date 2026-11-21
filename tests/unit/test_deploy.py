@@ -118,6 +118,25 @@ class DeployTests(unittest.TestCase):
         self.assertIn("agent-linux keeps its image", result.stderr)
         self.assertEqual(self.job_patches(), ["agent-linux-next"])
 
+    def test_a_failed_next_write_stops_before_the_smoke(self):
+        # The request is accepted and the operation fails: smoking or promoting
+        # then would run an image the -next job never got (r1.f11).
+        self.gcp.state.run_operation_errors["agent-linux-next"] = "revision failed to become ready"
+        result = self.deploy("type", "linux", IMAGE, "abc123")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("failed: revision failed to become ready", result.stderr)
+        self.assertEqual(self.job_patches(), ["agent-linux-next"])
+        self.assertEqual(self.gcloud_calls(), [], "no smoke execution")
+
+    def test_a_failed_live_write_fails_the_deploy(self):
+        self.gcp.state.run_operation_errors["agent-linux"] = "revision failed to become ready"
+        result = self.deploy("type", "linux", IMAGE, "abc123")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("failed: revision failed to become ready", result.stderr)
+        self.assertEqual(self.job_patches(), ["agent-linux-next", "agent-linux"])
+        self.assertIn(f"deploy: agent-linux-next: {IMAGE}", result.stdout)
+        self.assertNotIn(f"deploy: agent-linux: {IMAGE}", result.stdout, "not logged as written")
+
     def test_a_failed_smoke_prints_the_executions_log(self):
         result = self.deploy("type", "linux", IMAGE, "abc123", FAKE_SMOKE_STATUS="1")
         self.assertIn("deploy: agent-linux-next-p5rqf log:", result.stdout)
@@ -307,6 +326,20 @@ class VmDeployTests(DeployTests):
         self.assertTrue(build.endswith(f"{REPO}/images/android/gce"))
         self.assertNotIn("-force", build, "a same-named image is the live one")
 
+    def test_no_packer_template_names_its_family(self):
+        # The family is gcp_image_family's alone (r1.f20): each compute type's
+        # template takes it from deploy.sh, with no default of its own to drift.
+        compute = [path.stem for path in sorted((REPO / "infra/gcp").glob("*.env"))
+                   if "BACKEND=compute" in path.read_text()]
+        self.assertIn("android", compute)
+        for type_ in compute:
+            with self.subTest(type=type_):
+                variables = "".join(path.read_text() for path in (REPO / f"images/{type_}/gce").glob("*.pkr.hcl"))
+                block = variables[variables.index('variable "image_family" {'):]
+                block = block[:block.index("\n}\n")]
+                self.assertNotIn("default", block)
+                self.assertIn("gcp_image_family", block)
+
     def test_workflow_image_name_is_unique_per_run_and_valid(self):
         workflow = (REPO / ".github/workflows/cloud-deploy.yml").read_text()
         line = next(l for l in workflow.splitlines() if 'echo "image=' in l)
@@ -351,6 +384,19 @@ class VmDeployTests(DeployTests):
                 self.assertIn("DEPLOY=false is for Cloud Run types only", result.stderr)
                 self.assertFalse((self.out / "packer.log").exists())
 
+    def test_vm_commands_refuse_an_image_family_setting(self):
+        # The family is agent-<type>; a renamed one in the env file would do nothing (r1.f20).
+        env_dir = self.tmp / "infra"
+        env_dir.mkdir()
+        (env_dir / "project.env").write_text((REPO / "infra/gcp/project.env").read_text())
+        (env_dir / "android.env").write_text((REPO / "infra/gcp/android.env").read_text() + "IMAGE_FAMILY=other\n")
+        for command in ("vm-build", "vm-promote"):
+            with self.subTest(command=command):
+                result = self.deploy(command, "android", ANDROID_IMAGE, "abc123def456", AGENT_GCP_ENV_DIR=str(env_dir))
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("IMAGE_FAMILY is not a setting", result.stderr)
+                self.assertFalse((self.out / "packer.log").exists())
+
     def test_type_refuses_a_compute_type(self):
         result = self.deploy("type", "android", IMAGE, "abc")
         self.assertEqual(result.returncode, 1)
@@ -376,6 +422,15 @@ class VmDeployTests(DeployTests):
         self.assertEqual(self.gcp.state.images[ANDROID_IMAGE]["family"], "agent-android")
         self.assertIn("  ok    kvm: KVM acceleration can be used", result.stdout)
         self.assertIn("| emulator-boot-sec-cold | 41.2 |", summary.read_text())
+
+    def test_vm_promote_fails_when_it_cant_list_the_older_images(self):
+        # Promoted, but the older images it should delete went unlisted: say so.
+        self.smoke_reports("pass")
+        self.gcp.fail("GET", "/global/images", 403, "permission denied")
+        result = self.deploy("vm-promote", "android", ANDROID_IMAGE, "abc123def456789")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("listing images: HTTP 403", result.stderr)
+        self.assertEqual(self.gcp.state.images[ANDROID_IMAGE]["family"], "agent-android")
 
     def test_a_failed_smoke_leaves_the_family_alone(self):
         self.smoke_reports("fail")
@@ -406,6 +461,75 @@ class VmDeployTests(DeployTests):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("agent-retired-1", self.gcp.state.images)
         self.assertIn("agent-android-older", self.gcp.state.images)
+
+    def test_prune_deletes_vms_whose_type_is_gone_in_any_zone(self):
+        # A powered-off VM never reaches its max run duration, and the reaper that
+        # deletes it went with its type's orchestrator (r1.f7). The fake finds a VM
+        # only in its own zone, so deleting in project.env's zone would leave the
+        # one in europe-west4-a.
+        def vm(name, zone, status, **labels):
+            self.gcp.state.instances[name] = {
+                "name": name, "status": status, "labels": labels, "metadata": {},
+                "zone": f"https://www.googleapis.com/compute/v1/projects/lolay-agents/zones/{zone}",
+            }
+
+        ours = {"managed-by": "agent-images"}
+        vm("agent-retired-a", "us-central1-a", "TERMINATED", **ours, **{"agent-images-type": "retired"})
+        vm("agent-retired-b", "europe-west4-a", "RUNNING", **ours, **{"agent-images-type": "retired"})
+        vm("agent-android-1", "us-central1-a", "TERMINATED", **ours, **{"agent-images-type": "android"})
+        vm("agent-other", "us-central1-a", "TERMINATED", **{"agent-images-type": "other"})
+        result = self.deploy("prune")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sorted(self.gcp.state.instances), ["agent-android-1", "agent-other"])
+        self.assertIn("agent-retired-b: no infra/gcp/retired.env; deleting the VM in europe-west4-a", result.stdout)
+
+    def test_prune_fails_when_a_listing_fails(self):
+        # A listing that dies inside `< <(...)` lost its exit, and prune passed
+        # having deleted nothing.
+        listings = {
+            "jobs": ("/locations/us-central1/jobs", "listing jobs"),
+            "instances": ("/aggregated/instances", "listing VMs"),
+            "images": ("/global/images", "listing images"),
+        }
+        for what, (suffix, message) in listings.items():
+            for status in (403, "000"):
+                with self.subTest(what=what, status=status):
+                    self.gcp.state.failures.clear()
+                    self.gcp.state.delays.clear()
+                    env = {}
+                    if status == "000":
+                        # No answer in time: curl gives up, as on a dropped connection.
+                        self.gcp.state.delays[suffix] = 2
+                        env["GCP_CURL_MAX_TIME"] = "1"
+                    else:
+                        self.gcp.fail("GET", suffix, status, "permission denied")
+                    result = self.deploy("prune", **env)
+                    self.assertEqual(result.returncode, 1, result.stdout)
+                    self.assertIn(f"{message}: HTTP {status}", result.stderr)
+
+    def test_prune_finds_a_vm_in_the_zone_the_fake_reports_empty(self):
+        # The fake always reports europe-west1-b, with a warning when it has no
+        # VMs; one that has a VM must list it, not trip over the warning.
+        self.gcp.state.instances["agent-retired-eu"] = {
+            "name": "agent-retired-eu", "status": "TERMINATED", "metadata": {},
+            "labels": {"managed-by": "agent-images", "agent-images-type": "retired"},
+            "zone": "https://www.googleapis.com/compute/v1/projects/lolay-agents/zones/europe-west1-b",
+        }
+        result = self.deploy("prune")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("agent-retired-eu", self.gcp.state.instances)
+        self.assertIn("agent-retired-eu: no infra/gcp/retired.env; deleting the VM in europe-west1-b", result.stdout)
+
+    def test_prune_fails_when_a_vm_delete_fails(self):
+        self.gcp.state.instances["agent-retired-a"] = {
+            "name": "agent-retired-a", "status": "TERMINATED", "metadata": {},
+            "labels": {"managed-by": "agent-images", "agent-images-type": "retired"},
+            "zone": "https://www.googleapis.com/compute/v1/projects/lolay-agents/zones/us-central1-a",
+        }
+        self.gcp.state.operation_errors["agent-retired-a"] = "RESOURCE_IN_USE_BY_ANOTHER_RESOURCE"
+        result = self.deploy("prune")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("deleting agent-retired-a: RESOURCE_IN_USE_BY_ANOTHER_RESOURCE", result.stderr)
 
     def test_status_shows_the_familys_image(self):
         result = self.deploy("status")

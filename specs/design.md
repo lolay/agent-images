@@ -87,7 +87,8 @@ CI's Packer must meet it.
 | No secrets for sessions | Parity with Anthropic-hosted environments; secret-needing work stays in GitHub Actions ([secrets.md](secrets.md)) |
 | The guest user (`admin`) owns Homebrew; runner CLIs are casks | The base image's own setup; sessions can `brew install` what a project needs |
 | The runner upgrades its own cask at start | Rebuilds would otherwise be weekly; each `AGENT` upgrades only its own CLI |
-| The guest user is root in its VM (the base image's passwordless sudo) | Sessions can run installers that need root, and the host sets the hostname over `tart exec`. SSH with `admin`/`admin` stays on, reachable only from the host through Tart's NAT. The blast radius is one session's throwaway VM |
+| The guest user is root in its VM (the base image's passwordless sudo) | Sessions can run installers that need root, and the host sets the hostname over `tart exec`. The blast radius is one session's throwaway VM |
+| SSH (`admin`/`admin`) is for the build only | Packer provisions over it, and the template's last step disables Remote Login (`launchctl disable system/com.openssh.sshd`) for every later boot; at runtime the host reaches a VM only with `tart exec`, through Tart's guest agent. To debug a VM over SSH, turn it back on from the host: `tart exec <vm> sudo launchctl enable system/com.openssh.sshd`, then `tart exec <vm> sudo launchctl bootstrap system /System/Library/LaunchDaemons/ssh.plist` |
 | Privacy permissions are pre-granted to `/bin/zsh` (`grant-privacy.sh`) | UI testing needs Screen Recording, Accessibility, synthetic input, and Automation, and nobody is at a VM's screen to answer a consent dialog; one unanswered prompt blocks every later request. The runner LaunchAgent starts `/bin/zsh`, which macOS then holds responsible for every session command. So any session code can record the screen and drive the UI of its own throwaway VM. Automation covers System Events (menu bar, Dock), the Dock, Simulator, Xcode, Finder, Safari, and Terminal; another target still prompts until it's added |
 | Stored login-items announcements are cleared at the end of the build | "Multiple Extensions Added" and "zsh can run in the background" are alerts stored during the build; Notification Center shows them again at every login until dismissed, so every VM would start with them over its UI. `clear-notifications.sh` deletes only that sender's records; app notifications are untouched. The sender itself can't be silenced on macOS 27 (it ignores and resets its per-app notification settings, and disabling its agents doesn't stop it), so a session that adds a background item still sees one live announcement |
 | Host scripts act in the guest as the guest user | `tart exec` runs in the logged-in GUI session, which automatic login makes `admin`'s; only the hostname needs `sudo` |
@@ -127,7 +128,9 @@ SIGTERM (`runner-stop`, `runner-uninstall`) does the same early. At startup the
 orchestrator script reclaims claims whose job died (a host crash).
 
 The environment secret never enters a VM. Each VM registers with a single-use work
-order that's spent at registration, so a session that reads it gets nothing usable.
+order that's spent at registration, so a session that reads it gets nothing usable. A
+debug VM (`make vm-up`) takes its own Keychain item, a separate environment's key;
+`vm-configure` has no fallback to the orchestrator's and refuses a copy of it.
 
 In the guest:
 
@@ -158,7 +161,7 @@ gone. It logs to `~/Library/Logs/agent-runner-watchdog.{out,err}`, and with
 | File in the guest | Written by | Mode |
 | --- | --- | --- |
 | `~/.config/agent-runner/runner.env` | `vm-configure` from `vms/runner.env` (`vms/<vm>.env` for a debug VM) | 600 |
-| `~/.claude-runner/environment-secret` | `vm-configure`: the work order (runner VMs) or the Keychain secret (debug VMs) | 600 |
+| `~/.claude-runner/environment-secret` | `vm-configure`: the work order (runner VMs), or the debug VM's own Keychain item (account `<vm>`, a separate environment's key; never `default`, the orchestrator's) | 600 |
 
 `runner.env` is written last, so launchd never starts a runner with missing secrets.
 
@@ -175,7 +178,7 @@ its VM back and resumes on a fresh one), and `--kill-session-after-min 480`; and
 `--lock-to-account` if set. Each is a setting in `vms/runner.env`. The label, which is
 also the guest's hostname, is `RUNNER_LABEL_PREFIX` (default the host's
 `LocalHostName`) plus the VM name. `--environment-secret-file` holds the
-orchestrator's work order on runner VMs, the environment secret on debug VMs.
+orchestrator's work order on runner VMs, a separate environment's key on debug VMs.
 `/healthz` on port 8080 in the guest. The LaunchAgent writes the runner's stdout to
 `~/Library/Logs/agent-runner.out` and stderr to `.err`, and gives it 120 s to drain on
 stop; in ephemeral mode `agent-runner` forwards SIGTERM to it.

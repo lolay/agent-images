@@ -104,7 +104,7 @@ PKR_VAR_base_image ?= ghcr.io/cirruslabs/macos-$(MACOS_CODENAME)-xcode:latest
 CLOUD_SCRIPTS := $(wildcard images/cloud/*.sh images/cloud/base/*.sh images/cloud/runner/*.sh images/cloud/runner/claude/hooks/*.sh \
                    images/toolsets/*.sh images/toolsets/*/*.sh \
                    images/cloud/orchestrator/*.sh scripts/cloud/*.sh scripts/ci/*.sh scripts/anthropic/*.sh hooks/gcp/*.sh \
-                   images/android/gce/*.sh images/android/gce/files/*.sh) hooks/gcp/spawn-runner
+                   images/android/*.sh images/android/gce/*.sh images/android/gce/files/*.sh) hooks/gcp/spawn-runner
 # Every Cloud Run type (the BACKEND=run files in infra/gcp) and the orchestrator:
 # what TYPE=all and cloud-ci build, and the pull request check's matrix.
 CLOUD_TARGETS = $(shell scripts/cloud/changed-targets.sh --all | jq -r '.types[].type, "orchestrator"')
@@ -116,9 +116,9 @@ CLOUD_WORKFLOWS := $(wildcard .github/workflows/cloud-*.yml) .github/workflows/l
 ACTIONLINT_VERSION := v1.7.12
 # TYPE=all builds every type and the orchestrator (CLOUD_TARGETS).
 TYPE ?= linux
-# The orchestrator's Claude Code: an exact version or a channel. Runner types
-# take theirs from their lock (scripts/cloud/bake.sh).
-CLAUDE_VERSION ?= latest
+# CLAUDE_VERSION=<version or channel> builds the orchestrator with that Claude
+# Code; unset, it takes the bake file's ORCHESTRATOR_CLAUDE_VERSION, the newest.
+# Runner types take theirs from their lock (scripts/cloud/bake.sh).
 
 SHELL_SCRIPTS := $(wildcard $(MACOS_DIR)/scripts/*.sh $(MACOS_DIR)/files/*.sh \
                    $(SHARED_DIR)/*.sh $(SHARED_DIR)/runners/*.sh $(SHARED_DIR)/claude/hooks/*.sh \
@@ -176,6 +176,12 @@ host-setup: ## Linux: set up this host (KVM nesting, LXD with a ZFS pool, claude
 
 build: ## Build the image: macOS on the newest Xcode image for this host's macOS; Linux via LXD
 ifeq ($(HOST_OS),Linux)
+	@# ALLOW_STDERR publishes a build that isn't green, so it's for one build: the
+	@# command line or the environment. Assigned in .env (any form: =, +=, ?=, :=,
+	@# export, override), which this file exports to every target, it would
+	@# publish every bad build; make's origin says where it came from.
+	@case "$(origin ALLOW_STDERR)" in undefined | environment | "command line") ;; \
+	  *) printf 'ALLOW_STDERR is set in .env, so every build that is not green would publish; remove it and pass it for one build: ALLOW_STDERR=1 make build\n' >&2; exit 1 ;; esac
 	scripts/linux/build-image.sh
 else
 	@[ -n "$(MACOS_CODENAME)" ] || { printf 'No Cirrus image codename for macOS %s; add MACOS_CODENAME_%s to the Makefile\n' \
@@ -355,7 +361,7 @@ cloud-smoke: ## Check a built image's toolset record, then run its binary checks
 define CLOUD_LINT_ANDROID
 packer init $(ANDROID_GCE_DIR) >/dev/null
 packer fmt -check -recursive $(ANDROID_GCE_DIR)
-packer validate -var project_id=check -var zone=check -var network=check -var subnetwork=check -var image_name=agent-android-check -var commit=check $(ANDROID_GCE_DIR)
+packer validate -var project_id=check -var zone=check -var network=check -var subnetwork=check -var image_name=agent-android-check -var image_family=agent-android-check -var commit=check $(ANDROID_GCE_DIR)
 endef
 
 cloud-lint: ## Lint the cloud scripts, workflows and settings; MODE=android adds the android Packer template (no writes; needs Go, and Packer for android)

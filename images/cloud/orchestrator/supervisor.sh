@@ -8,6 +8,11 @@
 #     token), written to a file per type in /dev/shm, mode 600; each orchestrator
 #     is pointed at its own file only. A type whose secret can't be read is
 #     retried; the others start anyway;
+#   - readiness: a type starts only once it has something to spawn, its Cloud
+#     Run job agent-<type> or, for BACKEND=compute, an image in family
+#     agent-<type>. Until then it's checked again every RUNNER_WAIT_SEC, on the
+#     same loop that retries secrets, so the deploy needn't hold the
+#     orchestrator back for a type whose first build failed (r1.f3);
 #   - supervision: restart an orchestrator that exits, with backoff; prefix each
 #     one's log lines with its type; on SIGTERM, pass it to every orchestrator at
 #     once and exit when they have (they drain for 70 s; the host's docker stop
@@ -40,6 +45,8 @@ set -euo pipefail
 # Where the memory log reads smaps_rollup from; tests point it at a fake tree.
 : "${AGENT_PROC_ROOT:=/proc}"
 : "${SECRET_RETRY_SEC:=60}"
+# How often a type with no job or image yet is checked again.
+: "${RUNNER_WAIT_SEC:=300}"
 : "${RESTART_MIN_SEC:=5}"
 : "${RESTART_MAX_SEC:=60}"
 # A run this long counts as healthy, so the next restart starts from the minimum.
@@ -52,6 +59,10 @@ set -euo pipefail
 
 # shellcheck source=hooks/gcp/lib.sh
 source "$AGENT_ORCHESTRATOR_ROOT/hooks/gcp/lib.sh"
+# The flags each orchestrator gets: one list, which the deploy checks against
+# the image's own Claude (orchestrator-args.sh says why).
+# shellcheck source=images/cloud/orchestrator/orchestrator-args.sh
+source "$(dirname "${BASH_SOURCE[0]}")/orchestrator-args.sh"
 readonly hooks_dir="$AGENT_ORCHESTRATOR_ROOT/hooks/gcp"
 
 log() { printf 'supervisor: %s\n' "$*"; }
@@ -60,21 +71,17 @@ gcp_load_env || {
 	log "no project.env in $AGENT_GCP_ENV_DIR"
 	exit 1
 }
-: "${PROJECT_NUMBER:?}"
+: "${PROJECT_NUMBER:?}" "${PROJECT_ID:?}" "${REGION:?}"
 mapfile -t types < <(gcp_types)
 if ((${#types[@]} == 0)); then
 	log "no runner types in $AGENT_GCP_ENV_DIR"
 	exit 1
 fi
 
-# fetch_secret <type> <file>: the type's Claude environment key, to an
+# fetch_secret <token> <type> <file>: the type's Claude environment key, to an
 # owner-only file. The value passes through a pipe, never a command line.
 fetch_secret() {
-	local type="$1" file="$2" token
-	token="$(gcp_token)" || {
-		log "$type: no access token from the metadata server"
-		return 1
-	}
+	local token="$1" type="$2" file="$3"
 	gcp_call "$token" GET "$GCP_SECRETS_URL/v1/projects/$PROJECT_NUMBER/secrets/claude-env-$type/versions/latest:access"
 	if [[ "$GCP_STATUS" != 200 ]]; then
 		log "$type: can't read secret claude-env-$type: HTTP $GCP_STATUS: $(gcp_error)"
@@ -118,8 +125,8 @@ compute_types=()
 for type in "${types[@]}"; do
 	[[ "$(gcp_backend "$type")" == compute ]] && compute_types+=("$type")
 done
-if ((${#compute_types[@]} > 0)) && [[ -z "${ZONE:-}" || -z "${PROJECT_ID:-}" ]]; then
-	log "reaper: no PROJECT_ID or ZONE in project.env; not reaping ${compute_types[*]}"
+if ((${#compute_types[@]} > 0)) && [[ -z "${ZONE:-}" ]]; then
+	log "reaper: no ZONE in project.env; not reaping ${compute_types[*]}"
 	compute_types=()
 fi
 
@@ -215,27 +222,73 @@ done
 mkdir -p "$SUPERVISOR_SECRETS_DIR"
 chmod 700 "$SUPERVISOR_SECRETS_DIR"
 
+# runner_ready <token> <type>: whether the type has something to spawn: its
+# Cloud Run job, or an image in its family. Only a 404 says no: on any other
+# answer it can't tell, logs why and says yes, and the hook reports a real
+# problem per session as before. "Not yet" is logged once, and its end once.
+# The project and region are the type's, its env file over project.env, as the
+# hook reads them when it runs the job or creates the VM: project.env's alone
+# would look in the wrong place for a type that sets its own, and hold it forever.
+declare -A waiting=()
+runner_ready() {
+	local token="$1" type="$2" what url project region
+	project="$(gcp_type_setting "$type" PROJECT_ID "")"
+	region="$(gcp_type_setting "$type" REGION "")"
+	if [[ "$(gcp_backend "$type")" == compute ]]; then
+		what="image in family $(gcp_image_family "$type")"
+		url="$GCP_COMPUTE_URL/compute/v1/projects/$project/global/images/family/$(gcp_image_family "$type")"
+	else
+		what="Cloud Run job agent-$type"
+		url="$GCP_RUN_URL/v2/projects/$project/locations/$region/jobs/agent-$type"
+	fi
+	gcp_call "$token" GET "$url"
+	case "$GCP_STATUS" in
+	200)
+		[[ -z "${waiting[$type]:-}" ]] || log "$type: its $what is there now"
+		unset "waiting[$type]"
+		;;
+	404)
+		[[ -n "${waiting[$type]:-}" ]] ||
+			log "$type: no $what yet; not starting its orchestrator until there is (checking every ${RUNNER_WAIT_SEC}s)"
+		waiting[$type]=1
+		return 1
+		;;
+	*) log "$type: can't check for its $what (HTTP $GCP_STATUS: $(gcp_error)); starting its orchestrator anyway" ;;
+	esac
+}
+
+# start_type <type> <now>: start its orchestrator, or schedule another try.
+# Its API calls can each take up to GCP_CURL_MAX_TIME, and a SIGTERM's trap runs
+# only once the call in progress returns, so it checks $stopping after them: an
+# orchestrator started after the stop began would miss the drain the host's
+# docker stop allows. One token serves both calls.
 start_type() {
-	local type="$1" now="$2" secret_file="$SUPERVISOR_SECRETS_DIR/$1" pid
-	if ! fetch_secret "$type" "$secret_file"; then
+	local type="$1" now="$2" secret_file="$SUPERVISOR_SECRETS_DIR/$1" pid token
+	if ! token="$(gcp_token)"; then
+		log "$type: no access token from the metadata server"
 		next_start[$type]=$((now + SECRET_RETRY_SEC))
 		return
 	fi
+	if ! runner_ready "$token" "$type"; then
+		next_start[$type]=$((now + RUNNER_WAIT_SEC))
+		return
+	fi
+	$stopping && return
+	if ! fetch_secret "$token" "$type" "$secret_file"; then
+		next_start[$type]=$((now + SECRET_RETRY_SEC))
+		return
+	fi
+	$stopping && return
 	local min_idle expected
 	min_idle="$(gcp_type_setting "$type" MIN_IDLE 0)"
 	expected="$(gcp_type_setting "$type" EXPECTED_SPAWN_SECONDS 120)"
+	orchestrator_args "$hooks_dir" "$secret_file" "$min_idle" "$expected" \
+		"${port_of[$type]}" "$HOOK_TIMEOUT_SEC" "$SHUTDOWN_DRAIN_SEC"
 	# The subshell becomes the orchestrator at exec, so $! is its pid: signals
 	# reach it directly, and the log prefixer is its child, not ours.
 	(
 		exec > >(prefix_lines "$type") 2>&1
-		exec env RUNNER_TYPE="$type" "$CLAUDE_BIN" self-hosted-runner orchestrator \
-			--hooks-dir "$hooks_dir" \
-			--environment-secret-file "$secret_file" \
-			--min-idle "$min_idle" \
-			--expected-spawn-seconds "$expected" \
-			--health-port "${port_of[$type]}" \
-			--hook-timeout "$HOOK_TIMEOUT_SEC" \
-			--shutdown-drain-sec "$SHUTDOWN_DRAIN_SEC"
+		exec env RUNNER_TYPE="$type" "$CLAUDE_BIN" self-hosted-runner orchestrator "${ORCHESTRATOR_ARGS[@]}"
 	) &
 	pid=$!
 	pid_of[$type]=$pid
@@ -391,6 +444,8 @@ while :; do
 	now="$(date +%s)"
 	if ! $stopping; then
 		for type in "${types[@]}"; do
+			# A signal that arrived during the last type's start ends the round.
+			$stopping && break
 			if [[ -z "${pid_of[$type]:-}" ]] && ((now >= next_start[$type])); then
 				start_type "$type" "$now"
 			fi

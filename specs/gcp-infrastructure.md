@@ -76,7 +76,9 @@ no Terraform change and no key lands in state.
   versioning.
 - Bucket `lolay-agents-outputs`: where sessions keep large results (point clouds,
   models, rasters, videos). Uniform access, no public access, lifecycle delete after
-  30 days, no versioning. Sessions mount it read-write with Cloud Storage FUSE.
+  30 days, no versioning. Sessions mount it read-write with Cloud Storage FUSE, all
+  of it: any session can overwrite or delete another's outputs, accepted for one
+  owner with the session `CLAUDE.md` as the guard (gcp.md, "Storage", r1.f25).
 - Bucket `lolay-agents-datasets`: reusable inputs Gary adds by hand. Uniform access,
   no public access, no lifecycle rule. Sessions mount it read-only.
 - Cloud Run ephemeral disk quota, two quota preferences in `us-central1`:
@@ -133,6 +135,11 @@ The project is dedicated to this, so project-level grants are an acceptable scop
 | `agent-orchestrator` (the VM's) | `secretmanager.secretAccessor` with an IAM condition `resource.name.startsWith("projects/<number>/secrets/claude-env-")`; `run.developer` (execute jobs with overrides); `iam.serviceAccountUser` on `agent-runner` (jobs and runner VMs run as it); `storage.objectUser` on the marker bucket (create and read, and delete: the hook deletes its marker when a spawn fails); `artifactregistry.reader`; `logging.logWriter`; `monitoring.metricWriter`; for `android`, `compute.instanceAdmin.v1` (create runner VMs, and its reaper deletes stopped ones) and `compute.imageUser` |
 | `agent-runner` (what job executions and runner VMs run as) | `logging.logWriter`; `storage.objectAdmin` on `lolay-agents-outputs` only; `storage.objectViewer` on `lolay-agents-datasets` only. Sessions get no secrets and no other GCP access |
 | `agent-images-ci` (GitHub Actions, through federation) | `artifactregistry.writer` on the repo; `run.developer`; `iam.serviceAccountUser` on `agent-runner`; custom role `orchestratorDeployer` (`compute.instances.get`, `compute.instances.setMetadata`) on the orchestrator VM only; custom role `zoneOperationsReader` (`compute.zoneOperations.get`) at project level, since gcloud polls the operation `setMetadata` returns; `iam.serviceAccountUser` on `agent-orchestrator`, since `setMetadata` on a VM that runs as a service account needs actAs on it (it gives CI nothing new: CI already picks the image the orchestrator runs); `logging.viewer`, so the deploy can print a failed smoke execution's log in the workflow run; for the `android` image, `compute.instanceAdmin.v1` and `compute.storageAdmin` (Packer's build VM and the image), `iap.tunnelResourceAccessor` (Packer's SSH) |
+
+`agent-orchestrator`'s secret condition is a prefix, so every type's orchestrator
+can read every type's key: the types are one trust domain ([gcp.md, "Keys"](gcp.md#keys)).
+A type for another audience needs its own service account, its condition naming
+only that type's secret.
 
 ### Workload identity federation
 
