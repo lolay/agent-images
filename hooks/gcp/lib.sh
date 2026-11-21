@@ -81,22 +81,47 @@ gcp_shell_variables() {
 }
 
 # gcp_type_project_keys <type>: the project keys infra/gcp/<type>.env itself
-# sets, one per line. The type's file alone, sourced with the project keys
-# unset, not gcp_type_setting: that layers project.env underneath, and the
-# callers have it loaded already, so every type would look as if it set them.
-# Sourced without -e and -u, and its status ignored, as gcp_load_env's source
-# runs for spawn-runner: a line that reads an unset key, or fails, after
-# setting one mustn't hide what the file set.
-gcp_type_project_keys() { (
-	local key keys=()
+# sets, one per line. Not gcp_type_setting: that layers project.env underneath,
+# and the callers have it loaded already, so every type would look as if it set
+# them. Two passes over the type's file: once with the project keys unset, which
+# finds any assignment, even to project.env's own value; and once over
+# project.env, which finds an assignment that only fires on project.env's
+# values (`[[ $REGION == us-central1 ]] && REGION=us-east1`). Each sources
+# without -e and -u, and ignores the status, as gcp_load_env's source runs for
+# spawn-runner: a line that reads an unset key, or fails, after setting one
+# mustn't hide what the file set.
+gcp_type_project_keys() {
+	local keys=()
 	mapfile -t keys < <(gcp_project_keys)
-	((${#keys[@]} > 0)) || exit 0
-	unset "${keys[@]}"
+	((${#keys[@]} > 0)) || return 0
+	{
+		gcp_type_sets_keys "$1" unset "${keys[@]}"
+		gcp_type_sets_keys "$1" project "${keys[@]}"
+	} | awk '!seen[$0]++'
+}
+
+# gcp_type_sets_keys <type> unset|project <key...>: the keys the type's file
+# sets, sourced over nothing (unset) or over project.env (project, where only a
+# changed value counts). A subshell, so nothing leaks into the caller.
+gcp_type_sets_keys() { (
+	local type="$1" over="$2" key
+	shift 2
+	declare -A before=()
+	unset "$@"
 	set +eu
+	if [[ "$over" == project ]]; then
+		# shellcheck source=/dev/null
+		source "$AGENT_GCP_ENV_DIR/project.env" >/dev/null 2>&1
+		for key in "$@"; do before[$key]="${!key-}"; done
+	fi
 	# shellcheck source=/dev/null
-	source "$AGENT_GCP_ENV_DIR/$1.env" >/dev/null 2>&1
-	for key in "${keys[@]}"; do
-		[[ ! -v "$key" ]] || printf '%s\n' "$key"
+	source "$AGENT_GCP_ENV_DIR/$type.env" >/dev/null 2>&1
+	for key in "$@"; do
+		if [[ "$over" == project ]]; then
+			[[ "${!key-}" == "${before[$key]}" ]] || printf '%s\n' "$key"
+		elif [[ -v "$key" ]]; then
+			printf '%s\n' "$key"
+		fi
 	done
 ); }
 

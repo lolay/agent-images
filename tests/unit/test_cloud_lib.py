@@ -246,6 +246,15 @@ class CheckTypeTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertTrue(result.stderr.startswith(f"{type_}: REGION is a project key"), result.stderr)
 
+    def test_an_override_that_fires_only_on_project_env_values_is_refused(self):
+        # Sourced with the keys unset, the condition is false; gcp_load_env
+        # sources it over project.env, where it moves REGION (Copilot on #162).
+        env_dir = self.fixture(conditional='if [[ "${REGION:-}" == r ]]; then REGION=us-east1; fi\n')
+        (env_dir / "project.env").write_text("PROJECT_ID=p\nREGION=r\n")
+        result = self.check(env_dir, "conditional")
+        self.assertEqual(result.returncode, 1)
+        self.assertTrue(result.stderr.startswith("conditional: REGION is a project key"), result.stderr)
+
     def test_project_keys_are_what_project_env_sets_however_written(self):
         env_dir = self.fixture()
         (env_dir / "project.env").write_text("# comment\nPROJECT_ID=p\n  NETWORK=n\nexport A=1 B=2\n")
