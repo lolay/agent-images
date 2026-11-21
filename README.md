@@ -81,7 +81,7 @@ tracks the latest and pins only on breakage
 | Base image | `macos-<host codename>-xcode:latest`, today `macos-golden-gate-xcode` | Not pinned: `make build` pulls the newest Xcode image for the host's macOS (`MACOS_CODENAME_<major>` in the Makefile) |
 | Claude Code | `claude-code@latest` cask (2.1.286) | `images/macos/Brewfile`; the Claude runner upgrades it at each start |
 | Image packages | xcodegen 2.46.0, xcbeautify 3.2.1, swiftlint 0.65.1, swiftformat 0.63.1, sops 3.13.3, age 1.3.2, nowline 0.11.0 and triage 0.4.0 (`lolay/tap`), asccli 0.18.6 (command `asc`) | `images/macos/Brewfile`; current release at build time |
-| shellcheck / shfmt | 0.11.0 / 3.14.1 | Build host tools for `make lint` |
+| shellcheck / shfmt | CI: `SHELLCHECK_VERSION` / `SHFMT_VERSION`; build hosts: Homebrew's | `scripts/ci/tools.env` (`scripts/ci/install-lint-tools.sh` installs them in both workflows; Renovate bumps them); build host tools for `make lint` |
 | actions/checkout | v7.0.1 | `.github/workflows/ci.yml`, `.github/workflows/android-image-smoke.yml` |
 | Linux host | Ubuntu 24.04 Server, LXD snap `latest/stable` (refreshes held; `make build` refreshes) | `scripts/linux/host-setup.sh` |
 | Android image (Linux host) | `ubuntu:24.04`; OpenJDK 21; Android command-line tools 23.0, emulator 37.1.11, platform and x86_64 Google APIs image `android-37.0`, build-tools 37.0.0; NDK r30, Gradle 9.8.2 (2026-11-06) | `images/android/toolsets.txt` (the toolsets in `images/toolsets`; the SDK is the `android` toolset's `install.sh`): newest stable at build time |

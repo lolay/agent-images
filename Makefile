@@ -97,10 +97,12 @@ PKR_VAR_base_image ?= ghcr.io/cirruslabs/macos-$(MACOS_CODENAME)-xcode:latest
 
 # The GCP runners (specs/gcp.md): the Cloud Run images, the orchestrator
 # container, the hook and the deploy scripts. Built and tested on Linux with
-# Docker; the deploy itself runs only from main, in GitHub Actions.
+# Docker; the deploy itself runs only from main, in GitHub Actions. With them,
+# the scripts CI installs its tools with (scripts/ci), which both workflows run,
+# so a session's gate (cloud-lint) lints them too.
 CLOUD_SCRIPTS := $(wildcard images/cloud/*.sh images/cloud/base/*.sh images/cloud/runner/*.sh images/cloud/runner/claude/hooks/*.sh \
                    images/toolsets/*.sh images/toolsets/*/*.sh \
-                   images/cloud/orchestrator/*.sh scripts/cloud/*.sh hooks/gcp/*.sh \
+                   images/cloud/orchestrator/*.sh scripts/cloud/*.sh scripts/ci/*.sh hooks/gcp/*.sh \
                    images/android/gce/*.sh images/android/gce/files/*.sh) hooks/gcp/spawn-runner
 # Every Cloud Run type (the BACKEND=run files in infra/gcp) and the orchestrator:
 # what TYPE=all and cloud-ci build, and the pull request check's matrix.

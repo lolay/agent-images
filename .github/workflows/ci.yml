@@ -23,8 +23,12 @@ jobs:
       - uses: hashicorp/setup-packer@ce93c3c08a6c2ff2275bf4b54ff0d9a75f6c9789 # v3.4.0
         with:
           version: ${{ env.PACKER_VERSION }}
+      # The same shellcheck and shfmt as cloud-build.yml, which lints the same
+      # cloud scripts; ahead of any the runner image has.
       - name: Install tools
-        run: brew install shellcheck shfmt
+        run: |
+          scripts/ci/install-lint-tools.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
       - name: Init
         # packer init looks the Tart plugin up through GitHub's API; anonymous
         # calls share the hosted runner's IP limit and fail with a 403 once it's
