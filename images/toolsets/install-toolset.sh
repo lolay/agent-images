@@ -189,14 +189,16 @@ toolset_env() {
 			[[ -z "$entry" || "$entry" == "#"* ]] || front="${front:+$front:}$entry"
 		done <"$file"
 	done
+	# The paths first, then the profiles, as toolset-profile.sh does: a profile
+	# can put its own directory ahead of them (the jvm toolset's JAVA_HOME bin).
+	PATH="${front:+$front:}$PATH"
+	export PATH
 	for file in "$dir"/*.profile.sh; do
 		name="$(basename "$file" .profile.sh)"
 		[[ -f "$file" && " $* " == *" $name "* ]] || continue
 		# shellcheck source=/dev/null
 		. "$file"
 	done
-	PATH="${front:+$front:}$PATH"
-	export PATH
 }
 
 # Sourced: the helpers are all the caller wanted. Everything above this line

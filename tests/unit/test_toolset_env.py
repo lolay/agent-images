@@ -324,6 +324,21 @@ class ToolsetEnvTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(f"==> user: {jdk} {jdk}/bin/java", result.stdout)
 
+    def test_java_homes_bin_goes_ahead_of_the_recorded_paths(self):
+        # The recorded paths go in first and the profiles after, as in a session:
+        # another toolset's directory with a java in it doesn't shadow JAVA_HOME's.
+        self.assertEqual(install_jvm(self.tmp, self.record, self.tmp / "jdk").returncode, 0)
+        shadow = self.tmp / "shadow/bin"
+        write_executable(shadow / "java", "echo shadow\n")
+        (self.record / "shadow.path").write_text(f"{shadow}\n")
+        (self.record / "toolsets.txt").write_text("jvm\nshadow\n")
+        other = self.tmp / "jdk-17"
+        fake_jdk(other)
+        self.toolset("user", f'export JAVA_HOME="{other}"\ntoolset_env shadow jvm\nlog "$(command -v java)"\n')
+        result = self.install("user")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"==> user: {other}/bin/java", result.stdout)
+
     def test_a_toolset_not_installed_yet_is_refused(self):
         self.toolset("user", "toolset_env base\n")
         result = self.install("user")
@@ -336,6 +351,72 @@ class ToolsetEnvTests(unittest.TestCase):
         result = self.install("self")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("==> self: /opt/self", result.stdout)
+
+
+class AndroidGoInstallTests(unittest.TestCase):
+    """android-go's install.sh runs the gomobile it just installed, not an older one
+    earlier on PATH."""
+
+    # go as the install uses it: `env GOBIN|GOPATH`, `install <pkg>@<ver>...` (into
+    # GOBIN, else GOPATH's first entry's bin) and `version -m <file>`; anything
+    # else fails, as an unknown command does in the real one.
+    FAKE_GO = r"""
+case "$1" in
+env)
+	case "$2" in
+	GOBIN) printf '%s\n' "${GOBIN:-}" ;;
+	GOPATH) printf '%s\n' "${GOPATH:-$HOME/go}" ;;
+	*) echo "go env: unexpected $2" >&2; exit 2 ;;
+	esac ;;
+install)
+	shift
+	(($# > 0)) || { echo "go install: no packages" >&2; exit 2; }
+	bin="${GOBIN:-${GOPATH:-$HOME/go}}"
+	[[ -n "${GOBIN:-}" ]] || bin="${bin%%:*}/bin"
+	mkdir -p "$bin"
+	for package in "$@"; do
+		[[ "$package" == *@* ]] || { echo "go install: $package needs a version" >&2; exit 1; }
+		name="${package%@*}"
+		name="${name##*/}"
+		printf '#!/bin/bash\n# version new\necho "%s $* (new)" >>"$FAKE_LOG"\n' "$name" >"$bin/$name"
+		chmod +x "$bin/$name"
+	done ;;
+version)
+	[[ "$2" == -m && -f "$3" ]] || { echo "go version: bad arguments" >&2; exit 2; }
+	printf '%s: go1.99\n\tmod\tgolang.org/x/mobile\t%s\n' "$3" "$(sed -n 's/^# version //p' "$3")" ;;
+*) echo "go $1: unknown command" >&2; exit 2 ;;
+esac
+"""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.record = self.tmp / "record"
+        self.record.mkdir()
+        (self.record / "toolsets.txt").write_text("go\nandroid\n")
+        self.bin = self.tmp / "bin"
+        write_executable(self.bin / "go", self.FAKE_GO)
+        # An older gomobile ahead of Go's install dir.
+        self.old = self.tmp / "old"
+        write_executable(self.old / "gomobile", '# version old\necho "gomobile $* (old)" >>"$FAKE_LOG"\n')
+        self.log = self.tmp / "calls"
+
+    def install(self, **env):
+        script = (f'source "{INSTALL_TOOLSET}"; export -f log die toolset_env; '
+                  f'PATH="{self.old}:{self.bin}:/usr/bin:/bin" exec "$BASH" "{TOOLSETS}/android-go/install.sh"')
+        settings = {"TOOLSET_RECORD_DIR": str(self.record), "TOOLSET_LOG_NAME": "android-go",
+                    "FAKE_LOG": str(self.log), **env}
+        return subprocess.run(["bash", "-c", script], env=base_env(self.tmp, self.bin, **settings),
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+
+    def test_init_and_the_log_use_the_new_gomobile(self):
+        for env in ({}, {"GOPATH": f"{self.tmp}/gopath:{self.tmp}/other"}, {"GOBIN": f"{self.tmp}/gobin"}):
+            with self.subTest(env=env):
+                self.log.unlink(missing_ok=True)
+                result = self.install(**env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.log.read_text(), "gomobile init (new)\n")
+                self.assertIn("==> android-go: gomobile new", result.stdout)
 
 
 class RunnerEnvPathTests(unittest.TestCase):

@@ -14,5 +14,10 @@ toolset_env go android
 
 # Into ~/go/bin, which the go toolset's profile puts on every session's PATH.
 go install golang.org/x/mobile/cmd/gomobile@latest golang.org/x/mobile/cmd/gobind@latest 2>&1
+# The gomobile just installed, not an older one earlier on PATH: Go's install
+# dir first, as go itself reports it.
+go_bin="$(go env GOBIN)"
+[[ -n "$go_bin" ]] || go_bin="$(go env GOPATH | cut -d: -f1)/bin"
+PATH="$go_bin:$PATH"
 gomobile init 2>&1
 log "gomobile $(go version -m "$(command -v gomobile)" | awk '$1 == "mod" { print $3 }')"
