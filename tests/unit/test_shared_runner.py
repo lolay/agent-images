@@ -671,6 +671,9 @@ class ComputeChainTests(unittest.TestCase):
         bin_dir.mkdir()
         shutil.copy(CLAUDE_SH, bin_dir / "agent-runner-claude")
         self.gcp = FakeGcp().__enter__()
+        # The family's image the hook sizes the boot disk from (r1.f20).
+        self.gcp.state.images["agent-android-1"] = {"name": "agent-android-1", "family": "agent-android",
+                                                    "diskSizeGb": "100"}
 
     def tearDown(self):
         self.gcp.__exit__(None, None, None)
