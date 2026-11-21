@@ -202,7 +202,7 @@ format: ## Auto-fix Packer and shell formatting
 	packer fmt -recursive $(MACOS_DIR)
 	shfmt -w $(SHELL_SCRIPTS)
 
-test: ## Validate the Packer build and run helper unit tests
+test: ## Validate the macOS Packer template (packer validate); the unit tests are make cloud-test
 	packer validate $(MACOS_DIR)
 
 # The gate is lint + test, what ci.yml runs on macOS. A cloud session (AGENT_TYPE
