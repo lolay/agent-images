@@ -267,8 +267,26 @@ echo "sleep $1" >>"$CALLS"
         self.assertEqual(self.call_log().count("apt-get -q update"), 4)
         self.assertFalse([line for line in self.call_log() if line.startswith(("apt-get install", "apt-pins"))])
 
+    def test_the_build_reads_a_list_as_every_toolset_does(self):
+        listing = self.tmp / "packages.txt"
+        listing.write_text("# the base's\nsudo   # for the user\n  ca-certificates\n\ncurl\n")
+        result = self.run_prepare("--list", str(listing), APT_SNAPSHOT=SNAPSHOT, APT_PINS=PINS)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.call_log()[-1], f"apt-get install {self.OPTIONS} sudo ca-certificates curl")
+        listing.write_text("# nothing\n")
+        result = self.run_prepare("--list", str(listing), APT_SNAPSHOT=SNAPSHOT)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f"no packages in {listing}", result.stderr)
+        self.assertEqual(self.call_log(), [])
+        # A missing list is unreadable, not empty: apt_list returns awk's
+        # failure out of the $(...) that runs it without errexit.
+        result = self.run_prepare("--list", str(self.tmp / "nope"), APT_SNAPSHOT=SNAPSHOT)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f"couldn't read {self.tmp / 'nope'}", result.stderr)
+        self.assertEqual(self.call_log(), [])
+
     def test_usage(self):
-        for args in ([], ["--simulate"], ["--nope", "sudo"]):
+        for args in ([], ["--simulate"], ["--nope", "sudo"], ["--list"], ["--list", "a", "b"]):
             with self.subTest(args):
                 result = self.run_prepare(*args, APT_SNAPSHOT=SNAPSHOT)
                 self.assertEqual(result.returncode, 1)
@@ -299,7 +317,9 @@ class OneSequenceTests(unittest.TestCase):
         text = DOCKERFILE.read_text()
         for name in self.helpers():
             self.assertIn(f"--mount=type=bind,source={self.source_of(name)},target=/tmp/{name} ", text)
-        self.assertRegex(text, r"\n\tbash /tmp/apt-prepare\.sh \$\(sed [^\n]*/tmp/base-packages\.txt\)")
+        # The list is read with install-toolset.sh's apt_list, as every toolset
+        # layer's is (r3.f20), not a sed of its own.
+        self.assertIn("\n\tbash /tmp/apt-prepare.sh --list /tmp/base-packages.txt \\\n", text)
 
     def test_the_resolve_runs_it_with_its_helpers(self):
         text = LOCK_SH.read_text()

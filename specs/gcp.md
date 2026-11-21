@@ -279,7 +279,8 @@ updates jobs. Enforced in three places, so one mistake doesn't open it up:
   versions report goes to the run's summary and an artifact. The check runs on
   every pull request, and its `gate` job is what `main`'s ruleset requires: it
   passes when nothing the check covers changed, or when the lint, the tests and
-  every image's build and smoke passed.
+  every image's build and smoke passed. Which paths the check covers and the
+  verdict are `scripts/cloud/pr-check.sh` (`relevant`, `gate`), where they're tested.
 
 ### What a push to `main` deploys
 
@@ -292,7 +293,7 @@ matrix. A failed deploy makes the next one redeploy more, never less:
 
 | Path changed | Redeploys |
 | --- | --- |
-| `images/shared/**`, `images/toolsets/install-toolset.sh`, `images/toolsets/write-claude-md.sh`, `images/toolsets/toolset-checks.sh`, `images/toolsets/write-versions.sh`, `images/toolsets/skills/**`, `images/cloud/base/**`, `images/cloud/runner/**`, `images/cloud/entrypoint.sh`, `images/cloud/docker-bake.hcl`, `.dockerignore` | Every runner type |
+| `images/shared/**`, `images/toolsets/install-toolset.sh`, `images/toolsets/write-claude-md.sh`, `images/toolsets/toolset-checks.sh`, `images/toolsets/write-versions.sh`, `images/toolsets/skills/**`, `images/cloud/base/**`, `images/cloud/runner/**`, `images/cloud/entrypoint.sh`, `images/cloud/docker-bake.hcl`, `.dockerignore`, and `scripts/cloud/lock.sh` and `scripts/cloud/lib.sh` (the build's arguments are `lock.sh bake-args`, which reads a type's toolsets with lib.sh) | Every runner type |
 | `images/toolsets/<toolset>/**` | The types whose Dockerfiles (or build parents') install that toolset |
 | `images/cloud/<type>/**`, including its `versions.lock` | That type |
 | `hooks/gcp/**`, `hooks/lib.sh`, `images/cloud/orchestrator/**`, `images/cloud/docker-bake.hcl` and `.dockerignore` (which also rebuild every runner type, above), and the two files its build reads from elsewhere (`images/cloud/base/apt-build.conf`, `images/toolsets/install-toolset.sh`) | The orchestrator host (new image, then the host restarts its container) |
@@ -317,7 +318,8 @@ built from, and the check compares upstream against it, so nothing ever reads th
 image. One thing has its own lock: `3d-gpu`'s Python environment, `/opt/3d`, is
 `images/toolsets/3d/uv.lock`, which the watch doesn't move (`uv lock --upgrade` in a
 pull request; image-toolsets.md). `scripts/cloud/lock.sh` is its one reader and writer: `resolve <type>`
-(Linux, with Docker and Homebrew), `bake-args`, `diff`, `summary`, `pins`, `releases` and `path`. A lock is
+(Linux, with Docker and Homebrew), `bake-args`, `diff`, `summary`, `pins`, `releases`, `path` and `write` (the
+watch's candidate and `make cloud-lock WRITE=1` write a lock only through it). A lock is
 `<kind> <name> <value>` lines, sorted, under a header:
 
 ```text
@@ -343,11 +345,11 @@ the URL its list line's `# pinned:` note names (`-` if it names none; the spelli
 | Dependency | Locked as | Constraint, where it's declared | Resolved by (from upstream only) |
 | --- | --- | --- | --- |
 | Base image | Digest | `BASE_IMAGE` per base target in `docker-bake.hcl` (a tag; `@sha256` pins it) | `docker buildx imagetools inspect`: the index digest, no pull (a bare registry `HEAD` on mirror.gcr.io needs a token) |
-| apt packages, dependencies included | An Ubuntu snapshot id, plus the full resolved list | `images/cloud/base/packages.txt`, each toolset's `packages.txt`, and its `build-packages.txt` if it has a builder stage (`name=version` pins one; `snapshot=<id>` in its `# pinned:` comment takes that version from that snapshot) | `images/cloud/base/apt-prepare.sh --simulate` in a stock container at the locked base digest: the build's own apt bootstrap against today's archive, each pin's own snapshot added as an extra source (`images/cloud/base/apt-pins.sh`), then `apt-get install --simulate` of that list with the build's install options. A resolved set unlike the lock's (or a new base) moves the snapshot to now |
-| Homebrew, dependencies and `lolay/tap` included | Each formula with its version and revision | The type's Brewfiles | `brew bundle list`, `brew deps --union` (no build-only dependencies) and `brew info --json=v2` on the runner's own Homebrew, after tapping and trusting the Brewfiles' taps. Matches the image's `brew list` exactly |
+| apt packages, dependencies included | An Ubuntu snapshot id, plus the full resolved list | `images/cloud/base/packages.txt`, each toolset's `packages.txt`, and its `build-packages.txt` if it has a builder stage (`name=version` pins one; `snapshot=<id>` in its `# pinned:` comment takes that version from that snapshot) | `images/cloud/base/apt-prepare.sh --simulate` in a stock container at the locked base digest: the build's own apt bootstrap against today's archive, each pin's own snapshot added as an extra source (`images/cloud/base/apt-pins.sh`), then `apt-get install --simulate` of that list, read with the build's own list reader (`install-toolset.sh`'s `apt_list`), with the build's install options. A resolved set unlike the lock's (or a new base) moves the snapshot to now |
+| Homebrew, dependencies and `lolay/tap` included | Each formula with its version and revision | The type's Brewfiles | `brew bundle list`, `brew deps --union` (no build-only dependencies) and `brew info --json=v2` on the runner's own Homebrew, after tapping and trusting the Brewfiles' taps, with the build's own readers of a Brewfile (`install-toolset.sh`'s `trust_taps` and `brewfile_formulae`). Matches the image's `brew list` exactly |
 | Claude Code | Version | `CLAUDE_VERSION` in `docker-bake.hcl` (`latest`, `stable`, or a version) | `https://downloads.claude.ai/claude-code-releases/<channel>` |
 | Rust toolchain | Version | `RUST_TOOLCHAIN` in `images/toolsets/rust/install.sh` (`stable`, a minor line, or a version) | rustup's channel manifest |
-| Terraform | Version | `TERRAFORM_VERSION` in `images/toolsets/terraform/install.sh` (`latest`, `~> x.y`, or a version) | HashiCorp's release index, newest stable on that line |
+| Terraform | Version | `TERRAFORM_VERSION` in `images/toolsets/terraform/install.sh` (`latest`, `~> x.y`, `~> x.y.z`, or a version) | HashiCorp's release index: the newest stable release the constraint allows, read as HashiCorp and tenv read it (`~> 1.14` is >= 1.14, < 2.0; `~> 1.14.0` is >= 1.14.0, < 1.15.0, the 1.14 line) |
 | tflint, VirtualGL, COLMAP | Release tag | `TFLINT_VERSION`, `VIRTUALGL_VERSION` in their toolsets' `install.sh`; `COLMAP_VERSION` in `images/toolsets/3d/build-colmap.sh`; each beside its `*_RELEASES`, the GitHub releases URL | The tag GitHub redirects `/releases/latest` to, read by `github_latest` in `images/toolsets/install-toolset.sh`, which a `latest` build reads it with too |
 | Blender | Release version | `BLENDER_VERSION` in `images/toolsets/3d/install.sh`, beside `BLENDER_RELEASES=blender.sh` | The newest `blender-x.y.z-linux-x64.tar.xz` in the newest series on download.blender.org's release index, read by `images/toolsets/3d/blender.sh latest` (below) |
 
@@ -381,7 +383,8 @@ runs `lock.sh resolve <type>`, the job uploads the result as the artifact
 the file as it came, and the rerun builds from it. Nothing writes the branch for
 them, and a type that has a lock is never resolved there: moving a lock stays the
 watch's. So `lock.sh resolve` writes every lock, the first one included; no lock is
-written or seeded by hand. The one other writer is `make cloud-lock WRITE=1`, for a
+written or seeded by hand. The one other writer is `make cloud-lock WRITE=1` (through
+`lock.sh write`, as the watch writes its candidate), for a
 local `make cloud-build` against a candidate lock (a release pin only takes effect
 through the lock, since `bake-args` overrides it with the lock's value): that file
 is never committed. apt's snapshot makes the apt layer reproducible, old versions
@@ -539,8 +542,17 @@ A dispatch takes `all`, `nightly` or `weekly`. One run at a time, queued. It nev
 deploys; it only proposes a pull request:
 
 1. `resolve` (read-only `GITHUB_TOKEN`, no secrets) resolves each type in the class
-   on its own (`lock-watch.sh resolve`, one `lock.sh resolve` per type) into a
-   candidate tree that starts as `main`'s locks. A type whose resolve fails keeps
+   on its own (`lock-watch.sh resolve`, one `lock.sh resolve` per type, written
+   with `lock.sh write`) into a candidate tree. It then fetches `main` again, fills
+   in `main`'s lock as it is now for each type the candidate lacks (`lock-watch.sh
+   seed`), and compares with that rather than the checkout: a lock pull request
+   that merged while the types resolved would otherwise be proposed again. Before
+   the fill, a resolved type whose lock `main` changed since the checkout (a
+   rollback pin, or a lock pull request moving the apt snapshot, merged mid-resolve)
+   loses its candidate (`lock-watch.sh stale`): it was resolved against the old
+   lock, and proposing it would revert `main`'s, so it takes `main`'s and the next
+   run resolves it afresh. A type
+   whose resolve fails keeps
    `main`'s lock in the candidate and the loop carries on, so one type's upstream
    can't hold back the others' locks: on 2026-11-15 (run 43715897836) a 403 while
    resolving `3d-gpu`, the first type, failed the whole job, and `gis`, `linux-gpu`
@@ -568,7 +580,8 @@ deploys; it only proposes a pull request:
    `retry` the red pull request it left sat until upstream moved again.
 4. Something moved: `propose` (environment `lock-bot`) commits the moved locks onto
    `main`'s head as `lock/watch` and opens the pull request, or refreshes the open
-   one, titled from `lock.sh summary` (`lock(linux): claude 2.1.318, go 1.26.1, apt
+   one (unless `main`'s head, read again, already holds every one of them: then it
+   closes the open one and pushes nothing), titled from `lock.sh summary` (`lock(linux): claude 2.1.318, go 1.26.1, apt
    3 packages`; several types read `lock(gis, linux): gis: ...; linux: ...`), with
    each type's `lock.sh diff` as its description, and turns on auto-merge (squash).
 5. The pull request's required check is `cloud-build`'s `gate`: the build of every
@@ -577,7 +590,7 @@ deploys; it only proposes a pull request:
    to `main` starts the deploy, which smokes once more at `-next` in Cloud Run before
    promoting.
 
-The job summary lists every pin with its locked value, upstream's newest now and its
+The job summary lists every pin the lock marks (every kind but a Homebrew pin, [Pinning a dependency](#pinning-a-dependency)) with its locked value, upstream's newest now and its
 issue's state, read with `GITHUB_TOKEN` (the bot has no Issues permission); a closed
 issue reads **closed**: remove the pin? A lookup that fails there doesn't fail
 `resolve`, which would skip `propose` for every type: the `unresolved` job turns
@@ -688,7 +701,8 @@ The trade is build cost against how fast an image's contents move and what being
 behind costs a session. Claude, the thing that moves most, is locked on `nightly`
 types: the hourly watch proposes each release, and `gcp_runner_settings` sets
 `CLAUDE_UPGRADE=false` for them (read from `REBUILD`, so a type moved to `weekly`
-gets self-update back). On `weekly` types it updates itself at runner start, so a
+gets self-update back, and only for `BACKEND=run`: the watch locks no compute
+type's Claude, so one keeps updating itself whatever its class). On `weekly` types it updates itself at runner start, so a
 week-old `android` or `gis` image still runs today's Claude; what a week costs it is apt and Homebrew updates, which a session with
 `sudo` (`android`) or Homebrew (all) can pull when it needs one. Every type still
 rebuilds on any push that touches its inputs ([above](#what-a-push-to-main-deploys)).
@@ -768,22 +782,22 @@ it's fixed. How, per source:
 
 | Dependency | Pin | Notes |
 | --- | --- | --- |
-| Base image | `FROM mirror.gcr.io/library/ubuntu:24.04@sha256:...` | The watch reports it as pinned instead of rebuilding |
+| Base image | `BASE_IMAGE = "mirror.gcr.io/library/ubuntu:24.04@sha256:..."  # pinned: <issue URL>` in the base target's `args` in `images/cloud/docker-bake.hcl` (`base-gpu`'s CUDA image the same way): the Dockerfile is `FROM ${BASE_IMAGE}`, and the build takes the lock's digest for it (`lock.sh bake-args`) | The watch reports it as pinned instead of rebuilding |
 | apt package | `name=version  # pinned: <issue URL> snapshot=<id>` in `packages.txt` (or `build-packages.txt`), the id a snapshot.ubuntu.com timestamp whose index has that version | A snapshot's index lists each pocket's current version alone, so once Ubuntu replaces an update, the type's snapshot no longer has it (checked 2026-11-15: `noble-updates` had openssl `3.0.13-0ubuntu3.6` at 20260101T000000Z and only `3.0.13-0ubuntu3.16` at 20261101T000000Z). `snapshot=` resolves and installs that package from its own snapshot, and everything else keeps moving ([The lock](#the-lock)). Pin a package's same-version siblings too (`libssl3t64` with `openssl`): an exact-version dependency isn't pinned for you. Without `snapshot=`, the pin resolves against today's archive and holds only while Ubuntu keeps that version. To hold all of apt still, freeze the snapshot timestamp in the lock |
-| Homebrew formula | A versioned formula if one exists (`python@3.12`), else `brew extract --version=X <formula> lolay/tap` and name `lolay/tap/<formula>@X` in the Brewfile | `brew pin` doesn't help a fresh build. An extracted formula has no bottle, so it builds from source |
+| Homebrew formula | A versioned formula if one exists (`python@3.12`), else `brew extract --version=X <formula> lolay/tap` and name `lolay/tap/<formula>@X` in the Brewfile | `brew pin` doesn't help a fresh build. An extracted formula has no bottle, so it builds from source. The watch doesn't report a Homebrew pin: the lock records the formula the Brewfile names, with no `pinned` line, so the pin's issue is what tracks it; remove the pin when the issue closes |
 | `lolay/tap` formula | Revert in the tap, or add a versioned formula there | It's ours |
-| Claude Code | `CLAUDE_VERSION=2.1.317` (a version) or `stable` (the channel) | The runner types only: the orchestrator always takes the newest Claude, from its own `ORCHESTRATOR_CLAUDE_VERSION` in `docker-bake.hcl`, which no pin reaches (Owner, 2026-11-20, #83, r3.f22); the deploy's check of its flags (`check-orchestrator-flags.sh`) is what guards it. The watch then skips Claude. `nightly` types already run with `CLAUDE_UPGRADE=false`; a `weekly` type still updates itself at start, past the pin, and has no setting to stop it yet: add one (an env file key read by `gcp_runner_settings`) if a weekly pin is ever needed |
+| Claude Code | `CLAUDE_VERSION=2.1.317` (a version) | The runner types only: the orchestrator always takes the newest Claude, from its own `ORCHESTRATOR_CLAUDE_VERSION` in `docker-bake.hcl`, which no pin reaches (Owner, 2026-11-20, #83, r3.f22); the deploy's check of its flags (`check-orchestrator-flags.sh`) is what guards it. The lock holds Claude at that version, and the watch reports the pin. `stable` isn't a pin: it's a channel the watch follows, as it follows the default `latest`, resolving it each run to the version it names, with no `pinned` line; only a numbered `CLAUDE_VERSION` is a pin. `nightly` types already run with `CLAUDE_UPGRADE=false`; a `weekly` type still updates itself at start, past the pin, and has no setting to stop it yet: add one (an env file key read by `gcp_runner_settings`) if a weekly pin is ever needed |
 | Rust toolchain | `RUST_TOOLCHAIN=1.91.0` (a version) or `1.91` (a minor line) in `images/toolsets/rust/install.sh` | The watch resolves within it: a minor line still takes patch releases |
-| Terraform | `TERRAFORM_VERSION=1.14.2` or `~> 1.14` in `images/toolsets/terraform/install.sh` | tenv takes the constraint as is |
+| Terraform | `TERRAFORM_VERSION=1.14.2` (a version) or `~> 1.14.0` (the 1.14 line) in `images/toolsets/terraform/install.sh` | `~>` means what it means to HashiCorp and tenv, which take the constraint as is where the lock doesn't reach: `~> 1.14.0` is >= 1.14.0, < 1.15.0, and holds the 1.14 line; `~> 1.14` is >= 1.14, < 2.0, and takes any 1.x from 1.14 on. The watch resolves within it |
 | Type tool from a release | Its `*_VERSION` default in the script that reads it, beside its `*_RELEASES` (the release rows of the lock table) | |
 
 Pins live where the dependency is declared, each with `# pinned: <issue URL>` on the
 declaring line or the line above it (for Claude, anywhere in docker-bake.hcl's
 `variable "CLAUDE_VERSION"` block, `default` included), and the lock marks them
-pinned. The note is `#`, then `pinned:`, each followed by any spaces or tabs or
+pinned, all but Homebrew's (above), which only their issues track. The note is `#`, then `pinned:`, each followed by any spaces or tabs or
 none (`#pinned:<tab><URL>` reads as `# pinned: <URL>`), and its first word is the
 issue: `-`, or an apt pin's `snapshot=<id>` in its place, names none. `lock.sh`'s
-`pin_issue` is the one reader, for every kind of pin (r5.f12). The watch lists every pin in the job summary next to
+`pin_issue` is the one reader, for every kind of pin (r5.f12). The watch lists every pin the lock marks in the job summary next to
 upstream's current version and the issue's state, so a pin whose issue closed stands
 out instead of rotting. A package pinned in two lists (curl, in the base's and core's)
 is one pin; if the lists name different issues, `resolve` and `bake-args` fail rather

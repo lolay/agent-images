@@ -21,11 +21,14 @@ export HOMEBREW_NO_ENV_HINTS=1
 brew update --quiet 2>&1
 
 # Homebrew refuses to load formulae from untrusted third-party taps, so trust
-# each Brewfile tap before the bundle loads them.
-sed -n 's/^tap "\([^"]*\)".*/\1/p' "${brewfiles[@]}" | while read -r tap; do
-	brew tap "$tap" 2>&1
-	brew trust --tap "$tap"
-done
+# each Brewfile tap before the bundle loads them, with trust_taps, the reader
+# of a Brewfile's taps every image shares (images/toolsets/install-toolset.sh,
+# staged beside the Brewfiles). Sourcing it only defines functions, in syntax
+# macOS's bash 3.2 reads, and trust_taps uses nothing newer
+# (test_install_toolset.py checks both).
+# shellcheck source=images/toolsets/install-toolset.sh
+source "$STAGING_DIR/install-toolset.sh"
+trust_taps "${brewfiles[@]}"
 
 # The base image ships the stable claude-code cask, which conflicts with the
 # claude-code@latest the Brewfile installs; the Brewfile's channel wins.

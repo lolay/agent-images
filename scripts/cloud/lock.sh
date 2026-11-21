@@ -21,6 +21,10 @@
 #                                 locked release tool is still declared)
 #   lock.sh path <type>           where the type's lock is, whether or not it
 #                                 exists yet
+#   lock.sh write <type>          write the lock on stdin (a resolve's output)
+#                                 to the type's lock, whole or not at all: the
+#                                 one place a lock file is written (the watch,
+#                                 make cloud-lock WRITE=1)
 #   lock.sh orchestrator-claude   the Claude Code version the orchestrator's
 #                                 channel (docker-bake.hcl's
 #                                 ORCHESTRATOR_CLAUDE_VERSION) names now: it
@@ -65,7 +69,8 @@
 # apt resolves today differs from what the lock recorded.
 #
 #   LOCK_NOW       the snapshot id to use if apt moved (default: now, UTC)
-#   LOCK_DIR       where the current locks are (default images/cloud)
+#   LOCK_DIR       where the current locks are, and where write writes
+#                  (default images/cloud)
 #   LOCK_REGISTRY_WAITS  seconds to wait before each retry of a rate-limited
 #                  registry read (default "30 60 120 180 240"; tests set zeros)
 # Run from the repo root.
@@ -97,12 +102,21 @@ die() {
 	printf 'lock: %s\n' "$*" >&2
 	exit 1
 }
-usage() { die "usage: lock.sh resolve <type> | bake-args <type> | diff <old> <new> | summary <old> <new> | pins <type> | releases <type> | path <type> | orchestrator-claude"; }
+usage() { die "usage: lock.sh resolve <type> | bake-args <type> | diff <old> <new> | summary <old> <new> | pins <type> | releases <type> | path <type> | write <type> | orchestrator-claude"; }
 
 lock_file() { printf '%s/%s/versions.lock' "$lock_dir" "$1"; }
 
 # lock_value <file> <kind> [name]: the value of one line, or nothing.
 lock_value() { awk -v kind="$2" -v name="${3:--}" '$1 == kind && $2 == name {print $3; exit}' "$1"; }
+
+# require_lines <file> [name]: fail unless the lock has the lines every build
+# reads, naming it <name> (default the file).
+require_lines() {
+	local kind
+	for kind in base apt-snapshot claude; do
+		[[ -n "$(lock_value "$1" "$kind")" ]] || die "${2:-$1} has no $kind line"
+	done
+}
 
 # --- Constraints, read where they're declared ---------------------------------
 
@@ -260,28 +274,49 @@ resolve_rust() {
 	printf 'rust - %s\n' "$version"
 }
 
-# terraform_newest [x.y.]: the newest stable Terraform release, on that line if
-# given; nothing if none matches.
+# terraform_newest [<low> <high>]: the newest stable Terraform release, or, with
+# bounds (each x.y.z), the newest at or above <low> and below <high>; nothing if
+# none matches. Each release is compared whole, field by field, so 11.14.0 is
+# never on the 1.14 line.
 terraform_newest() {
 	local versions
 	versions="$(fetch "$terraform_index" | jq -r '.versions | keys[]')"
-	grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' <<<"$versions" | grep -F "${1:-}" | sort -V | tail -n 1 || true
+	awk -v low="${1:-0.0.0}" -v high="${2:-}" '
+		function cmp(a, b, x, y, i) {
+			split(a, x, ".")
+			split(b, y, ".")
+			for (i = 1; i <= 3; i++)
+				if (x[i] + 0 != y[i] + 0) return x[i] + 0 < y[i] + 0 ? -1 : 1
+			return 0
+		}
+		/^[0-9]+\.[0-9]+\.[0-9]+$/ && cmp($0, low) >= 0 && (high == "" || cmp($0, high) < 0) &&
+			(best == "" || cmp($0, best) > 0) { best = $0 }
+		END { if (best != "") print best }
+	' <<<"$versions"
 }
 
 resolve_terraform() {
-	local file=images/toolsets/terraform/install.sh constraint version line
+	local file=images/toolsets/terraform/install.sh constraint version major minor
+	local -a bounds=()
 	constraint="$(declared "$file" "$terraform_var")"
 	if [[ "$constraint" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 		printf 'terraform - %s\npinned terraform %s\n' "$constraint" "$(pin_note "$file" "$terraform_var:-")"
 	else
-		# latest, or ~> x.y: the newest stable release on that line.
-		line=""
-		if [[ "$constraint" =~ ^~\>[[:space:]]*([0-9]+\.[0-9]+)$ ]]; then
-			line="${BASH_REMATCH[1]}."
+		# latest, or ~> as HashiCorp and tenv mean it, since tenv installs the
+		# constraint as is where the lock doesn't reach (scripts/anthropic/setup.sh):
+		# ~> x.y is >= x.y.0 and < (x+1).0, and ~> x.y.z is >= x.y.z and
+		# < x.(y+1).0, the x.y line.
+		if [[ "$constraint" =~ ^~\>[[:space:]]*([0-9]+)\.([0-9]+)$ ]]; then
+			major=$((10#${BASH_REMATCH[1]}))
+			bounds=("$major.$((10#${BASH_REMATCH[2]})).0" "$((major + 1)).0.0")
+		elif [[ "$constraint" =~ ^~\>[[:space:]]*([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+			major=$((10#${BASH_REMATCH[1]}))
+			minor=$((10#${BASH_REMATCH[2]}))
+			bounds=("$major.$minor.$((10#${BASH_REMATCH[3]}))" "$major.$((minor + 1)).0")
 		elif [[ "$constraint" != latest ]]; then
-			die "terraform: can't resolve '$constraint' (a version, ~> x.y or latest)"
+			die "terraform: can't resolve '$constraint' (a version, ~> x.y, ~> x.y.z or latest)"
 		fi
-		version="$(terraform_newest "$line")"
+		version="$(terraform_newest "${bounds[@]}")"
 		[[ -n "$version" ]] || die "terraform: no release matches '$constraint'"
 		[[ "$constraint" == latest ]] || printf 'pinned terraform %s\n' "$(pin_note "$file" "$terraform_var:-")"
 		printf 'terraform - %s\n' "$version"
@@ -388,32 +423,40 @@ package_lines() {
 	done < <(cloud_toolsets "$1")
 }
 
-# packages_of <type>: the apt packages the type's image asks for, as the build
-# reads them (install-toolset.sh's install_apt).
-packages_of() { package_lines "$1" | sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d'; }
+# packages_of <type>: the apt packages the type's image asks for, read as the
+# build reads them (install-toolset.sh's apt_list).
+packages_of() { package_lines "$1" | apt_list; }
+
+# entries_of <type>: each entry of the type's lists with its comment
+# (install-toolset.sh's apt_entries): what the pin readers below read.
+entries_of() {
+	local lines
+	# Assigned first: a failure in package_lines would pass as no pins.
+	lines="$(package_lines "$1")"
+	apt_entries <<<"$lines"
+}
 
 # apt_pins_of <type>: each pin whose `# pinned:` comment names its snapshot
 # (`name=version  # pinned: <issue URL> snapshot=<id>`), as name=version@id, one
 # per line: the list images/cloud/base/apt-pins.sh takes. The builds read the
 # line as an ordinary pin, the comment stripped.
 apt_pins_of() {
-	local line package snapshot
-	while IFS= read -r line; do
-		[[ "$line" == *'#'*snapshot=* ]] || continue
-		package="${line%%#*}"
-		package="${package//[[:space:]]/}"
-		[[ -n "$package" ]] || continue
+	local entries package comment line snapshot
+	entries="$(entries_of "$1")"
+	while IFS=$'\t' read -r package comment; do
+		[[ "$comment" == *snapshot=* ]] || continue
+		line="$package  #$comment"
 		# A word of its own, or the note's first word straight after `pinned:`,
 		# which pin_issue accepts too (`#pinned:snapshot=<id>`).
-		[[ "${line#*#}" =~ (^|[[:space:]]|pinned:)snapshot=([^[:space:]]*) ]] ||
+		[[ "$comment" =~ (^|[[:space:]]|pinned:)snapshot=([^[:space:]]*) ]] ||
 			die "$1: '$line': snapshot= is a word of its own in the comment"
 		snapshot="${BASH_REMATCH[2]}"
-		[[ "$package" =~ ^[a-z0-9][a-z0-9.+-]*=[^=@]+$ ]] ||
+		[[ "$package" =~ ^[a-z0-9][a-z0-9.+-]*=[^=@[:space:]]+$ ]] ||
 			die "$1: '$line': a snapshot needs a name=version pin"
 		[[ "$snapshot" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] ||
 			die "$1: '$line': '$snapshot' isn't a snapshot id (YYYYMMDDTHHMMSSZ)"
 		printf '%s@%s\n' "$package" "$snapshot"
-	done < <(package_lines "$1")
+	done <<<"$entries"
 }
 
 # apt_pin_notes <type>: a `pinned apt/<name> <issue URL or ->` line for each
@@ -424,21 +467,20 @@ apt_pins_of() {
 # one the watch should show is not for a script to guess. A list that names an
 # issue beside one that names none gives the issue.
 apt_pin_notes() {
-	local line package url
+	local entries package comment url
 	local -A noted=()
-	while IFS= read -r line; do
-		package="${line%%#*}"
-		package="${package//[[:space:]]/}"
+	entries="$(entries_of "$1")"
+	while IFS=$'\t' read -r package comment; do
 		[[ "$package" =~ ^([a-z0-9.+-]+)= ]] || continue
 		package="${BASH_REMATCH[1]}"
-		url="$(pin_issue "$line")"
+		url="$(pin_issue "#$comment")"
 		url="${url:--}"
 		if [[ "${noted[$package]:--}" != - && "$url" != - && "${noted[$package]}" != "$url" ]]; then
 			die "$1: apt/$package's pin names two issues: ${noted[$package]} and $url"
 		fi
 		[[ "$url" != - ]] || url="${noted[$package]:--}"
 		noted[$package]="$url"
-	done < <(package_lines "$1")
+	done <<<"$entries"
 	for package in "${!noted[@]}"; do
 		printf 'pinned apt/%s %s\n' "$package" "${noted[$package]}"
 	done | LC_ALL=C sort
@@ -501,7 +543,7 @@ resolve_brew() {
 	local toolset formulae=() closure
 	while read -r toolset; do
 		[[ -f "images/toolsets/$toolset/Brewfile" ]] || continue
-		mapfile -t -O "${#formulae[@]}" formulae < <(brew bundle list --formula --file="images/toolsets/$toolset/Brewfile")
+		mapfile -t -O "${#formulae[@]}" formulae < <(brewfile_formulae "images/toolsets/$toolset/Brewfile")
 	done < <(cloud_toolsets "$1")
 	((${#formulae[@]} > 0)) || return 0
 	closure="$({
@@ -517,17 +559,14 @@ resolve_brew() {
 # workflows needn't), the taps the Brewfiles name trusted the way
 # install-toolset.sh trusts them, and its formula data brought up to date.
 prepare_brew() {
-	local tap
 	if ! command -v brew >/dev/null; then
 		[[ -x "$(brew_path)" ]] || die "no brew on PATH or at $(brew_path)"
 		brew_env
 	fi
 	export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_ENV_HINTS=1
 	brew update --quiet >&2 2>&1
-	sed -n 's/^tap "\([^"]*\)".*/\1/p' images/toolsets/*/Brewfile | sort -u | while read -r tap; do
-		brew tap "$tap" >&2 2>&1
-		brew trust --tap "$tap" >&2
-	done
+	# stdout is the lock.
+	trust_taps images/toolsets/*/Brewfile >&2
 }
 
 cmd_resolve() {
@@ -584,9 +623,7 @@ cmd_bake_args() {
 	# issues for one package fails here, in cloud-build, not in the next resolve.
 	apt_pin_notes "$1" >/dev/null
 	[[ -f "$file" ]] || die "no lock for $1 ($file): cloud-build resolves a new type's lock on its pull request for the author to commit (AGENTS.md)"
-	for kind in base apt-snapshot claude; do
-		[[ -n "$(lock_value "$file" "$kind")" ]] || die "$file has no $kind line"
-	done
+	require_lines "$file"
 	while read -r kind name value; do
 		case "$kind" in
 		base) printf '*.args.BASE_IMAGE=%s\n' "$value" ;;
@@ -605,7 +642,11 @@ cmd_bake_args() {
 # entries <file>: `<kind> <name> <value>` without the header.
 entries() { grep -v '^#' "$1" | LC_ALL=C sort; }
 
+# cmd_diff <old> <new>: in C's collation throughout, since join reads its input
+# in the caller's locale, and one that orders `apt/` before `apt-` (en_US.UTF-8)
+# misjoins the C-sorted keys (r3.f6).
 cmd_diff() {
+	local -x LC_ALL=C
 	join -a 1 -a 2 -e '(none)' -o '0,1.2,2.2' \
 		<(entries "$1" | awk '{print $1 "/" $2, $3}' | LC_ALL=C sort) \
 		<(entries "$2" | awk '{print $1 "/" $2, $3}' | LC_ALL=C sort) |
@@ -704,6 +745,21 @@ cmd_pins() {
 	done < <(awk '$1 == "pinned"' "$file")
 }
 
+# cmd_write <type>: the lock on stdin, written to lock_file: to a new file
+# beside it, checked, then moved over it, so a reader never sees half a lock and
+# a bad one leaves the old in place.
+cmd_write() {
+	local file
+	file="$(lock_file "$1")"
+	mkdir -p "${file%/*}"
+	write_tmp="$(mktemp "$file.XXXXXX")"
+	trap 'rm -f "$write_tmp"' EXIT
+	cat >"$write_tmp"
+	require_lines "$write_tmp" "the lock for $1"
+	chmod 644 "$write_tmp"
+	mv "$write_tmp" "$file"
+}
+
 # cmd_orchestrator_claude: the orchestrator's Claude Code constraint from the
 # bake file, as an exact version: a version as it is, a channel as it names now.
 cmd_orchestrator_claude() {
@@ -750,6 +806,11 @@ path)
 	[[ "$2" =~ ^[a-z0-9-]+$ ]] || usage
 	lock_file "$2"
 	printf '\n'
+	;;
+write)
+	(($# == 2)) || usage
+	[[ "$2" =~ ^[a-z0-9-]+$ ]] || usage
+	cmd_write "$2"
 	;;
 orchestrator-claude)
 	(($# == 1)) || usage

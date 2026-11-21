@@ -36,7 +36,7 @@ RUN --mount=type=bind,source=images/cloud/base/packages.txt,target=/tmp/base-pac
 	--mount=type=bind,source=images/cloud/base/apt-build.conf,target=/tmp/apt-build.conf \
 	--mount=type=bind,source=images/cloud/base/apt-pins.sh,target=/tmp/apt-pins.sh \
 	--mount=type=bind,source=images/toolsets/install-toolset.sh,target=/tmp/install-toolset.sh \
-	bash /tmp/apt-prepare.sh $(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' /tmp/base-packages.txt) \
+	bash /tmp/apt-prepare.sh --list /tmp/base-packages.txt \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/ubuntu \
 	&& chmod 440 /etc/sudoers.d/ubuntu

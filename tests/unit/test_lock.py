@@ -11,6 +11,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -20,6 +21,31 @@ from test_bake import run_types
 
 SCRIPT = REPO / "scripts/cloud/lock.sh"
 REAL_DOCKER = shutil.which("docker")
+# ResolveTests give lock.sh a scratch HOME, where the real docker (for bake
+# --print) would look for its CLI plugins and miss a buildx installed in the
+# user's docker config, as Homebrew's docker-buildx is (r3.f18). So the real
+# config dir, DOCKER_CONFIG or ~/.docker as docker reads it, goes through too.
+# CI's runners have buildx system-wide, where any config finds it.
+DOCKER_CONFIG = os.environ.get("DOCKER_CONFIG") or str(Path.home() / ".docker")
+
+
+def docker_env(home) -> dict:
+    """The environment ResolveTests run lock.sh, and so the real docker, in."""
+    return {"HOME": str(home), "DOCKER_CONFIG": DOCKER_CONFIG}
+
+
+def have_buildx() -> bool:
+    """Whether the real docker's buildx works in docker_env: docker on PATH
+    isn't enough, as a docker without the plugin fails every resolve."""
+    if not REAL_DOCKER:
+        return False
+    with tempfile.TemporaryDirectory() as home:
+        result = subprocess.run([REAL_DOCKER, "buildx", "version"], capture_output=True, timeout=60,
+                                env={"PATH": os.environ["PATH"], **docker_env(home)})
+    return result.returncode == 0
+
+
+HAVE_BUILDX = have_buildx()
 
 FAKE_DOCKER = r'''#!/usr/bin/env python3
 import hashlib, json, os, re, subprocess, sys
@@ -276,8 +302,17 @@ def digest_of(ref: str, salt: str = "") -> str:
     return "sha256:" + hashlib.sha256((ref + salt).encode()).hexdigest()
 
 
-@unittest.skipUnless(REAL_DOCKER, "needs docker buildx for bake --print")
 class ResolveTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # bake --print is the real one. A session has no docker (Makefile.md,
+        # cloud-test); the pull request check runs these, and there a missing
+        # buildx fails, as in test_bake.
+        if not HAVE_BUILDX:
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                raise AssertionError("needs docker buildx for bake --print, and this CI runner has none")
+            raise unittest.SkipTest("needs docker buildx for bake --print")
+
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp)
@@ -335,7 +370,7 @@ class ResolveTests(unittest.TestCase):
         (self.tmp / "brew.json").write_text(json.dumps(self.brew))
         settings = {
             "PATH": f"{self.bin}:{os.environ['PATH']}",
-            "HOME": str(self.tmp),
+            **docker_env(self.tmp),
             "REAL_DOCKER": REAL_DOCKER,
             "FAKE_LOG": str(self.log),
             "FAKE_APT": str(self.apt),
@@ -520,7 +555,8 @@ class ResolveTests(unittest.TestCase):
         self.assertIn("pinned rust -", entries)
 
     def test_terraform_constraint_takes_the_newest_stable_on_its_line(self):
-        self.edit("images/toolsets/terraform/install.sh", "${TERRAFORM_VERSION:-latest}", "${TERRAFORM_VERSION:-~> 1.14}")
+        # ~> x.y.z holds the x.y line; TerraformTests covers each form of ~>.
+        self.edit("images/toolsets/terraform/install.sh", "${TERRAFORM_VERSION:-latest}", "${TERRAFORM_VERSION:-~> 1.14.0}")
         entries = self.entries(self.resolve())
         self.assertIn("terraform - 1.14.9", entries)
         self.assertIn("pinned terraform -", entries)
@@ -872,6 +908,181 @@ class ResolveTests(unittest.TestCase):
                 result = self.run_lock("resolve", type_)
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("isn't a Cloud Run type", result.stderr)
+
+
+# docker as it finds a CLI plugin: in <config>/cli-plugins or a directory
+# config.json's cliPluginsExtraDirs names (where Homebrew's docker-buildx asks to
+# be added), <config> being DOCKER_CONFIG or ~/.docker. Without the plugin,
+# `docker buildx` fails as docker does. FAKE_DOCKER_LOG records the environment
+# each call had.
+FAKE_DOCKER_CLI = r'''#!/usr/bin/env python3
+import json, os, sys
+args = sys.argv[1:]
+if os.environ.get("FAKE_DOCKER_LOG"):
+    with open(os.environ["FAKE_DOCKER_LOG"], "a") as f:
+        f.write(json.dumps({"args": args, "HOME": os.environ.get("HOME"),
+                            "DOCKER_CONFIG": os.environ.get("DOCKER_CONFIG")}) + "\n")
+config = os.environ.get("DOCKER_CONFIG") or os.path.join(os.environ["HOME"], ".docker")
+dirs = [os.path.join(config, "cli-plugins")]
+if os.path.exists(os.path.join(config, "config.json")):
+    dirs += json.load(open(os.path.join(config, "config.json"))).get("cliPluginsExtraDirs", [])
+if args[:1] == ["buildx"]:
+    if not any(os.access(os.path.join(d, "docker-buildx"), os.X_OK) for d in dirs):
+        sys.exit("docker: unknown command: docker buildx\n\nRun 'docker --help' for more information")
+    if args == ["buildx", "version"]:
+        print("github.com/docker/buildx v0.29.1 fake"); sys.exit(0)
+sys.exit("docker: fake: unexpected call: " + " ".join(args))
+'''
+
+
+class ResolveSkipTests(unittest.TestCase):
+    """ResolveTests skip when the real docker's buildx doesn't work in the
+    environment they give it, not merely when docker is missing, and give it
+    the user's docker config so an installed buildx is found (r3.f18). Run
+    against a fake docker, so no Docker is needed."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        executable(self.bin / "docker", FAKE_DOCKER_CLI)
+        self.home = self.tmp / "home"
+        self.home.mkdir()
+
+    def env(self, **extra):
+        env = {k: v for k, v in os.environ.items() if k not in ("DOCKER_CONFIG", "GITHUB_ACTIONS")}
+        return {**env, "PATH": f"{self.bin}:{os.environ['PATH']}", "HOME": str(self.home), **extra}
+
+    def plugin(self, directory: Path):
+        executable(directory / "docker-buildx", "#!/bin/sh\nexit 0\n")
+
+    def have_buildx(self, **extra):
+        result = subprocess.run([sys.executable, "-c", "import test_lock; print(test_lock.HAVE_BUILDX)"],
+                                cwd=Path(__file__).parent, env=self.env(**extra), capture_output=True,
+                                text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
+
+    def test_a_docker_without_buildx_skips_the_resolve_tests(self):
+        result = subprocess.run([sys.executable, "-m", "unittest", "test_lock.ResolveTests"],
+                                cwd=Path(__file__).parent, env=self.env(), capture_output=True, text=True,
+                                timeout=300)
+        self.assertEqual(result.returncode, 0, result.stderr[-3000:])
+        self.assertRegex(result.stderr, r"\nOK \(skipped=\d+\)\n")
+
+    def test_buildx_in_the_docker_config_is_found(self):
+        (self.home / ".docker/cli-plugins").mkdir(parents=True)
+        self.plugin(self.home / ".docker/cli-plugins")
+        self.assertEqual(self.have_buildx(), "True")
+
+    def test_buildx_in_a_directory_the_config_names_is_found(self):
+        # Homebrew's docker-buildx: the plugin stays in Homebrew's prefix, and
+        # ~/.docker/config.json names that directory.
+        (self.tmp / "brew/lib/docker/cli-plugins").mkdir(parents=True)
+        self.plugin(self.tmp / "brew/lib/docker/cli-plugins")
+        (self.home / ".docker").mkdir()
+        (self.home / ".docker/config.json").write_text(
+            json.dumps({"cliPluginsExtraDirs": [str(self.tmp / "brew/lib/docker/cli-plugins")]}))
+        self.assertEqual(self.have_buildx(), "True")
+
+    def test_buildx_in_docker_config_is_found(self):
+        (self.tmp / "config/cli-plugins").mkdir(parents=True)
+        self.plugin(self.tmp / "config/cli-plugins")
+        self.assertEqual(self.have_buildx(DOCKER_CONFIG=str(self.tmp / "config")), "True")
+        self.assertEqual(self.have_buildx(), "False")
+
+    def test_resolve_runs_the_real_docker_with_the_docker_config(self):
+        # lock.sh's bake --print reaches the real docker (REAL_DOCKER, here the
+        # fake), which must see the config, not one in ResolveTests' scratch HOME.
+        test = ResolveTests("test_linux_resolves_every_dependency")
+        test.setUp()
+        self.addCleanup(test.doCleanups)
+        log = self.tmp / "docker.log"
+        test.run_lock("resolve", "linux", REAL_DOCKER=str(self.bin / "docker"), FAKE_DOCKER_LOG=str(log))
+        calls = [json.loads(line) for line in log.read_text().splitlines()]
+        self.assertEqual(calls[0]["args"][:3], ["buildx", "bake", "-f"])
+        self.assertEqual({call["DOCKER_CONFIG"] for call in calls}, {DOCKER_CONFIG})
+        self.assertEqual({call["HOME"] for call in calls}, {str(test.tmp)})
+
+
+class TerraformTests(unittest.TestCase):
+    """resolve_terraform reads `~>` as HashiCorp and tenv do (r3.f8), since tenv
+    installs the raw constraint where the lock doesn't reach: `~> x.y` is
+    >= x.y.0 and < (x+1).0, `~> x.y.z` is >= x.y.z and < x.(y+1).0. lock.sh is
+    sourced for the function, against the fake curl (no Docker needed)."""
+
+    INDEX = json.dumps({"name": "terraform", "versions": {
+        v: {} for v in ("1.9.8", "1.14.2", "1.14.9", "1.15.0-rc1", "1.17.1", "1.18.0-beta1", "2.0.0", "11.14.0")
+    }})
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.repo = self.tmp / "repo"
+        for name in ("images/cloud", "images/toolsets", "infra/gcp", "scripts/cloud", "hooks/gcp"):
+            shutil.copytree(REPO / name, self.repo / name)
+        (self.tmp / "bin").mkdir()
+        executable(self.tmp / "bin/curl", FAKE_CURL)
+        (self.tmp / "urls.json").write_text(json.dumps({"https://releases.hashicorp.com/terraform/index.json": self.INDEX}))
+        self.log = self.tmp / "log"
+        self.install = self.repo / "images/toolsets/terraform/install.sh"
+        self.saved = self.install.read_text()
+
+    def resolve(self, constraint):
+        old = 'terraform="${TERRAFORM_VERSION:-latest}"'
+        self.assertIn(old, self.saved)
+        self.install.write_text(self.saved.replace(old, f'terraform="${{TERRAFORM_VERSION:-{constraint}}}"', 1))
+        self.log.unlink(missing_ok=True)
+        result = subprocess.run(
+            ["bash", "-c", "source scripts/cloud/lock.sh\nresolve_terraform"], cwd=self.repo,
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "PATH": f"{self.tmp / 'bin'}:{os.environ['PATH']}",
+                 "FAKE_URLS": str(self.tmp / "urls.json"), "FAKE_LOG": str(self.log)})
+        return result
+
+    def resolved(self, constraint):
+        result = self.resolve(constraint)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # The fake curl answered, not a real one further down PATH.
+        self.assertIn("get https://releases.hashicorp.com/terraform/index.json", self.log.read_text())
+        return result.stdout
+
+    def test_a_minor_constraint_takes_the_newest_below_the_next_major(self):
+        # Not 2.0.0 (the next major), 11.14.0 (which contains "1.14.") or a
+        # pre-release.
+        for constraint in ("~> 1.14", "~>1.14", "~>  1.9"):
+            with self.subTest(constraint):
+                self.assertEqual(self.resolved(constraint), "pinned terraform -\nterraform - 1.17.1\n")
+
+    def test_a_patch_constraint_holds_its_minor_line(self):
+        for constraint, version in (("~> 1.14.0", "1.14.9"), ("~> 1.14.2", "1.14.9"), ("~>1.14.9", "1.14.9"),
+                                    ("~> 1.9.0", "1.9.8"), ("~> 11.14.0", "11.14.0")):
+            with self.subTest(constraint):
+                self.assertEqual(self.resolved(constraint), f"pinned terraform -\nterraform - {version}\n")
+
+    def test_a_constraint_nothing_meets_fails(self):
+        for constraint in ("~> 1.14.10", "~> 3.0", "~> 1.16.0"):
+            with self.subTest(constraint):
+                result = self.resolve(constraint)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(f"lock: terraform: no release matches '{constraint}'", result.stderr)
+
+    def test_latest_takes_the_newest_stable_and_is_no_pin(self):
+        self.assertEqual(self.resolved("latest"), "terraform - 11.14.0\n")
+
+    def test_an_exact_version_is_a_pin_read_without_the_index(self):
+        result = self.resolve("1.14.2")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "terraform - 1.14.2\npinned terraform -\n")
+        self.assertFalse(self.log.exists())
+
+    def test_any_other_constraint_fails(self):
+        for constraint in (">= 1.14", "~> 1", "1.14", "~> 1.14.x"):
+            with self.subTest(constraint):
+                result = self.resolve(constraint)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(f"lock: terraform: can't resolve '{constraint}'", result.stderr)
 
 
 BLENDER = "https://download.blender.org/release"
@@ -1462,6 +1673,41 @@ class ReadTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertEqual(result.stdout, "")
 
+    def test_write_puts_the_lock_where_path_says(self):
+        # r3.f19: the one writer, for the watch and make cloud-lock WRITE=1.
+        for type_ in ("linux", "newtype"):
+            with self.subTest(type_):
+                result = subprocess.run(["bash", str(SCRIPT), "write", type_], cwd=REPO, input=self.LOCK,
+                                        capture_output=True, text=True, timeout=30,
+                                        env={**os.environ, "LOCK_DIR": str(self.tmp)})
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
+                path = Path(self.run_lock("path", type_).stdout.strip())
+                self.assertEqual(path.read_text(), self.LOCK)
+                self.assertEqual(path.stat().st_mode & 0o777, 0o644)
+                self.assertEqual(os.listdir(path.parent), ["versions.lock"], "no temporary file left")
+
+    def test_make_cloud_lock_writes_and_finds_the_lock_through_lock_sh(self):
+        recipe = subprocess.run(["make", "-n", "cloud-lock", "TYPE=linux", "WRITE=1"], cwd=REPO,
+                                capture_output=True, text=True, timeout=30, check=True).stdout
+        self.assertIn("scripts/cloud/lock.sh write linux <", recipe)
+        self.assertIn('lock="$(scripts/cloud/lock.sh path linux)"', recipe)
+        self.assertNotIn("versions.lock", recipe, "lock.sh names where a lock is")
+        self.assertNotRegex(recipe, r"\bmv\b")
+
+    def test_write_refuses_less_than_a_lock_and_keeps_the_old_one(self):
+        self.write("linux/versions.lock", self.LOCK)
+        partial = "".join(line + "\n" for line in self.LOCK.splitlines() if not line.startswith("base "))
+        result = subprocess.run(["bash", str(SCRIPT), "write", "linux"], cwd=REPO, input=partial,
+                                capture_output=True, text=True, timeout=30,
+                                env={**os.environ, "LOCK_DIR": str(self.tmp)})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("the lock for linux has no base line", result.stderr)
+        self.assertEqual((self.tmp / "linux/versions.lock").read_text(), self.LOCK)
+        self.assertEqual(os.listdir(self.tmp / "linux"), ["versions.lock"], "no temporary file left")
+        for args in (("write",), ("write", "../linux"), ("write", "linux", "x")):
+            with self.subTest(args):
+                self.assertEqual(self.run_lock(*args).returncode, 1)
+
     def test_bake_args_refuses_an_unknown_kind(self):
         self.write("linux/versions.lock", self.LOCK + "npm left-pad 1.3.0\n")
         result = self.run_lock("bake-args", "linux")
@@ -1490,6 +1736,56 @@ class ReadTests(unittest.TestCase):
             self.run_lock("summary", old, new).stdout.strip(),
             "claude 2.1.319, virtualgl 3.1.5, go removed, nowline 0.5.0, apt 1 package",
         )
+
+    def test_diff_is_the_same_under_any_collation(self):
+        # r3.f6: join ran in the caller's locale on keys sorted in C's, and a
+        # collation that orders `apt/` before `apt-` (en_US.UTF-8 does, ignoring
+        # punctuation) misjoined: "join: input is not in sorted order", spurious
+        # added and removed lines, and a wrong summary.
+        locale = self.punctuation_reversed_locale()
+        old = self.write("old", self.LOCK + "apt-floating cuda-libs 12.9.1-1\n")
+        new = self.write("new", self.LOCK.replace("20261101T000000Z", "20261106T220000Z"))
+        expected = ["apt-floating/cuda-libs: 12.9.1-1 -> (none)", "apt-snapshot/-: 20261101T000000Z -> 20261106T220000Z"]
+        for env in ({"LC_ALL": "C"}, locale):
+            with self.subTest(env.get("LC_ALL")):
+                result = self.run_lock_in(env, "diff", old, new)
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+                self.assertEqual(result.stdout.splitlines(), expected)
+                self.assertEqual(self.run_lock_in(env, "summary", old, new).stdout.strip(), "apt 1 package")
+
+    def run_lock_in(self, env, *args):
+        settings = {key: value for key, value in os.environ.items() if not key.startswith(("LC_", "LANG"))}
+        return subprocess.run(["bash", str(SCRIPT), *args], cwd=REPO, capture_output=True, text=True, timeout=30,
+                              env={**settings, "LOCK_DIR": str(self.tmp), **env})
+
+    def punctuation_reversed_locale(self):
+        """A locale whose collation puts letters and digits before punctuation,
+        and punctuation in reverse byte order, so `/` sorts before `-`, as in
+        en_US.UTF-8 and unlike C. Built here from a definition written here, so
+        the test needs no locale data installed (sessions have only C and
+        POSIX); skipped only where there's no glibc localedef."""
+        if shutil.which("localedef") is None:
+            self.skipTest("no localedef (glibc) to build a non-C collation")
+        root = self.tmp / "locale"
+        root.mkdir()
+        chars = [chr(code) for code in range(0x20, 0x7F)]
+        charmap = ["<code_set_name> ASCII-TEST", "<comment_char> %", "<escape_char> /",
+                   "<mb_cur_min> 1", "<mb_cur_max> 1", "CHARMAP", "<U0009> /x09", "<U000A> /x0a"]
+        charmap += [f"<U{ord(c):04X}> /x{ord(c):02x}" for c in chars] + ["END CHARMAP"]
+        order = [c for c in chars if c.isalnum()] + [c for c in chars if not c.isalnum()][::-1]
+        definition = ["comment_char %", "escape_char /", "LC_CTYPE", "END LC_CTYPE", "LC_COLLATE", "order_start forward"]
+        definition += [f"<U{ord(c):04X}>" for c in order] + ["<U0009>", "<U000A>", "order_end", "END LC_COLLATE"]
+        (root / "charmap").write_text("\n".join(charmap) + "\n")
+        (root / "definition").write_text("\n".join(definition) + "\n")
+        # -c: the definition has only the categories the test needs, which
+        # localedef warns about (exit 1) but still writes.
+        subprocess.run(["localedef", "-c", "-f", str(root / "charmap"), "-i", str(root / "definition"),
+                        str(root / "punct")], capture_output=True, text=True)
+        env = {"LOCPATH": str(root), "LC_ALL": "punct"}
+        ordered = subprocess.run(["sort"], input="apt-a\napt/b\n", capture_output=True, text=True,
+                                 env={"PATH": os.environ["PATH"], **env})
+        self.assertEqual(ordered.stdout, "apt/b\napt-a\n", f"the test locale didn't take: {ordered.stderr}")
+        return env
 
     def test_an_unchanged_lock_has_no_diff(self):
         old = self.write("old", self.LOCK)

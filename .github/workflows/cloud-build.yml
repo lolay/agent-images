@@ -34,18 +34,12 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
-        # What this workflow checks: the paths that build, smoke or test a cloud
-        # image, the workflows (the unit tests read them all), CI's tool
-        # versions and the Renovate config that bumps them, and Anthropic's
-        # setup script (it installs linux's toolsets).
+        # What this workflow checks: scripts/cloud/pr-check.sh relevant.
         run: |
           set -euo pipefail
           changed="$(git diff --name-only "$BASE...$HEAD")"
           printf '%s\n' "$changed"
-          relevant=false
-          if grep -qE '^(images/(cloud|android|shared|toolsets)/|hooks/gcp/|hooks/lib\.sh$|infra/gcp/|scripts/(cloud|ci|anthropic)/|tests/unit/|\.dockerignore$|Makefile$|triage\.yaml$|\.github/(workflows/[^/]*\.yml|renovate\.json)$)' <<<"$changed"; then
-            relevant=true
-          fi
+          relevant="$(scripts/cloud/pr-check.sh relevant <<<"$changed")"
           echo "relevant=$relevant" | tee -a "$GITHUB_OUTPUT"
 
   check:
@@ -205,22 +199,20 @@ jobs:
   # The one check main's ruleset requires. It passes when the pull request
   # touches nothing this workflow checks, or when `check` and every `build` leg
   # passed; anything else (a failure, a cancel, a skip after a failed `plan`)
-  # fails it.
+  # fails it (scripts/cloud/pr-check.sh gate).
   gate:
     needs: [changes, check, build]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Gate
         env:
           CHANGES: ${{ needs.changes.result }}
           RELEVANT: ${{ needs.changes.outputs.relevant }}
           CHECK: ${{ needs.check.result }}
           BUILD: ${{ needs.build.result }}
-        run: |
-          set -euo pipefail
-          echo "changes=$CHANGES relevant=$RELEVANT check=$CHECK build=$BUILD"
-          [[ "$CHANGES" == success ]] || { echo "::error::changes: $CHANGES"; exit 1; }
-          [[ "$RELEVANT" == true ]] || { echo "Nothing cloud-build checks changed."; exit 0; }
-          [[ "$CHECK" == success && "$BUILD" == success ]] || { echo "::error::check: $CHECK, build: $BUILD"; exit 1; }
+        run: scripts/cloud/pr-check.sh gate "$CHANGES" "$RELEVANT" "$CHECK" "$BUILD"

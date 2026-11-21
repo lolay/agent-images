@@ -83,10 +83,12 @@ gcp_check_type() {
 # each, for both backends: the Cloud Run job's env (scripts/cloud/job-spec.sh)
 # and a compute VM's runner-env metadata (hooks/gcp/spawn-runner). A key the env
 # file doesn't set is left out, so claude.sh's default applies; set but empty
-# means "never". A nightly type runs the Claude Code its lock baked in
+# means "never". A nightly Cloud Run type runs the Claude Code its lock baked in
 # (CLAUDE_UPGRADE=false): the watch moves it within the hour, so a session
 # updating itself would only run something nothing smoked (specs/gcp.md, m5,
-# D6). A weekly type keeps updating itself at start.
+# D6). A weekly type keeps updating itself at start, and so does a compute type
+# whatever its class: the watch locks only Cloud Run types, so its Claude is
+# whatever its last Packer build got (r3.f9).
 gcp_runner_settings() {
 	local key
 	for key in EXIT_IF_UNUSED_MIN RELEASE_IDLE_SESSION_MIN KILL_SESSION_AFTER_MIN; do
@@ -94,7 +96,7 @@ gcp_runner_settings() {
 			printf 'CLAUDE_%s=%s\n' "$key" "${!key}"
 		fi
 	done
-	if [[ "$(gcp_rebuild_class "$1")" == nightly ]]; then
+	if [[ "$(gcp_backend "$1")" == run && "$(gcp_rebuild_class "$1")" == nightly ]]; then
 		printf 'CLAUDE_UPGRADE=false\n'
 	fi
 }

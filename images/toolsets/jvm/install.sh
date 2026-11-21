@@ -7,12 +7,15 @@
 # be another JDK (a hosted runner's Temurin, a Homebrew openjdk), and the
 # directory's name carries the architecture (java-21-openjdk-amd64, -arm64).
 # Run by install-toolset.sh after the toolset's apt packages; log, die and
-# package_list are its.
+# apt_list are its.
 set -euo pipefail
 
 : "${TOOLSET_RECORD_DIR:?}"
 
-mapfile -t packages < <(package_list "$(dirname "${BASH_SOURCE[0]}")/packages.txt")
+# Assigned first: a list apt_list can't read fails here rather than as no JDK.
+list="$(apt_list "$(dirname "${BASH_SOURCE[0]}")/packages.txt")" || die "can't read the jvm packages.txt"
+mapfile -t packages <<<"$list"
+[[ -n "${packages[0]:-}" ]] || packages=()
 ((${#packages[@]} > 0)) || die "packages.txt names no JDK"
 files="$(dpkg -L "${packages[@]}")" || die "dpkg can't list ${packages[*]}: is the JDK installed?"
 javac="$(grep '/bin/javac$' <<<"$files" || true)"

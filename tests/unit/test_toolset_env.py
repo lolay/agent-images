@@ -172,14 +172,14 @@ def install_jvm(tmp, record, jdk, *, first_javac=None, **env):
         (work / name).mkdir(parents=True, exist_ok=True)
     write_executable(work / "bin/sudo", FAKE_SUDO)
     write_executable(work / "bin/dpkg", FAKE_DPKG)
-    for tool in ("cat", "dirname", "grep", "sed", "tee", "head"):
+    for tool in ("awk", "cat", "cut", "dirname", "grep", "sed", "tee", "head"):
         if not (work / "tools" / tool).exists():
             (work / "tools" / tool).symlink_to(shutil.which(tool))
     if first_javac and not (work / "first/javac").exists():
         (work / "first/javac").symlink_to(first_javac)
     record.mkdir(exist_ok=True)
     # The helpers as install-toolset.sh exports them, with the fakes' PATH.
-    script = (f'source "{INSTALL_TOOLSET}"; export -f log die package_list; '
+    script = (f'source "{INSTALL_TOOLSET}"; export -f log die apt_entries apt_list; '
               f'PATH="{work}/first:{work}/bin:{work}/tools" exec "$BASH" "{TOOLSETS}/jvm/install.sh"')
     settings = {"TOOLSET_RECORD_DIR": str(record), "TOOLSET_LOG_NAME": "jvm",
                 "FAKE_JDK": str(jdk), "FAKE_JDK_PACKAGE": JVM_PACKAGES[0], **env}

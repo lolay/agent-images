@@ -3,7 +3,8 @@
 set -euo pipefail
 
 # Each a version (a pin, or what the lock resolved) or latest; Terraform also
-# takes a constraint tenv understands (~> 1.14). The Cloud Run build passes the
+# takes a ~> constraint, which tenv and the lock read alike (~> 1.14.0 holds the
+# 1.14 line; ~> 1.14 is any 1.x from 1.14 on). The Cloud Run build passes the
 # locked versions (scripts/cloud/lock.sh); the VM images take these defaults.
 terraform="${TERRAFORM_VERSION:-latest}"
 tflint="${TFLINT_VERSION:-latest}"

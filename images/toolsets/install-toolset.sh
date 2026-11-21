@@ -26,9 +26,12 @@
 # apt_install_options (what every apt
 # install of a package list takes; images/cloud/base/apt-prepare.sh sources this
 # file for it, so the base's install and the lock's simulation take them too),
-# package_list <file> (the packages a packages.txt names), install_apt <file>
-# (installs them), install_apt_packages <package|.deb>...,
-# github_latest <releases URL> (the newest release's tag;
+# install_apt <file> (a packages.txt), install_apt_packages <package|.deb>...,
+# apt_entries and apt_list (the one reader of a package list's lines: the base's
+# apt layer, through apt-prepare.sh --list, and lock.sh read a list with them),
+# trust_taps and brewfile_formulae (the one reader of a Brewfile's taps and
+# formulae, lock.sh's too)
+# and github_latest <releases URL> (the newest release's tag;
 # scripts/cloud/lock.sh sources this file for it too, so the build and the lock
 # read a release the same way) and toolset_env <name>... (what the toolsets a
 # toolset needs first recorded). A toolset's install.sh
@@ -145,16 +148,67 @@ install_apt_packages() {
 	fi
 }
 
-# package_list <file>: the packages a list (a packages.txt) names, one per
-# line, with # comments; one per line out.
-package_list() { sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$1"; }
+# apt_entries [file]...: each entry of apt package lists (stdin when no file
+# is named) as `<entry><tab><comment>`: the entry is the line before its first
+# #, blanks trimmed at both ends (`curl`, `openssl=3.0.13-0ubuntu3.6`), the
+# comment what follows the # (`pinned: <URL> snapshot=<id>`), and a line with
+# no entry is skipped. The one parser of a list line, so the build installs,
+# and the lock resolves and pins, the same entries (r3.f20).
+apt_entries() {
+	awk '{
+		entry = $0
+		comment = ""
+		i = index($0, "#")
+		if (i) {
+			entry = substr($0, 1, i - 1)
+			comment = substr($0, i + 1)
+		}
+		gsub(/^[[:space:]]+|[[:space:]]+$/, "", entry)
+		if (entry != "") print entry "\t" comment
+	}' "$@"
+}
 
-# install_apt <file>: the packages a list names.
+# apt_list [file]...: the entries alone, one per line: what an install of the
+# lists asks apt for.
+apt_list() {
+	local entries
+	# Assigned first, and returned: a missing list fails here rather than
+	# reading as empty. Inside a caller's $(apt_list ...) errexit is off unless
+	# the caller set inherit_errexit (install_apt and apt-prepare.sh don't), so
+	# the failed assignment alone wouldn't stop this function.
+	entries="$(apt_entries "$@")" || return
+	[[ -z "$entries" ]] || cut -f 1 <<<"$entries"
+}
+
+# install_apt <file>: the packages a list names, one per line, with # comments.
 install_apt() {
 	local packages
-	mapfile -t packages < <(package_list "$1")
-	install_apt_packages "${packages[@]}"
+	packages="$(apt_list "$1")"
+	mapfile -t packages <<<"$packages"
+	install_apt_packages ${packages[0]:+"${packages[@]}"}
 }
+
+# trust_taps <Brewfile>...: tap each tap the Brewfiles name, once, and trust
+# it: Homebrew refuses to load formulae from an untrusted third-party tap. Its
+# progress goes to stdout (tap reports it on stderr, which a green build doesn't
+# allow). The build's install_brewfile, lock.sh's prepare_brew and the macOS
+# image's install-packages.sh call it; the last runs it under macOS's bash 3.2,
+# so it uses nothing newer, and nothing above the return below is newer syntax
+# (test_install_toolset.py, MacosTapsTests).
+trust_taps() {
+	local taps tap
+	taps="$(sed -n 's/^tap "\([^"]*\)".*/\1/p' "$@" | LC_ALL=C sort -u)"
+	while read -r tap; do
+		[[ -n "$tap" ]] || continue
+		brew tap "$tap" 2>&1
+		brew trust --tap "$tap"
+	done <<<"$taps"
+}
+
+# brewfile_formulae <Brewfile>: the formulae it installs here. brew bundle list
+# evaluates the Brewfile, so it skips entries for other platforms (brew "git"
+# if OS.mac?).
+brewfile_formulae() { brew bundle list --formula --file="$1"; }
 
 # github_latest <https://github.com/<owner>/<repo>/releases>: the tag GitHub
 # redirects /releases/latest to (no API call, so no rate limit). A release
@@ -253,7 +307,7 @@ ensure_brew() {
 }
 
 install_brewfile() {
-	local brewfile="$1" tap formulae
+	local brewfile="$1" formulae
 	ensure_brew
 	# brew update and tap report routine progress on stderr (downloading the API
 	# data, tapping), which a green build doesn't allow, so they go to stdout, as
@@ -261,18 +315,16 @@ install_brewfile() {
 	# toolset's cleanup deleted, so brew bundle doesn't fetch it on stderr.
 	# brew bundle keeps stderr, so a real error still stands out.
 	brew update --quiet 2>&1
-	# Homebrew refuses to load formulae from untrusted third-party taps, so trust
-	# each tap before the bundle loads them.
-	sed -n 's/^tap "\([^"]*\)".*/\1/p' "$brewfile" | while read -r tap; do
-		brew tap "$tap" 2>&1
-		brew trust --tap "$tap"
-	done
+	trust_taps "$brewfile"
 	log "installing $brewfile"
 	brew bundle --file="$brewfile"
-	# brew bundle list evaluates the Brewfile, so it skips entries for other
-	# platforms (brew "git" if OS.mac?).
-	mapfile -t formulae < <(brew bundle list --formula --file="$brewfile")
-	log "$(brew list --versions "${formulae[@]}" | tr '\n' ';')"
+	formulae="$(brewfile_formulae "$brewfile")"
+	# A Brewfile with no formula for Linux (taps, casks, or `if OS.mac?` alone)
+	# lists none: `brew list --versions ""` would fail it.
+	if [[ -n "$formulae" ]]; then
+		mapfile -t formulae <<<"$formulae"
+		log "$(brew list --versions "${formulae[@]}" | tr '\n' ';')"
+	fi
 	# The bottles Homebrew downloaded and its API and bootsnap caches aren't
 	# needed once poured. On the cloud images each toolset is its own layer, so
 	# clean up last, in the same layer; any brew command after this refills the
@@ -294,7 +346,7 @@ for name in "$@"; do
 		# Exported in a subshell, so they reach this install.sh and what it runs,
 		# but not the later toolsets' Homebrew and installers.
 		(
-			export -f log die apt apt_update apt_install_options package_list install_apt install_apt_packages github_latest \
+			export -f log die apt apt_update apt_install_options apt_entries apt_list install_apt install_apt_packages github_latest \
 				toolset_env
 			TOOLSET_LOG_NAME="$name" TOOLSET_RECORD_DIR="$record_dir" bash "$dir/install.sh"
 		)

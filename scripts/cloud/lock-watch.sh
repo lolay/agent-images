@@ -6,11 +6,25 @@
 #   lock-watch.sh types <class>               the Cloud Run types a run resolves:
 #                                             nightly, weekly or all (D4)
 #   lock-watch.sh resolve <class> <candidate> resolve each type in the class with
-#                                             lock.sh into <candidate>, one at a
-#                                             time: a type that fails keeps its
-#                                             lock there and the rest carry on.
-#                                             Prints `resolved <type>` or `failed
-#                                             <type>` for each
+#                                             lock.sh into <candidate> (lock.sh
+#                                             write), one at a time: a type that
+#                                             fails gets no lock written there (seed
+#                                             then gives it main's) and the rest
+#                                             carry on. Prints `resolved <type>` or
+#                                             `failed <type>` for each
+#   lock-watch.sh stale <results> <candidate> <main ref>
+#                                             remove from <candidate> the lock of
+#                                             each type <results> lists as resolved
+#                                             whose lock <main ref> changed since
+#                                             HEAD, the checkout the resolve read
+#   lock-watch.sh seed <ref> <tree>           copy into <tree> each lock at <ref>
+#                                             that <tree> doesn't hold yet: main's
+#                                             locks as they are after the resolve,
+#                                             and the candidate's for each type the
+#                                             run didn't resolve or stale dropped
+#   lock-watch.sh branch                      the bot's branch, lock/watch
+#   lock-watch.sh open                        the number of the open lock pull
+#                                             request, or nothing (GH_TOKEN reads it)
 #   lock-watch.sh changed <base> <candidate>  the lock paths that differ, one a line
 #   lock-watch.sh carry <results> <candidate> <main ref> <branch ref>
 #                                             copy into <candidate> the locks the
@@ -37,7 +51,9 @@
 #   lock-watch.sh propose <candidate> <title> <body file>
 #                                             commit the candidate's locks onto
 #                                             main's head as lock/watch, open or
-#                                             refresh the pull request, auto-merge on
+#                                             refresh the pull request, auto-merge on;
+#                                             or, when main already holds every one
+#                                             of them, close the open one instead
 #   lock-watch.sh close                       close the open lock pull request
 #   lock-watch.sh retry                       rerun the failed jobs of the open lock
 #                                             pull request's cloud-build run, up to
@@ -53,7 +69,8 @@ shopt -s inherit_errexit
 # shellcheck source=scripts/cloud/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-lock_sh="$(dirname "${BASH_SOURCE[0]}")/lock.sh"
+# Absolute: resolve runs it from inside the candidate tree.
+lock_sh="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lock.sh"
 readonly lock_sh
 readonly branch=lock/watch
 readonly staging=lock/watch-staging
@@ -70,7 +87,7 @@ die() {
 	printf 'lock-watch: %s\n' "$*" >&2
 	exit 1
 }
-usage() { die "usage: lock-watch.sh types|resolve|changed|carry|proposed|guard|title|body|pins|token|revoke|propose|close|retry ..."; }
+usage() { die "usage: lock-watch.sh types|resolve|stale|seed|branch|open|changed|carry|proposed|guard|title|body|pins|token|revoke|propose|close|retry ..."; }
 
 repo() {
 	[[ "${GITHUB_REPOSITORY:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "GITHUB_REPOSITORY isn't owner/name"
@@ -90,7 +107,8 @@ cmd_types() {
 
 # cmd_resolve <class> <candidate>: each type on its own (lock-watch run
 # 43715897836: blender.org's 403 on 3d-gpu, the first type, stopped gis and
-# linux-gpu too). A failed type's lock in <candidate> is left as it was, and
+# linux-gpu too). A failed type gets no lock written in <candidate> (whatever
+# is there stays: in the workflow, nothing, until seed gives it main's), and
 # carry treats it as not resolved. The run still fails: the workflow's
 # `unresolved` job reads the failed lines.
 cmd_resolve() {
@@ -100,15 +118,19 @@ cmd_resolve() {
 	out="$(mktemp)"
 	for type in $types; do
 		# lock.sh prints a lock only when the whole of it resolved, so out is
-		# either a lock or nothing worth keeping.
+		# either a lock or nothing worth keeping. It writes it where the
+		# candidate tree keeps the type's lock, as it would in the repo.
 		if "$lock_sh" resolve "$type" >"$out"; then
-			mkdir -p "$candidate/images/cloud/$type"
-			mv "$out" "$candidate/images/cloud/$type/versions.lock"
-			printf 'resolved %s\n' "$type"
+			if (cd "$candidate" && "$lock_sh" write "$type") <"$out"; then
+				printf 'resolved %s\n' "$type"
+				continue
+			else
+				printf 'lock-watch: %s: lock.sh write refused the resolved lock (exit %s); none is written\n' "$type" "$?" >&2
+			fi
 		else
-			printf 'lock-watch: %s: lock.sh resolve failed (exit %s); its lock stays as it was\n' "$type" "$?" >&2
-			printf 'failed %s\n' "$type"
+			printf 'lock-watch: %s: lock.sh resolve failed (exit %s); no lock is written\n' "$type" "$?" >&2
 		fi
+		printf 'failed %s\n' "$type"
 	done
 	rm -f "$out"
 }
@@ -122,6 +144,42 @@ files_in() {
 # locks_in <tree>: the lock paths under a tree, relative to it, sorted.
 locks_in() {
 	(cd "$1" && find images/cloud -mindepth 2 -maxdepth 2 -name versions.lock 2>/dev/null) | LC_ALL=C sort
+}
+
+# cmd_stale <results> <candidate> <main ref>: the resolve read each type's
+# lock (and the apt snapshot in it) from the checkout, HEAD. A resolved type
+# whose lock main changed since (a rollback pin, or a lock pull request moving
+# the apt snapshot, merged during the resolve) was resolved against the old
+# one, and proposing it could revert main's: its lock is dropped from the
+# candidate, so seed gives it main's and the next run resolves it afresh, as
+# carry drops a lock main changed under the open branch (r3.f7).
+cmd_stale() {
+	local results="$1" candidate="$2" main="$3" resolved type path status
+	[[ -f "$results" ]] || die "no resolve results $results"
+	git rev-parse --verify --quiet "$main^{commit}" >/dev/null || die "no commit $main"
+	resolved="$(sed -n 's/^resolved //p' "$results")"
+	while read -r type; do
+		[[ -n "$type" ]] || continue
+		path="images/cloud/$type/versions.lock"
+		status=0
+		git diff --quiet HEAD "$main" -- "$path" || status=$?
+		((status != 0)) || continue
+		((status == 1)) || die "couldn't compare $path between HEAD and $main"
+		rm -f "$candidate/$path"
+		printf 'dropped %s: %s changed it during the resolve\n' "$path" "$main" >&2
+	done <<<"$resolved"
+}
+
+cmd_seed() {
+	local ref="$1" tree="$2" paths path
+	# Assigned first: a failure in <(...) would pass as no locks.
+	paths="$(git ls-tree -r --name-only "$ref")"
+	mkdir -p "$tree"
+	while read -r path; do
+		[[ "$path" =~ $lock_pattern && ! -e "$tree/$path" ]] || continue
+		mkdir -p "$tree/${path%/*}"
+		git show "$ref:$path" >"$tree/$path"
+	done <<<"$paths"
 }
 
 cmd_changed() {
@@ -336,6 +394,25 @@ open_pr() {
 	gh api "repos/$name/pulls?head=${name%%/*}:$branch&base=main&state=open" --jq '.[0] | select(. != null) | "\(.number) \(.node_id)"'
 }
 
+# blobs_of <commit>: `<blob id> <path>` for every file in a commit's tree, so
+# one listing answers for every lock.
+blobs_of() {
+	gh api "repos/$(repo)/git/trees/$1?recursive=1" \
+		--jq 'if .truncated then error("the tree listing was truncated") else .tree[] | select(.type == "blob") | "\(.sha) \(.path)" end'
+}
+
+# on_main <blobs> <candidate>: succeed when the listing (blobs_of main) already
+# holds every lock in the candidate as it is there: a lock pull request that
+# merged while the run resolved (r3.f7). Blob ids are git's own, so a file's
+# id here equals GitHub's for the same bytes.
+on_main() {
+	local blobs="$1" candidate="$2" path blob
+	while read -r path; do
+		blob="$(git hash-object --no-filters "$candidate/$path")" || return 1
+		grep -qxF "$blob $path" <<<"$blobs" || return 1
+	done < <(files_in "$candidate")
+}
+
 # commit_on <branch> <head> <headline> <body file> <candidate>: one commit of
 # the candidate's locks, through createCommitOnBranch (signed by GitHub).
 # Prints the new commit's id.
@@ -358,12 +435,22 @@ commit_on() {
 }
 
 cmd_propose() {
-	local candidate="$1" title="$2" body="$3" name main commit pr number node
+	local candidate="$1" title="$2" body="$3" name main blobs commit pr number node
 	name="$(repo)"
 	files_in "$candidate" | cmd_guard
 	# A link would commit what it points at.
 	[[ -z "$(find "$candidate" -mindepth 1 -not -type d -not -type f)" ]] || die "the candidate holds a link or device"
 	main="$(ref_sha main)"
+	[[ "$main" =~ ^[0-9a-f]{40}$ ]] || die "no head for main"
+	# Decide compared the candidate with main after the resolve, but a lock pull
+	# request can still merge before this job: committing the same locks again
+	# would open a pull request with nothing in it.
+	blobs="$(blobs_of "$main")"
+	if on_main "$blobs" "$candidate"; then
+		printf 'main (%s) already has these locks: nothing to propose\n' "$main"
+		cmd_close
+		return 0
+	fi
 	# The commit is made on a staging branch at main's head, then lock/watch is
 	# moved to it. Moving lock/watch to main itself first would mark the open
 	# pull request merged, since its head would be in main.
@@ -391,6 +478,12 @@ cmd_propose() {
 	gh api graphql -f query='mutation($id: ID!) { enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: SQUASH}) { clientMutationId } }' \
 		-f id="$node" >/dev/null
 	printf 'pull request #%s at %s, auto-merge on\n' "$number" "$commit"
+}
+
+cmd_open() {
+	local pr
+	pr="$(open_pr)"
+	[[ -z "$pr" ]] || printf '%s\n' "${pr%% *}"
 }
 
 cmd_close() {
@@ -445,6 +538,22 @@ types)
 resolve)
 	(($# == 3)) || usage
 	cmd_resolve "$2" "$3"
+	;;
+branch)
+	(($# == 1)) || usage
+	printf '%s\n' "$branch"
+	;;
+open)
+	(($# == 1)) || usage
+	cmd_open
+	;;
+stale)
+	(($# == 4)) || usage
+	cmd_stale "$2" "$3" "$4"
+	;;
+seed)
+	(($# == 3)) || usage
+	cmd_seed "$2" "$3"
 	;;
 changed)
 	(($# == 3)) || usage

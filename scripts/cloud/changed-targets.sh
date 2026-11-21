@@ -67,13 +67,18 @@ touched() {
 
 # What every type is built from. A toolset's own directory rebuilds only the
 # types that install it (cloud_image_paths); the scripts beside them, every type.
-# (A * in these patterns also matches /, so the scripts are named outright.)
+# lock.sh and the lib.sh it reads a type's toolsets with are build inputs too:
+# the deploy's build arguments are `lock.sh bake-args` (the lock's lines as
+# *_VERSION and the rest, and APT_PINS from the package lists), so a change to
+# either changes what every type is built with (r3.f4). (A * in these patterns
+# also matches /, so the scripts are named outright.)
 readonly every_type=(
 	"images/shared/*" "images/toolsets/install-toolset.sh" "images/toolsets/write-claude-md.sh"
 	"images/toolsets/toolset-checks.sh" "images/toolsets/toolset-profile.sh" "images/toolsets/write-versions.sh"
 	"images/toolsets/skills/*"
 	"images/cloud/entrypoint.sh" "images/cloud/runner/*"
 	"images/cloud/docker-bake.hcl" ".dockerignore" "infra/gcp/project.env"
+	"scripts/cloud/lock.sh" "scripts/cloud/lib.sh"
 )
 
 # vm_image_paths <type>: a Compute Engine type's image is built by Packer from

@@ -4,9 +4,12 @@
 # what the build installs.
 #
 #   apt-prepare.sh <package>...
+#   apt-prepare.sh --list <file>
 #       the build: images/cloud/base/Dockerfile's apt layer installs the base's
-#       packages from the snapshot APT_SNAPSHOT names (required), and leaves
-#       the settings for every toolset layer after it
+#       packages (named, or a package list read with install-toolset.sh's
+#       apt_list, as every toolset layer reads its own) from the snapshot
+#       APT_SNAPSHOT names (required), and leaves the settings for every toolset
+#       layer after it
 #   apt-prepare.sh --simulate <package>...
 #       the resolve (scripts/cloud/lock.sh resolve_apt): the same steps in a
 #       stock container, against today's archive (no APT_SNAPSHOT: the resolve
@@ -53,12 +56,18 @@ die() {
 	printf 'apt-prepare: %s\n' "$*" >&2
 	exit 1
 }
-usage() { die "usage: apt-prepare.sh [--simulate] <package>..."; }
+usage() { die "usage: apt-prepare.sh [--simulate] <package>... | apt-prepare.sh --list <file>"; }
 
 simulate=false
 if [[ "${1:-}" == --simulate ]]; then
 	simulate=true
 	shift
+elif [[ "${1:-}" == --list ]]; then
+	(($# == 2)) || usage
+	list="$(apt_list "$2")" || die "couldn't read $2"
+	[[ -n "$list" ]] || die "no packages in $2"
+	mapfile -t list <<<"$list"
+	set -- "${list[@]}"
 fi
 (($# > 0)) || usage
 [[ "$1" != -* ]] || usage
