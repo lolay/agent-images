@@ -1005,7 +1005,8 @@ runner sets the same).
     rest of the filesystem is in memory.
   - Keep anything over 10 MB worth keeping in $AGENT_OUTPUTS (a Cloud Storage
     bucket, kept 30 days). Finish files on scratch, then copy them there; tell the
-    user the gs:// path.
+    user the gs:// path. The bucket is shared: read, write and delete only in your
+    own $AGENT_OUTPUTS folder, unless the user tells you otherwise.
   - Read shared inputs from $AGENT_DATASETS (read-only).
   - Code still goes to git: commit and push before the session ends.
 
@@ -1093,9 +1094,16 @@ rather than failing.
 
 This changes one earlier decision: sessions now have GCP access, limited to these two
 buckets. Each execution's service account, `agent-runner`, can write
-`lolay-agents-outputs` and read `lolay-agents-datasets`, and nothing else, and every
-session can see every other session's outputs. Fine for one owner; revisit if other
-people get sessions on these runners. Nothing secret goes in either bucket.
+`lolay-agents-outputs` and read `lolay-agents-datasets`, and nothing else. The
+outputs bucket is shared: every session mounts all of it read-write
+(`storage.objectAdmin`), so any session can read, overwrite or delete any other
+session's outputs; the per-session folder is a convention. Accepted for one owner
+(Owner, 2026-11-20, #40, r1.f25), visibility and integrity both: the guard is the
+session `CLAUDE.md` (`images/cloud/runner/claude/CLAUDE.md`), which tells every
+session to read, write and delete only in its own `$AGENT_OUTPUTS` folder unless the
+user says otherwise. Revisit (`objectCreator` plus `objectViewer`, or soft delete or
+versioning on the bucket) if other people get sessions on these runners. Nothing
+secret goes in either bucket.
 
 ## The head
 

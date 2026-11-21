@@ -37,7 +37,9 @@ needs them (deploys, Terraform plans and applies) runs in the repo's own CI.
   memory.
 - Keep anything over 10 MB worth keeping in `$AGENT_OUTPUTS` (a Cloud Storage
   bucket, kept 30 days). Finish files on scratch, then copy them there; tell the user
-  the `gs://` path from the start-of-session facts.
+  the `gs://` path from the start-of-session facts. The bucket is shared: other
+  sessions' folders are mounted beside yours, writable. Read, write and delete only
+  in your own `$AGENT_OUTPUTS` folder, unless the user tells you otherwise.
 - Read shared inputs from `$AGENT_DATASETS` (read-only).
 - Code still goes to git: commit and push before the session ends.
 

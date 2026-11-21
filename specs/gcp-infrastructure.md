@@ -76,7 +76,9 @@ no Terraform change and no key lands in state.
   versioning.
 - Bucket `lolay-agents-outputs`: where sessions keep large results (point clouds,
   models, rasters, videos). Uniform access, no public access, lifecycle delete after
-  30 days, no versioning. Sessions mount it read-write with Cloud Storage FUSE.
+  30 days, no versioning. Sessions mount it read-write with Cloud Storage FUSE, all
+  of it: any session can overwrite or delete another's outputs, accepted for one
+  owner with the session `CLAUDE.md` as the guard (gcp.md, "Storage", r1.f25).
 - Bucket `lolay-agents-datasets`: reusable inputs Gary adds by hand. Uniform access,
   no public access, no lifecycle rule. Sessions mount it read-only.
 - Cloud Run ephemeral disk quota, two quota preferences in `us-central1`:
