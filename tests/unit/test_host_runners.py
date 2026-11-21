@@ -411,6 +411,7 @@ LINKED = (
     "scripts/linux/orchestrator-service.sh",
     "hooks/spawn-runner",
     "hooks/linux/spawn-runner",
+    "hooks/lib.sh",
     "scripts/lib.sh",
     "scripts/runner-once.sh",
     "scripts/linux/lib.sh",
@@ -631,6 +632,18 @@ class SpawnRunnerCase(HostCase):
         result = self.run_hook()
         self.assertEqual(result.returncode, 1)
         self.assertEqual(self.submits(), [])
+
+    def test_a_missing_orchestrator_variable_does_not_retry(self):
+        # A retry would find it missing too, so it's a broken setup: exit 2, not
+        # `${X:?}`'s exit that the trap turned into a retry (r1.f22).
+        for key in ("CLAUDE_RUNNER_WORK_ORDER_FILE", "CLAUDE_RUNNER_ORDER_ID"):
+            for value in (None, ""):
+                with self.subTest(key=key, value=value):
+                    result = self.run_hook(**{key: value})
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn(f"{key} is not set; the orchestrator sets it", result.stderr)
+                    self.assertEqual(self.submits(), [], "nothing submitted")
+                    self.assertFalse(self.runners.exists() and any(self.runners.iterdir()), "nothing claimed")
 
 
 class StopBudgetTests(unittest.TestCase):

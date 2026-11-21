@@ -100,7 +100,7 @@ PKR_VAR_base_image ?= ghcr.io/cirruslabs/macos-$(MACOS_CODENAME)-xcode:latest
 # Docker; the deploy itself runs only from main, in GitHub Actions.
 CLOUD_SCRIPTS := $(wildcard images/cloud/*.sh images/cloud/base/*.sh images/cloud/runner/*.sh images/cloud/runner/claude/hooks/*.sh \
                    images/toolsets/*.sh images/toolsets/*/*.sh \
-                   images/cloud/orchestrator/*.sh scripts/cloud/*.sh hooks/gcp/*.sh \
+                   images/cloud/orchestrator/*.sh scripts/cloud/*.sh hooks/lib.sh hooks/gcp/*.sh \
                    images/android/*.sh images/android/gce/*.sh images/android/gce/files/*.sh) hooks/gcp/spawn-runner
 # Every Cloud Run type (the BACKEND=run files in infra/gcp) and the orchestrator:
 # what TYPE=all and cloud-ci build, and the pull request check's matrix.

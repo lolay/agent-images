@@ -41,7 +41,7 @@ jobs:
           changed="$(git diff --name-only "$BASE...$HEAD")"
           printf '%s\n' "$changed"
           relevant=false
-          if grep -qE '^(images/(cloud|android|shared|toolsets)/|hooks/gcp/|infra/gcp/|scripts/cloud/|tests/unit/|\.dockerignore$|Makefile$|triage\.yaml$|\.github/workflows/(cloud-[^/]*|lock-watch)\.yml$)' <<<"$changed"; then
+          if grep -qE '^(images/(cloud|android|shared|toolsets)/|hooks/gcp/|hooks/lib\.sh$|infra/gcp/|scripts/cloud/|tests/unit/|\.dockerignore$|Makefile$|triage\.yaml$|\.github/workflows/(cloud-[^/]*|lock-watch)\.yml$)' <<<"$changed"; then
             relevant=true
           fi
           echo "relevant=$relevant" | tee -a "$GITHUB_OUTPUT"
