@@ -17,6 +17,9 @@ from urllib.parse import parse_qs, unquote, urlsplit
 TOKEN = "fake-token-1234"
 # project.env's zone: where a VM a test puts in State.instances without a "zone" is.
 DEFAULT_ZONE = "us-central1-a"
+# Zones aggregatedList always reports: one with no VMs carries a warning in
+# place of an instances list, as the real API's do.
+EMPTY_ZONES = ("europe-west1-b",)
 
 
 @dataclass
@@ -251,9 +254,11 @@ def route_compute(state: State, request: Request):
     if segments[2] == "aggregated":
         if rest != ["instances"] or request.method != "GET":
             return 404, {"error": {"message": f"no fake for {request.method} {path}"}}
-        items = {"zones/europe-west1-b": {"warning": {"code": "NO_RESULTS_ON_PAGE"}}}
+        items = {}
         for instance in matching_instances():
             items.setdefault(f"zones/{_zone(instance)}", {"instances": []})["instances"].append(instance)
+        for zone in EMPTY_ZONES:
+            items.setdefault(f"zones/{zone}", {"warning": {"code": "NO_RESULTS_ON_PAGE"}})
         return 200, {"items": items}
 
     if rest[:1] == ["instances"]:

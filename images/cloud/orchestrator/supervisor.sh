@@ -226,15 +226,20 @@ chmod 700 "$SUPERVISOR_SECRETS_DIR"
 # Cloud Run job, or an image in its family. Only a 404 says no: on any other
 # answer it can't tell, logs why and says yes, and the hook reports a real
 # problem per session as before. "Not yet" is logged once, and its end once.
+# The project and region are the type's, its env file over project.env, as the
+# hook reads them when it runs the job or creates the VM: project.env's alone
+# would look in the wrong place for a type that sets its own, and hold it forever.
 declare -A waiting=()
 runner_ready() {
-	local token="$1" type="$2" what url
+	local token="$1" type="$2" what url project region
+	project="$(gcp_type_setting "$type" PROJECT_ID "")"
+	region="$(gcp_type_setting "$type" REGION "")"
 	if [[ "$(gcp_backend "$type")" == compute ]]; then
 		what="image in family $(gcp_image_family "$type")"
-		url="$GCP_COMPUTE_URL/compute/v1/projects/$PROJECT_ID/global/images/family/$(gcp_image_family "$type")"
+		url="$GCP_COMPUTE_URL/compute/v1/projects/$project/global/images/family/$(gcp_image_family "$type")"
 	else
 		what="Cloud Run job agent-$type"
-		url="$GCP_RUN_URL/v2/projects/$PROJECT_ID/locations/$REGION/jobs/agent-$type"
+		url="$GCP_RUN_URL/v2/projects/$project/locations/$region/jobs/agent-$type"
 	fi
 	gcp_call "$token" GET "$url"
 	case "$GCP_STATUS" in

@@ -507,6 +507,19 @@ class VmDeployTests(DeployTests):
                     self.assertEqual(result.returncode, 1, result.stdout)
                     self.assertIn(f"{message}: HTTP {status}", result.stderr)
 
+    def test_prune_finds_a_vm_in_the_zone_the_fake_reports_empty(self):
+        # The fake always reports europe-west1-b, with a warning when it has no
+        # VMs; one that has a VM must list it, not trip over the warning.
+        self.gcp.state.instances["agent-retired-eu"] = {
+            "name": "agent-retired-eu", "status": "TERMINATED", "metadata": {},
+            "labels": {"managed-by": "agent-images", "agent-images-type": "retired"},
+            "zone": "https://www.googleapis.com/compute/v1/projects/lolay-agents/zones/europe-west1-b",
+        }
+        result = self.deploy("prune")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("agent-retired-eu", self.gcp.state.instances)
+        self.assertIn("agent-retired-eu: no infra/gcp/retired.env; deleting the VM in europe-west1-b", result.stdout)
+
     def test_prune_fails_when_a_vm_delete_fails(self):
         self.gcp.state.instances["agent-retired-a"] = {
             "name": "agent-retired-a", "status": "TERMINATED", "metadata": {},
