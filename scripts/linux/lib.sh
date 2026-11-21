@@ -35,6 +35,15 @@ host_secret() {
 
 vm_exists() { lxc info "$1" >/dev/null 2>&1; }
 
+# Like vm_exists, but tells a VM that's gone apart from an lxc that failed: 0
+# listed, 1 gone, 2 LXD didn't answer (a snap refresh restarts it), which says
+# nothing about the VM. lxc info fails the same way for both.
+vm_listed() {
+	local names
+	names="$(lxc list --format csv --columns n 2>/dev/null)" || return 2
+	grep -Fxq -- "$1" <<<"$names"
+}
+
 # Waits until lxd-agent answers, so lxc exec works.
 wait_for_guest() {
 	local target_vm="$1" timeout="${2:-180}" waited=0

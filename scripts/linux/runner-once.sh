@@ -73,7 +73,23 @@ if EPHEMERAL=true ENVIRONMENT_SECRET_FILE="$work_order" \
 	rm -f "$work_order"
 	stream_guest_logs
 	log "$vm: waiting for its session to finish"
-	while vm_exists "$vm"; do
+	# Only a VM that LXD no longer lists has powered off. A failed lxc (LXD
+	# restarting) ends nothing: stopping on it would cut a live session short.
+	lxd_down=false
+	while :; do
+		listed=0
+		vm_listed "$vm" || listed=$?
+		case "$listed" in
+		0)
+			! $lxd_down || log "$vm: LXD answers again"
+			lxd_down=false
+			;;
+		1) break ;;
+		*)
+			$lxd_down || log "$vm: LXD isn't answering; still waiting" >&2
+			lxd_down=true
+			;;
+		esac
 		sleep 10
 	done
 else
