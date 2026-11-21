@@ -240,6 +240,22 @@ class StartTests(SupervisorCase):
         )
         self.stop()
 
+    def test_a_project_key_in_a_types_env_file_is_skipped_not_fatal(self):
+        # The reaper lists VMs in project.env's project and zone alone; a type in
+        # another region would never be reaped (#161).
+        (self.env_dir / "linux.env").write_text("MIN_IDLE=0\nREGION=us-east1\n")
+        self.start()
+        self.wait_for(lambda: self.starts("gis"), what="gis")
+        self.assertIsNone(self.process.poll())
+        self.assertEqual(self.starts("linux"), [])
+        self.assertIn(
+            "supervisor: linux: REGION is a project key: it belongs in infra/gcp/project.env only, which "
+            "deploy.sh and the orchestrator's reaper read alone; remove it from infra/gcp/linux.env; "
+            "not starting its orchestrator",
+            self.lines,
+        )
+        self.stop()
+
     def test_only_deploy_false_types_is_an_error(self):
         for name in ("linux", "gis"):
             (self.env_dir / f"{name}.env").write_text("DEPLOY=false\n")
@@ -307,31 +323,6 @@ class ReadinessTests(SupervisorCase):
         self.start()
         self.wait_for(lambda: self.starts("linux") and self.starts("gis"), what="both types")
         self.assertEqual(len(self.gcp.requests("GET", "/service-accounts/default/token")), 2, "one per type")
-        self.stop()
-
-    def test_a_type_with_its_own_project_and_region_is_checked_there(self):
-        # The hook runs gis's job where its env file says; project.env's place
-        # has a job of that name too, which must not count.
-        (self.env_dir / "gis.env").write_text("MIN_IDLE=1\nPROJECT_ID=other-project\nREGION=europe-west1\n")
-        own = "/v2/projects/other-project/locations/europe-west1/jobs/agent-gis"
-        self.start(RUNNER_WAIT_SEC="1")
-        self.wait_for(lambda: self.starts("linux"), what="linux")
-        self.wait_for(lambda: len(self.gcp.requests("GET", own)) >= 2, what="gis checked in its own region twice")
-        self.assertEqual(self.starts("gis"), [])
-        self.assertEqual(self.gcp.requests("GET", f"/v2/{JOBS}/agent-gis"), [], "not project.env's region")
-        self.gcp.state.jobs[own.removeprefix("/v2/")] = {"name": own.removeprefix("/v2/")}
-        self.wait_for(lambda: self.starts("gis"), what="gis once its job exists in its region")
-        self.stop()
-
-    def test_a_compute_type_with_its_own_project_is_checked_there(self):
-        (self.env_dir / "project.env").write_text(PROJECT_ENV + "ZONE=us-central1-a\n")
-        (self.env_dir / "android.env").write_text("BACKEND=compute\nPROJECT_ID=other-project\n")
-        self.gcp.state.secrets["claude-env-android"] = "android-key"
-        self.add_image("android")
-        self.start(REAPER_INTERVAL_SEC="3600")
-        self.wait_for(lambda: self.starts("android"), what="android")
-        families = [request.path for request in self.gcp.requests("GET", "/images/family/")]
-        self.assertEqual(families, ["/compute/v1/projects/other-project/global/images/family/agent-android"])
         self.stop()
 
     def test_an_answer_other_than_404_starts_it_anyway(self):

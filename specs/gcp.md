@@ -962,6 +962,19 @@ workflows, per the CI configuration rule: non-secret, reviewed, and Terraform st
 the source. It holds those outputs only; per-type settings go in the type's env
 file.
 
+A type's env file may set any key except two kinds, which `gcp_check_type`
+(`hooks/gcp/lib.sh`) refuses: `IMAGE_FAMILY` ([below](#compute-engine-vm-per-session-android-and-the-gpu-fallback)),
+and every key `project.env` sets (`PROJECT_ID`, `PROJECT_NUMBER`, `REGION`,
+`ZONE`, `NETWORK`, `SUBNET`, `ARTIFACT_REGISTRY` and the rest, read from
+`project.env` itself by `gcp_project_keys`). The project keys belong to
+`project.env` only: deploy.sh and the orchestrator's reaper read it alone, so a
+type's own `REGION` or `ZONE` would move the hook's runs but not the deploy's
+promote and smoke or the reaper's sweep, and its VMs would never be reaped
+(Owner, 2026-11-21, #161). deploy.sh refuses such a type, the supervisor skips
+it, and `make cloud-test` runs the check over the real env files, so it fails its
+pull request. A type that needs another region is a design change: deploy.sh and
+the reaper would resolve the keys per type first.
+
 The GitHub side is set by hand: the lock-bot App, the `production` and `lock-bot`
 environments, and the `main` ruleset (see [The lock bot](#the-lock-bot)).
 

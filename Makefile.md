@@ -219,7 +219,7 @@ Where things live:
 | Path | What |
 | --- | --- |
 | `infra/gcp/project.env` | Terraform's outputs (`lolay/infrastructure`), committed as a copy |
-| `infra/gcp/<type>.env` | One runner type: its backend (`BACKEND=run`, a Cloud Run job, or `compute`, a VM per session), resources, scratch size, timeouts, orchestrator settings |
+| `infra/gcp/<type>.env` | One runner type: its backend (`BACKEND=run`, a Cloud Run job, or `compute`, a VM per session), resources, scratch size, timeouts, orchestrator settings (never a key `project.env` sets: `gcp_check_type` refuses it) |
 | `images/cloud/` | `base`, `linux`, `orchestrator` Dockerfiles, `entrypoint.sh`, the cloud `CLAUDE.md` and SessionStart hook |
 | `hooks/lib.sh` | The orchestrator hooks' exit contract, shared by `hooks/spawn-runner`, `hooks/linux/spawn-runner` and `hooks/gcp/spawn-runner`: `fail`, and `require`, which exits 2 for a missing variable |
 | `hooks/gcp/` | `spawn-runner` and `lib.sh` (REST with curl and a metadata-server token): a Cloud Run execution or a Compute Engine VM per session |

@@ -57,16 +57,48 @@ gcp_deploys() { [[ "$(gcp_type_setting "$1" DEPLOY true)" != false ]]; }
 # image build, so renaming it broke every spawn until then (r1.f20).
 gcp_image_family() { printf 'agent-%s\n' "$1"; }
 
+# gcp_project_keys: every key project.env sets, one per line. These are the
+# project keys a type's env file may not set (gcp_check_type). The list is
+# project.env's own rather than a copy here: project.env is Terraform's outputs
+# for the one project and holds nothing per type (its header says so), and
+# deploy.sh and the orchestrator's reaper read it alone, so a type's override of
+# any key in it would reach spawn-runner and job-spec.sh but not them (#161). A
+# new Terraform output is covered the day it's copied in.
+gcp_project_keys() {
+	[[ -f "$AGENT_GCP_ENV_DIR/project.env" ]] || return 0
+	sed -n 's/^\(export[[:space:]]\{1,\}\)\{0,1\}\([A-Za-z_][A-Za-z0-9_]*\)=.*/\2/p' \
+		"$AGENT_GCP_ENV_DIR/project.env"
+}
+
+# gcp_type_project_keys <type>: the project keys infra/gcp/<type>.env itself
+# sets, one per line. The type's file alone, sourced with the project keys
+# unset, not gcp_type_setting: that layers project.env underneath, and the
+# callers have it loaded already, so every type would look as if it set them.
+gcp_type_project_keys() { (
+	local key keys=()
+	mapfile -t keys < <(gcp_project_keys)
+	((${#keys[@]} > 0)) || exit 0
+	unset "${keys[@]}"
+	# shellcheck source=/dev/null
+	source "$AGENT_GCP_ENV_DIR/$1.env" >/dev/null 2>&1 || exit 0
+	for key in "${keys[@]}"; do
+		[[ ! -v "$key" ]] || printf '%s\n' "$key"
+	done
+); }
+
 # gcp_check_type <type>: fail, with the one reason on stderr, when the type's env
 # file is something the pipeline can't serve: DEPLOY=false on a BACKEND=compute
 # type, which deploy.sh would build and promote with no orchestrator to serve
-# it; or an IMAGE_FAMILY, which nothing reads (gcp_image_family). That one is
-# refused rather than ignored: a rename that silently did nothing would look as
-# if it had worked. Every reader of the rules calls this: deploy.sh refuses the
-# type, the supervisor skips it, and `make cloud-test` runs it over the real
-# infra/gcp/*.env, so a bad file fails its pull request rather than reaching
-# the host (an env-file-only change plans no type deploy, r3.f2).
+# it; an IMAGE_FAMILY, which nothing reads (gcp_image_family); or a project key
+# (gcp_project_keys), which only some readers would honor. The last two are
+# refused rather than ignored: a setting that silently did nothing, or did it in
+# half the pipeline, would look as if it had worked. Every reader of the rules
+# calls this: deploy.sh refuses the type, the supervisor skips it, and
+# `make cloud-test` runs it over the real infra/gcp/*.env, so a bad file fails
+# its pull request rather than reaching the host (an env-file-only change plans
+# no type deploy, r3.f2).
 gcp_check_type() {
+	local key
 	if [[ "$(gcp_backend "$1")" == compute ]] && ! gcp_deploys "$1"; then
 		printf '%s: DEPLOY=false is for Cloud Run types only, not BACKEND=compute (a Compute Engine type would be built and promoted with no orchestrator to serve it); remove it from infra/gcp/%s.env\n' "$1" "$1" >&2
 		return 1
@@ -74,6 +106,12 @@ gcp_check_type() {
 	if [[ -n "$(gcp_type_setting "$1" IMAGE_FAMILY "")" ]]; then
 		printf "%s: IMAGE_FAMILY is not a setting: a type's image family is always %s; remove it from infra/gcp/%s.env\n" \
 			"$1" "$(gcp_image_family "$1")" "$1" >&2
+		return 1
+	fi
+	key="$(gcp_type_project_keys "$1" | head -n 1)"
+	if [[ -n "$key" ]]; then
+		printf "%s: %s is a project key: it belongs in infra/gcp/project.env only, which deploy.sh and the orchestrator's reaper read alone; remove it from infra/gcp/%s.env\n" \
+			"$1" "$key" "$1" >&2
 		return 1
 	fi
 }
