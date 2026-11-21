@@ -34,6 +34,7 @@ chmod 700 "$home/.claude-runner"
 install -m 755 "$STAGING_DIR/agent-runner.sh" "$home/bin/agent-runner"
 install -m 755 "$STAGING_DIR/agent-runner-watchdog.sh" "$home/bin/agent-runner-watchdog"
 install -m 755 "$STAGING_DIR/agent-ensure-simulator.sh" "$home/bin/agent-ensure-simulator"
+install -m 755 "$STAGING_DIR/clear-quarantine.sh" "$home/bin/agent-clear-quarantine"
 for runner in "$STAGING_DIR"/runners/*.sh; do
 	install -m 755 "$runner" "$home/bin/agent-runner-$(basename "$runner" .sh)"
 done

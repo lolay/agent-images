@@ -104,7 +104,8 @@ install)
 	"${clean_env[@]}" "${runner_command[@]}"
 	set_runner_command
 	mkdir -p "$(dirname "$plist")" "$AGENT_IMAGES_LOG_DIR"
-	write_host_plist "$plist" "$label" "$log_base" true "${runner_command[@]}"
+	# No VM: the runner itself drains, as it does in a guest.
+	write_host_plist "$plist" "$label" "$log_base" true "$RUNNER_DRAIN_SEC" "${runner_command[@]}"
 	launchctl bootstrap "$domain" "$plist"
 	log "installed $label from $context_dir (logs: $log_base.out, $log_base.err)"
 	;;
@@ -114,7 +115,7 @@ uninstall)
 		launchctl bootout "$domain/$label"
 		# bootout returns before the runner has drained and pushed its session's work.
 		waited=0
-		while [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null && ((waited < 130)); do
+		while [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null && ((waited < RUNNER_DRAIN_SEC + 10)); do
 			sleep 2
 			waited=$((waited + 2))
 		done

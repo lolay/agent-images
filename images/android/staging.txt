@@ -1,0 +1,14 @@
+# The Android image's staged layout: what its provisioners (scripts/) find in
+# STAGING_DIR. The one list every build reads, through images/android/stage.sh:
+# the LXD build (scripts/linux/build-image.sh), the Compute Engine build
+# (images/android/gce/build.pkr.hcl) and the android-image-smoke workflow.
+#
+# <source, from the repo root> <destination, in STAGING_DIR> [variant]
+# A directory source copies its contents. A line with a variant is staged only
+# for that build: gce is the Compute Engine image's guest pieces.
+images/shared/              .
+images/android/files/       .
+images/android/toolsets.txt .
+images/toolsets/            toolsets
+images/android/scripts/     scripts
+images/android/gce/files/   gce       gce

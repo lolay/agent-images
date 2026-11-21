@@ -2,7 +2,7 @@
 # Provisions the agent-android Compute Engine image in Packer's build VM
 # (images/android/gce/build.pkr.hcl): the Compute Engine counterpart of
 # scripts/linux/build-image.sh, running the same provisioners from the same
-# staged layout. Runs as root (Packer's sudo); the provisioners run as the guest
+# staged layout (images/android/staging.txt). Runs as root (Packer's sudo); the provisioners run as the guest
 # user, as they do in the LXD build.
 #
 # Ubuntu's Compute Engine image has no ubuntu user (cloud-init makes one only on

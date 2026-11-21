@@ -10,8 +10,12 @@
 # power off after one session instead of restarting its runner.
 #
 # The registration secret is ENVIRONMENT_SECRET_FILE when set (the orchestrator's
-# single-use work order), else the Keychain item agent-images.claude-environment-secret
-# with account <vm> or "default" (make secret-set NAME=claude-environment-secret).
+# single-use work order), else the VM's own Keychain item
+# agent-images.claude-environment-secret, account <vm> (make secret-set
+# NAME=claude-environment-secret VM=<vm>): a separate environment's key. Never
+# the orchestrator's (account orchestrator or default) or the host runner's
+# (host, host-<context>), which any session on the VM could read and reuse: those
+# names are refused as VM names, and a copy of the orchestrator's key too.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -52,15 +56,47 @@ claude) ;;
 *) die "$config: AGENT must be claude (got '${agent}'); see specs/cursor.md" ;;
 esac
 
+# Read before anything touches the guest, so a VM with no secret of its own is
+# left as it was.
+vm_secret=""
+if [[ -n "${ENVIRONMENT_SECRET_FILE:-}" ]]; then
+	# A file, not just a non-empty path: -s holds for a directory, which the
+	# guest write would then read as nothing.
+	[[ -f "$ENVIRONMENT_SECRET_FILE" && -s "$ENVIRONMENT_SECRET_FILE" ]] ||
+		die "$ENVIRONMENT_SECRET_FILE is missing, empty or not a file"
+else
+	is_host_secret_account "$vm" &&
+		die "$vm names the Keychain account of a host key (orchestrator, default, host, host-*); name the VM something else"
+	status=0
+	vm_secret="$(keychain_secret claude-environment-secret "$vm")" || status=$?
+	# 1: keychain_secret has said why (a locked keychain); 2: no item for this VM.
+	((status != 1)) || exit 1
+	((status == 0)) || die "$vm takes a work order or its own environment key, never the orchestrator's"
+	# The copy check needs the orchestrator's key: only "there is none" (2) skips
+	# it. Any other failure (a locked keychain, a denied read) stops here, or a
+	# copy would pass as a different key. stderr is kept only for that case.
+	status=0
+	orchestrator_lookup="$(keychain_secret claude-environment-secret orchestrator default 2>&1)" || status=$?
+	case "$status" in
+	0) ;;
+	2) orchestrator_lookup="" ;;
+	*)
+		printf '%s\n' "$orchestrator_lookup" >&2
+		die "can't read the orchestrator's key to check that $vm's isn't a copy of it"
+		;;
+	esac
+	[[ "$vm_secret" != "$orchestrator_lookup" ]] ||
+		die "$vm's Keychain item is the orchestrator's environment key; give $vm a separate environment's key: make secret-set NAME=claude-environment-secret VM=$vm"
+fi
+readonly vm_secret
+
 push_registration_secret() {
-	local guest_path=".claude-runner/environment-secret" value
+	local guest_path=".claude-runner/environment-secret"
 	if [[ -n "${ENVIRONMENT_SECRET_FILE:-}" ]]; then
-		[[ -s "$ENVIRONMENT_SECRET_FILE" ]] || die "$ENVIRONMENT_SECRET_FILE is missing or empty"
 		guest_write "$vm" "$guest_path" <"$ENVIRONMENT_SECRET_FILE"
-		return
+	else
+		printf '%s' "$vm_secret" | guest_write "$vm" "$guest_path"
 	fi
-	value="$(keychain_secret claude-environment-secret "$vm" default)" || exit 1
-	printf '%s' "$value" | guest_write "$vm" "$guest_path"
 }
 
 log "$vm: waiting for the $GUEST_USER session"

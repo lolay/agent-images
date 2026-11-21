@@ -1170,7 +1170,7 @@ at `0e34c0f`), deployed and tested 2026-11-06 ([m2 `android` results](#m2-androi
   reaches it through IAP, tag `packer`) and no service account. `provision.sh`
   creates the `ubuntu` user (Ubuntu's Compute Engine image has none) and runs the
   LXD image's own provisioners (`images/android/scripts`, from the same staged
-  layout), which boot the emulator once for its quickboot snapshot; then it adds the
+  layout, `images/android/staging.txt`), which boot the emulator once for its quickboot snapshot; then it adds the
   guest pieces in `gce/files`, and fails the build on any provisioner stderr. The
   image lands in family `agent-android-next`; `deploy.sh vm-promote` boots a smoke VM
   from it and only then moves it to `agent-android` (`images.patch` takes `family`),

@@ -20,6 +20,8 @@ from support import REPO, base_env, git_env, read_env_file, write_executable
 from test_entrypoint import EntrypointCase
 
 CLAUDE_SH = REPO / "images/shared/runners/claude.sh"
+CLEAR_QUARANTINE = REPO / "images/shared/clear-quarantine.sh"
+ANTHROPIC_TEAM_ID = "Q6L2SF6YDW"
 AGENT_RUNNER = REPO / "images/shared/agent-runner.sh"
 WATCHDOG = REPO / "images/shared/agent-runner-watchdog.sh"
 JOB_SPEC = REPO / "scripts/cloud/job-spec.sh"
@@ -72,6 +74,59 @@ def install_fake_claude(fake_bin: Path):
     write_executable(fake_bin / "claude", FAKE_CLAUDE)
 
 
+# xattr -p|-d com.apple.quarantine <file>, on the paths listed in
+# $FAKE_OUT/quarantined: fails (1) on a file without the flag, and on any other
+# use (2), as xattr does.
+FAKE_XATTR = r"""
+echo "$*" >>"$FAKE_OUT/xattr.calls"
+(($# == 3)) && [[ "$2" == com.apple.quarantine ]] || { echo "usage: xattr [-pd] attr file" >&2; exit 2; }
+flagged="$FAKE_OUT/quarantined"
+grep -Fxq -- "$3" "$flagged" 2>/dev/null || { echo "xattr: $3: No such xattr: $2" >&2; exit 1; }
+case "$1" in
+-p) echo "0083;6743a9d2;Homebrew\ Cask;" ;;
+-d) grep -Fxv -- "$3" "$flagged" >"$flagged.new" || true; mv "$flagged.new" "$flagged" ;;
+*) echo "xattr: unknown option $1" >&2; exit 2 ;;
+esac
+"""
+
+# codesign --verify --strict -R=<requirement> <file>, for a file signed with a
+# Developer ID of team $FAKE_SIGNER_TEAM (empty: not signed). Like codesign, a
+# requirement that only asks for Apple's anchor passes any Developer ID, one that
+# names a team passes only that team (exit 3 otherwise), and other uses fail.
+FAKE_CODESIGN = r"""
+echo "$*" >>"$FAKE_OUT/codesign.calls"
+(($# == 4)) && [[ "$1" == --verify && "$2" == --strict && "$3" == -R=* && -e "$4" ]] ||
+	{ echo "codesign: unrecognized arguments" >&2; exit 2; }
+requirement="${3#-R=}" signer="${FAKE_SIGNER_TEAM-Q6L2SF6YDW}"
+[[ -n "$signer" ]] || { echo "$4: code object is not signed at all" >&2; exit 1; }
+[[ "$requirement" == "anchor apple generic"* ]] ||
+	{ echo "$4: failed to satisfy specified code requirement(s)" >&2; exit 3; }
+if [[ "$requirement" =~ certificate\ leaf\[subject\.OU\]\ =\ \"?([A-Z0-9]+)\"? ]] &&
+	[[ "${BASH_REMATCH[1]}" != "$signer" ]]; then
+	echo "$4: failed to satisfy specified code requirement(s)" >&2
+	exit 3
+fi
+"""
+
+
+def install_fake_quarantine_tools(fake_bin: Path):
+    """Fake xattr and codesign, and the shared check on PATH as the macOS image
+    installs it (agent-clear-quarantine)."""
+    write_executable(fake_bin / "xattr", FAKE_XATTR)
+    write_executable(fake_bin / "codesign", FAKE_CODESIGN)
+    (fake_bin / "agent-clear-quarantine").symlink_to(CLEAR_QUARANTINE)
+
+
+def quarantine(out: Path, path: Path):
+    with (out / "quarantined").open("a") as flagged:
+        flagged.write(f"{path}\n")
+
+
+def quarantined(out: Path) -> list:
+    flagged = out / "quarantined"
+    return flagged.read_text().splitlines() if flagged.exists() else []
+
+
 def runner_argv(out: Path) -> list:
     return (out / "runner.argv").read_text().split("\0")[:-1]
 
@@ -119,7 +174,7 @@ class ClaudeShTests(unittest.TestCase):
         install_fake_claude(self.fake_bin)
         # Every Linux image has Homebrew on PATH; the fake records any call.
         write_executable(self.fake_bin / "brew", 'echo "$*" >>"$FAKE_OUT/brew.calls"\n')
-        write_executable(self.fake_bin / "xattr", 'echo "$*" >>"$FAKE_OUT/xattr.calls"\n')
+        install_fake_quarantine_tools(self.fake_bin)
         # FAKE_UNAME stands in for the kernel name; anything else is the real one.
         write_executable(
             self.fake_bin / "uname",
@@ -162,12 +217,22 @@ class ClaudeShTests(unittest.TestCase):
         self.assertIn("claude 9.9.9 (Claude Code)", result.stdout)
 
     def test_macos_upgrades_the_cask_and_clears_quarantine(self):
+        claude = self.fake_bin / "claude"
+        quarantine(self.out, claude)
         result = self.run_claude_sh(FAKE_UNAME="Darwin")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.calls("brew"), ["upgrade --cask claude-code@latest"])
         self.assertNotIn("update", self.calls("claude"))
-        self.assertEqual(self.calls("xattr"), [f"-p com.apple.quarantine {self.fake_bin / 'claude'}",
-                                               f"-d com.apple.quarantine {self.fake_bin / 'claude'}"])
+        self.assertEqual(len(self.calls("codesign")), 1, "verified before clearing (r1.f29)")
+        self.assertEqual(quarantined(self.out), [])
+
+    def test_macos_keeps_the_flag_on_a_claude_anthropic_did_not_sign(self):
+        quarantine(self.out, self.fake_bin / "claude")
+        result = self.run_claude_sh(FAKE_UNAME="Darwin", FAKE_SIGNER_TEAM="ABCDE12345")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(quarantined(self.out), [str(self.fake_bin / "claude")])
+        self.assertIn("claude is still quarantined; launch may prompt", result.stderr)
+        self.assertEqual(runner_argv(self.out)[0], "self-hosted-runner", "the runner still starts")
 
     def test_no_upgrade_when_turned_off(self):
         for uname in ("Linux", "Darwin"):
@@ -259,6 +324,70 @@ class ClaudeShTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("missing", result.stderr)
         self.assertEqual(self.calls("claude"), [])
+
+
+class ClearQuarantineTests(unittest.TestCase):
+    """images/shared/clear-quarantine.sh, the check the host and the macOS guest
+    run before clearing Homebrew's quarantine flag on claude (r1.f29)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.out = self.tmp / "out"
+        self.out.mkdir()
+        self.fake_bin = self.tmp / "bin"
+        install_fake_quarantine_tools(self.fake_bin)
+        self.binary = self.tmp / "Caskroom/claude-code@latest/2.1.330/claude"
+        self.binary.parent.mkdir(parents=True)
+        self.binary.write_text("")
+
+    def tearDown(self):
+        subprocess.run(["rm", "-rf", str(self.tmp)], check=True)
+
+    def clear(self, **env):
+        return subprocess.run(
+            ["bash", str(CLEAR_QUARANTINE), str(self.binary)],
+            env=base_env(self.tmp, self.fake_bin, FAKE_OUT=str(self.out), **env),
+            capture_output=True, text=True, timeout=30)
+
+    def calls(self, name):
+        path = self.out / f"{name}.calls"
+        return path.read_text().splitlines() if path.exists() else []
+
+    def test_clears_the_flag_on_an_anthropic_signed_claude(self):
+        quarantine(self.out, self.binary)
+        result = self.clear()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(quarantined(self.out), [])
+        self.assertIn(f"cleared Homebrew's quarantine on {self.binary}", result.stdout)
+        requirement = f'anchor apple generic and certificate leaf[subject.OU] = "{ANTHROPIC_TEAM_ID}"'
+        self.assertEqual(self.calls("codesign"), [f"--verify --strict -R={requirement} {self.binary}"])
+
+    def test_another_teams_developer_id_keeps_the_flag(self):
+        quarantine(self.out, self.binary)
+        result = self.clear(FAKE_SIGNER_TEAM="ABCDE12345")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(quarantined(self.out), [str(self.binary)])
+        self.assertIn(f"doesn't verify as Anthropic's (team {ANTHROPIC_TEAM_ID})", result.stderr)
+        self.assertNotIn(f"-d com.apple.quarantine {self.binary}", self.calls("xattr"))
+
+    def test_an_unsigned_claude_keeps_the_flag(self):
+        quarantine(self.out, self.binary)
+        result = self.clear(FAKE_SIGNER_TEAM="")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(quarantined(self.out), [str(self.binary)])
+
+    def test_nothing_to_do_without_the_flag(self):
+        result = self.clear(FAKE_SIGNER_TEAM="")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls("codesign"), [])
+        self.assertEqual(result.stdout, "")
+
+    def test_the_macos_image_installs_it_where_claude_sh_runs_it(self):
+        # Packer copies images/shared/ flat into staging; setup-user installs from there.
+        setup_user = (REPO / "images/macos/scripts/setup-user.sh").read_text()
+        self.assertIn('install -m 755 "$STAGING_DIR/clear-quarantine.sh" "$home/bin/agent-clear-quarantine"',
+                      setup_user)
+        self.assertIn("agent-clear-quarantine ", CLAUDE_SH.read_text())
 
 
 class AgentRunnerTests(unittest.TestCase):

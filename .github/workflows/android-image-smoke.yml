@@ -37,14 +37,10 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
           ls -l /dev/kvm
-      # The same layout scripts/linux/build-image.sh stages in the build VM.
+      # The layout every Android build stages (images/android/staging.txt).
       - name: Stage
         run: |
-          mkdir -p "$STAGING_DIR/scripts"
-          cp -R images/shared/. images/android/files/. "$STAGING_DIR/"
-          cp images/android/toolsets.txt "$STAGING_DIR/"
-          cp -R images/toolsets "$STAGING_DIR/toolsets"
-          cp images/android/scripts/*.sh "$STAGING_DIR/scripts/"
+          images/android/stage.sh "$STAGING_DIR"
           : >"$STDERR_LOG"
       # Each script's stderr also goes to STDERR_LOG; the Green step fails on any.
       - name: setup-user
