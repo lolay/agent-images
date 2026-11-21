@@ -343,7 +343,7 @@ the URL its list line's `# pinned:` note names (`-` if it names none; the spelli
 | Homebrew, dependencies and `lolay/tap` included | Each formula with its version and revision | The type's Brewfiles | `brew bundle list`, `brew deps --union` (no build-only dependencies) and `brew info --json=v2` on the runner's own Homebrew, after tapping and trusting the Brewfiles' taps, with the build's own readers of a Brewfile (`install-toolset.sh`'s `trust_taps` and `brewfile_formulae`). Matches the image's `brew list` exactly |
 | Claude Code | Version | `CLAUDE_VERSION` in `docker-bake.hcl` (`latest`, `stable`, or a version) | `https://downloads.claude.ai/claude-code-releases/<channel>` |
 | Rust toolchain | Version | `RUST_TOOLCHAIN` in `images/toolsets/rust/install.sh` (`stable`, a minor line, or a version) | rustup's channel manifest |
-| Terraform | Version | `TERRAFORM_VERSION` in `images/toolsets/terraform/install.sh` (`latest`, `~> x.y`, or a version) | HashiCorp's release index, newest stable on that line |
+| Terraform | Version | `TERRAFORM_VERSION` in `images/toolsets/terraform/install.sh` (`latest`, `~> x.y`, `~> x.y.z`, or a version) | HashiCorp's release index: the newest stable release the constraint allows, read as HashiCorp and tenv read it (`~> 1.14` is >= 1.14, < 2.0; `~> 1.14.0` is >= 1.14.0, < 1.15.0, the 1.14 line) |
 | tflint, VirtualGL, COLMAP | Release tag | `TFLINT_VERSION`, `VIRTUALGL_VERSION` in their toolsets' `install.sh`; `COLMAP_VERSION` in `images/toolsets/3d/build-colmap.sh`; each beside its `*_RELEASES`, the GitHub releases URL | The tag GitHub redirects `/releases/latest` to, read by `github_latest` in `images/toolsets/install-toolset.sh`, which a `latest` build reads it with too |
 | Blender | Release version | `BLENDER_VERSION` in `images/toolsets/3d/install.sh`, beside `BLENDER_RELEASES=blender.sh` | The newest `blender-x.y.z-linux-x64.tar.xz` in the newest series on download.blender.org's release index, read by `images/toolsets/3d/blender.sh latest` (below) |
 
@@ -776,7 +776,7 @@ it's fixed. How, per source:
 | `lolay/tap` formula | Revert in the tap, or add a versioned formula there | It's ours |
 | Claude Code | `CLAUDE_VERSION=2.1.317` (a version) or `stable` (the channel) | The watch then skips Claude. `nightly` types already run with `CLAUDE_UPGRADE=false`; a `weekly` type still updates itself at start, past the pin, and has no setting to stop it yet: add one (an env file key read by `gcp_runner_settings`) if a weekly pin is ever needed |
 | Rust toolchain | `RUST_TOOLCHAIN=1.91.0` (a version) or `1.91` (a minor line) in `images/toolsets/rust/install.sh` | The watch resolves within it: a minor line still takes patch releases |
-| Terraform | `TERRAFORM_VERSION=1.14.2` or `~> 1.14` in `images/toolsets/terraform/install.sh` | tenv takes the constraint as is |
+| Terraform | `TERRAFORM_VERSION=1.14.2` (a version) or `~> 1.14.0` (the 1.14 line) in `images/toolsets/terraform/install.sh` | `~>` means what it means to HashiCorp and tenv, which take the constraint as is where the lock doesn't reach: `~> 1.14.0` is >= 1.14.0, < 1.15.0, and holds the 1.14 line; `~> 1.14` is >= 1.14, < 2.0, and takes any 1.x from 1.14 on. The watch resolves within it |
 | Type tool from a release | Its `*_VERSION` default in the script that reads it, beside its `*_RELEASES` (the release rows of the lock table) | |
 
 Pins live where the dependency is declared, each with `# pinned: <issue URL>` on the

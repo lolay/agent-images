@@ -269,28 +269,49 @@ resolve_rust() {
 	printf 'rust - %s\n' "$version"
 }
 
-# terraform_newest [x.y.]: the newest stable Terraform release, on that line if
-# given; nothing if none matches.
+# terraform_newest [<low> <high>]: the newest stable Terraform release, or, with
+# bounds (each x.y.z), the newest at or above <low> and below <high>; nothing if
+# none matches. Each release is compared whole, field by field, so 11.14.0 is
+# never on the 1.14 line.
 terraform_newest() {
 	local versions
 	versions="$(fetch "$terraform_index" | jq -r '.versions | keys[]')"
-	grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' <<<"$versions" | grep -F "${1:-}" | sort -V | tail -n 1 || true
+	awk -v low="${1:-0.0.0}" -v high="${2:-}" '
+		function cmp(a, b, x, y, i) {
+			split(a, x, ".")
+			split(b, y, ".")
+			for (i = 1; i <= 3; i++)
+				if (x[i] + 0 != y[i] + 0) return x[i] + 0 < y[i] + 0 ? -1 : 1
+			return 0
+		}
+		/^[0-9]+\.[0-9]+\.[0-9]+$/ && cmp($0, low) >= 0 && (high == "" || cmp($0, high) < 0) &&
+			(best == "" || cmp($0, best) > 0) { best = $0 }
+		END { if (best != "") print best }
+	' <<<"$versions"
 }
 
 resolve_terraform() {
-	local file=images/toolsets/terraform/install.sh constraint version line
+	local file=images/toolsets/terraform/install.sh constraint version major minor
+	local -a bounds=()
 	constraint="$(declared "$file" "$terraform_var")"
 	if [[ "$constraint" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 		printf 'terraform - %s\npinned terraform %s\n' "$constraint" "$(pin_note "$file" "$terraform_var:-")"
 	else
-		# latest, or ~> x.y: the newest stable release on that line.
-		line=""
-		if [[ "$constraint" =~ ^~\>[[:space:]]*([0-9]+\.[0-9]+)$ ]]; then
-			line="${BASH_REMATCH[1]}."
+		# latest, or ~> as HashiCorp and tenv mean it, since tenv installs the
+		# constraint as is where the lock doesn't reach (scripts/anthropic/setup.sh):
+		# ~> x.y is >= x.y.0 and < (x+1).0, and ~> x.y.z is >= x.y.z and
+		# < x.(y+1).0, the x.y line.
+		if [[ "$constraint" =~ ^~\>[[:space:]]*([0-9]+)\.([0-9]+)$ ]]; then
+			major=$((10#${BASH_REMATCH[1]}))
+			bounds=("$major.$((10#${BASH_REMATCH[2]})).0" "$((major + 1)).0.0")
+		elif [[ "$constraint" =~ ^~\>[[:space:]]*([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+			major=$((10#${BASH_REMATCH[1]}))
+			minor=$((10#${BASH_REMATCH[2]}))
+			bounds=("$major.$minor.$((10#${BASH_REMATCH[3]}))" "$major.$((minor + 1)).0")
 		elif [[ "$constraint" != latest ]]; then
-			die "terraform: can't resolve '$constraint' (a version, ~> x.y or latest)"
+			die "terraform: can't resolve '$constraint' (a version, ~> x.y, ~> x.y.z or latest)"
 		fi
-		version="$(terraform_newest "$line")"
+		version="$(terraform_newest "${bounds[@]}")"
 		[[ -n "$version" ]] || die "terraform: no release matches '$constraint'"
 		[[ "$constraint" == latest ]] || printf 'pinned terraform %s\n' "$(pin_note "$file" "$terraform_var:-")"
 		printf 'terraform - %s\n' "$version"

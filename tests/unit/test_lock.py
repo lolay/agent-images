@@ -519,7 +519,8 @@ class ResolveTests(unittest.TestCase):
         self.assertIn("pinned rust -", entries)
 
     def test_terraform_constraint_takes_the_newest_stable_on_its_line(self):
-        self.edit("images/toolsets/terraform/install.sh", "${TERRAFORM_VERSION:-latest}", "${TERRAFORM_VERSION:-~> 1.14}")
+        # ~> x.y.z holds the x.y line; TerraformTests covers each form of ~>.
+        self.edit("images/toolsets/terraform/install.sh", "${TERRAFORM_VERSION:-latest}", "${TERRAFORM_VERSION:-~> 1.14.0}")
         entries = self.entries(self.resolve())
         self.assertIn("terraform - 1.14.9", entries)
         self.assertIn("pinned terraform -", entries)
@@ -839,6 +840,85 @@ class ResolveTests(unittest.TestCase):
                 result = self.run_lock("resolve", type_)
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("isn't a Cloud Run type", result.stderr)
+
+
+class TerraformTests(unittest.TestCase):
+    """resolve_terraform reads `~>` as HashiCorp and tenv do (r3.f8), since tenv
+    installs the raw constraint where the lock doesn't reach: `~> x.y` is
+    >= x.y.0 and < (x+1).0, `~> x.y.z` is >= x.y.z and < x.(y+1).0. lock.sh is
+    sourced for the function, against the fake curl (no Docker needed)."""
+
+    INDEX = json.dumps({"name": "terraform", "versions": {
+        v: {} for v in ("1.9.8", "1.14.2", "1.14.9", "1.15.0-rc1", "1.17.1", "1.18.0-beta1", "2.0.0", "11.14.0")
+    }})
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.repo = self.tmp / "repo"
+        for name in ("images/cloud", "images/toolsets", "infra/gcp", "scripts/cloud", "hooks/gcp"):
+            shutil.copytree(REPO / name, self.repo / name)
+        (self.tmp / "bin").mkdir()
+        executable(self.tmp / "bin/curl", FAKE_CURL)
+        (self.tmp / "urls.json").write_text(json.dumps({"https://releases.hashicorp.com/terraform/index.json": self.INDEX}))
+        self.log = self.tmp / "log"
+        self.install = self.repo / "images/toolsets/terraform/install.sh"
+        self.saved = self.install.read_text()
+
+    def resolve(self, constraint):
+        old = 'terraform="${TERRAFORM_VERSION:-latest}"'
+        self.assertIn(old, self.saved)
+        self.install.write_text(self.saved.replace(old, f'terraform="${{TERRAFORM_VERSION:-{constraint}}}"', 1))
+        self.log.unlink(missing_ok=True)
+        result = subprocess.run(
+            ["bash", "-c", "source scripts/cloud/lock.sh\nresolve_terraform"], cwd=self.repo,
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "PATH": f"{self.tmp / 'bin'}:{os.environ['PATH']}",
+                 "FAKE_URLS": str(self.tmp / "urls.json"), "FAKE_LOG": str(self.log)})
+        return result
+
+    def resolved(self, constraint):
+        result = self.resolve(constraint)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # The fake curl answered, not a real one further down PATH.
+        self.assertIn("get https://releases.hashicorp.com/terraform/index.json", self.log.read_text())
+        return result.stdout
+
+    def test_a_minor_constraint_takes_the_newest_below_the_next_major(self):
+        # Not 2.0.0 (the next major), 11.14.0 (which contains "1.14.") or a
+        # pre-release.
+        for constraint in ("~> 1.14", "~>1.14", "~>  1.9"):
+            with self.subTest(constraint):
+                self.assertEqual(self.resolved(constraint), "pinned terraform -\nterraform - 1.17.1\n")
+
+    def test_a_patch_constraint_holds_its_minor_line(self):
+        for constraint, version in (("~> 1.14.0", "1.14.9"), ("~> 1.14.2", "1.14.9"), ("~>1.14.9", "1.14.9"),
+                                    ("~> 1.9.0", "1.9.8"), ("~> 11.14.0", "11.14.0")):
+            with self.subTest(constraint):
+                self.assertEqual(self.resolved(constraint), f"pinned terraform -\nterraform - {version}\n")
+
+    def test_a_constraint_nothing_meets_fails(self):
+        for constraint in ("~> 1.14.10", "~> 3.0", "~> 1.16.0"):
+            with self.subTest(constraint):
+                result = self.resolve(constraint)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(f"lock: terraform: no release matches '{constraint}'", result.stderr)
+
+    def test_latest_takes_the_newest_stable_and_is_no_pin(self):
+        self.assertEqual(self.resolved("latest"), "terraform - 11.14.0\n")
+
+    def test_an_exact_version_is_a_pin_read_without_the_index(self):
+        result = self.resolve("1.14.2")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "terraform - 1.14.2\npinned terraform -\n")
+        self.assertFalse(self.log.exists())
+
+    def test_any_other_constraint_fails(self):
+        for constraint in (">= 1.14", "~> 1", "1.14", "~> 1.14.x"):
+            with self.subTest(constraint):
+                result = self.resolve(constraint)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(f"lock: terraform: can't resolve '{constraint}'", result.stderr)
 
 
 BLENDER = "https://download.blender.org/release"
