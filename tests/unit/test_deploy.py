@@ -370,6 +370,19 @@ class VmDeployTests(DeployTests):
                 self.assertIn("DEPLOY=false is for Cloud Run types only", result.stderr)
                 self.assertFalse((self.out / "packer.log").exists())
 
+    def test_vm_commands_refuse_an_image_family_setting(self):
+        # The family is agent-<type>; a renamed one in the env file would do nothing (r1.f20).
+        env_dir = self.tmp / "infra"
+        env_dir.mkdir()
+        (env_dir / "project.env").write_text((REPO / "infra/gcp/project.env").read_text())
+        (env_dir / "android.env").write_text((REPO / "infra/gcp/android.env").read_text() + "IMAGE_FAMILY=other\n")
+        for command in ("vm-build", "vm-promote"):
+            with self.subTest(command=command):
+                result = self.deploy(command, "android", ANDROID_IMAGE, "abc123def456", AGENT_GCP_ENV_DIR=str(env_dir))
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("IMAGE_FAMILY is not a setting", result.stderr)
+                self.assertFalse((self.out / "packer.log").exists())
+
     def test_type_refuses_a_compute_type(self):
         result = self.deploy("type", "android", IMAGE, "abc")
         self.assertEqual(result.returncode, 1)

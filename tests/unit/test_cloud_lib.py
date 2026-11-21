@@ -131,6 +131,32 @@ class CheckTypeTests(unittest.TestCase):
                 result = self.check(env_dir, type_)
                 self.assertEqual((result.returncode, result.stderr), (0, ""))
 
+    def test_refuses_an_image_family_in_any_env_file(self):
+        # The family is always agent-<type> (gcp_image_family): a key that named
+        # it would do nothing, so it's refused, not ignored (r1.f20).
+        env_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, env_dir)
+        shutil.copytree(REPO / "infra/gcp", env_dir, dirs_exist_ok=True)
+        types = sorted(path.stem for path in env_dir.glob("*.env") if path.stem != "project")
+        for type_ in types:
+            with (env_dir / f"{type_}.env").open("a") as file:
+                file.write(f"IMAGE_FAMILY=agent-{type_}-renamed\n")
+        refused = self.refused_types(env_dir)
+        self.assertEqual(sorted(refused), types)
+        for type_, message in refused.items():
+            self.assertEqual(
+                message,
+                f"{type_}: IMAGE_FAMILY is not a setting: a type's image family is always agent-{type_}; "
+                f"remove it from infra/gcp/{type_}.env\n",
+            )
+
+    def test_image_family_is_agent_type(self):
+        result = subprocess.run(
+            ["bash", "-c", f'source "{REPO}/hooks/gcp/lib.sh"; gcp_image_family android'],
+            capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"},
+        )
+        self.assertEqual(result.stdout, "agent-android\n")
+
     def refused_types(self, env_dir: Path) -> dict[str, str]:
         """Every type in env_dir that gcp_check_type refuses, with its message."""
         listed = subprocess.run(

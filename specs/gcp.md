@@ -1153,7 +1153,15 @@ at `0e34c0f`), deployed and tested 2026-11-06 ([m2 `android` results](#m2-androi
 - **Hook:** after the order marker, `agent-android-<order id>` (the whole id, so two
   orders never share a name) from the family's latest image, with metadata
   `work-order`, `runner-env` (label, base dir, retire time, the runner limits) and
-  guest attributes on.
+  guest attributes on. Its boot disk is the larger of `DISK_GB` and that image's
+  size: the image is built at `DISK_GB`, and a disk can't be smaller than its image,
+  so a lowered `DISK_GB` takes effect from the next image build rather than failing
+  every insert until then (r1.f20).
+- **Image family:** always `agent-<type>` (`gcp_image_family` in `hooks/gcp/lib.sh`),
+  as a Cloud Run type's job is `agent-<type>`; the deploy, the hook and the
+  supervisor derive it. It isn't a setting: an env file's `IMAGE_FAMILY` reached
+  Packer only at the next build, so a rename broke every spawn until then, and
+  `gcp_check_type` now refuses one (r1.f20).
 - **Guest:** `agent-gce-order.service` runs once at boot as root: it writes the work
   order to `~ubuntu/.claude-runner/environment-secret` (600), writes `runner.env`
   from `runner-env` (plain `KEY=value` lines only) with `EPHEMERAL=true`, which

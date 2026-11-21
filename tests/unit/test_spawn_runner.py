@@ -16,6 +16,7 @@ ORDER_ID = "ORD0123456789abcdef"
 RUN_PATH = "/v2/projects/lolay-agents/locations/us-central1/jobs/agent-linux:run"
 INSTANCES_PATH = "/compute/v1/projects/lolay-agents/zones/us-central1-a/instances"
 INSTANCE = "agent-android-ord0123456789abcdef"
+LIVE_IMAGE = "agent-android-20261106-abc123def456"
 
 
 class SpawnRunnerTests(unittest.TestCase):
@@ -185,13 +186,21 @@ class SpawnRunnerTests(unittest.TestCase):
 class SpawnComputeTests(SpawnRunnerTests):
     """The compute backend (infra/gcp/android.env): a Compute Engine VM per order."""
 
+    def setUp(self):
+        super().setUp()
+        # The family's live image, built at android.env's DISK_GB.
+        self.gcp.state.images[LIVE_IMAGE] = {
+            "name": LIVE_IMAGE, "family": "agent-android", "diskSizeGb": "100",
+            "creationTimestamp": "2026-11-06T10:00:00.000-08:00",
+        }
+
     def run_hook(self, **env):
         return super().run_hook(**{"RUNNER_TYPE": "android", "GCP_POLL_SEC": "0.1", **env})
 
     # And the VM's, checked before the marker, not in create_instance after it.
     REQUIRED = SpawnRunnerTests.REQUIRED + (
         "ZONE", "NETWORK", "SUBNET", "RUNNER_SERVICE_ACCOUNT",
-        "MACHINE_TYPE", "DISK_GB", "DISK_TYPE", "IMAGE_FAMILY", "MAX_RUN_DURATION_SEC",
+        "MACHINE_TYPE", "DISK_GB", "DISK_TYPE", "MAX_RUN_DURATION_SEC",
     )
 
     def insert(self):
@@ -340,6 +349,59 @@ class SpawnComputeTests(SpawnRunnerTests):
         self.assertEqual(result.returncode, 2)
         self.assertIn("retire margin (40000 s) must be less than the hard stop (34200 s)", result.stderr)
         self.assertEqual(self.gcp.state.requests, [], "nothing created")
+
+    def boot_disk(self):
+        return self.insert()["disks"][0]["initializeParams"]
+
+    def test_a_lowered_disk_size_waits_for_the_next_image(self):
+        # The live image was built at 100 GB, and a disk can't be smaller than its
+        # image (the fake refuses it, as the API does): the lower size applies
+        # from the next build (r1.f20).
+        env_dir = self.android_env_dir("DISK_GB=50")
+        result = self.run_hook(AGENT_GCP_ENV_DIR=str(env_dir))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.boot_disk()["diskSizeGb"], "100")
+        self.assertIn("DISK_GB=50 is below agent-android's image (100 GB)", result.stdout)
+
+    def test_a_disk_size_above_the_image_is_kept(self):
+        self.gcp.state.images[LIVE_IMAGE]["diskSizeGb"] = "60"
+        result = self.run_hook()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.boot_disk()["diskSizeGb"], "100")
+        self.assertNotIn("is below", result.stdout)
+
+    def test_no_image_in_the_family_does_not_retry(self):
+        self.gcp.state.images.clear()
+        result = self.run_hook()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("reading image family agent-android: HTTP 404", result.stderr)
+        self.assertEqual(self.gcp.requests("POST", INSTANCES_PATH), [])
+        self.assertNotIn(self.marker_key(), self.gcp.state.objects)
+
+    def test_every_compute_type_takes_the_family_named_for_it(self):
+        # No setting names it: each compute type's VMs come from agent-<type>.
+        for path in sorted((REPO / "infra/gcp").glob("*.env")):
+            type_ = path.stem
+            if type_ == "project" or "BACKEND=compute" not in path.read_text():
+                continue
+            with self.subTest(type=type_):
+                env_dir = self.tmp / f"infra-{type_}"
+                env_dir.mkdir()
+                shutil.copy(REPO / "infra/gcp/project.env", env_dir)
+                # And a second compute type, named otherwise, from the same file.
+                shutil.copy(path, env_dir / f"{type_}.env")
+                shutil.copy(path, env_dir / "robot.env")
+                self.gcp.state.images["agent-robot-1"] = {"name": "agent-robot-1", "family": "agent-robot"}
+                for runner_type in (type_, "robot"):
+                    self.gcp.state.requests.clear()
+                    self.gcp.state.objects.clear()
+                    self.gcp.state.instances.clear()
+                    self.gcp.state.images.setdefault(
+                        f"agent-{type_}-1", {"name": f"agent-{type_}-1", "family": f"agent-{type_}"})
+                    result = self.run_hook(RUNNER_TYPE=runner_type, AGENT_GCP_ENV_DIR=str(env_dir))
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(self.boot_disk()["sourceImage"],
+                                     f"projects/lolay-agents/global/images/family/agent-{runner_type}")
 
     def test_an_unknown_backend_does_not_retry(self):
         env_dir = self.tmp / "infra"

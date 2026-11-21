@@ -46,7 +46,7 @@ variable "machine_type" {
 
 variable "disk_size_gb" {
   type        = number
-  description = "The image's disk size, and so every runner VM's minimum boot disk (DISK_GB)."
+  description = "The image's disk size (DISK_GB), and so every runner VM's minimum boot disk: the hook uses the larger of DISK_GB and this."
   default     = 100
 }
 

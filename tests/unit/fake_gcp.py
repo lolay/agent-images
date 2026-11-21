@@ -265,6 +265,9 @@ def route_compute(state: State, request: Request):
                 return 400, {"error": {"code": 400, "message": "Invalid JSON payload received.",
                                        "errors": [{"reason": "parseError"}]}}
             name = body["name"]
+            refused = _refuse_boot_disk(state, body)
+            if refused:
+                return refused
             if name in state.instances:
                 return 409, {"error": {"code": 409, "message": f"{name} already exists",
                                        "errors": [{"reason": "alreadyExists"}]}}
@@ -313,10 +316,10 @@ def route_compute(state: State, request: Request):
                 term in _filter_terms(i) for term in wanted.split(" AND ") if term)]
             return 200, {"items": items} if items else {}
         if rest[1] == "family" and request.method == "GET":
-            family = [i for i in state.images.values() if i.get("family") == rest[2]]
-            if not family:
+            image = _family_image(state, rest[2])
+            if image is None:
                 return 404, {"error": {"message": f"no image in family {rest[2]}"}}
-            return 200, sorted(family, key=lambda i: i.get("creationTimestamp", ""))[-1]
+            return 200, image
         name = rest[1]
         if name not in state.images:
             return 404, {"error": {"message": f"image {name} not found"}}
@@ -330,6 +333,35 @@ def route_compute(state: State, request: Request):
             return 200, state.images[name]
 
     return 404, {"error": {"message": f"no fake for {request.method} {scope} {rest}"}}
+
+
+def _family_image(state: State, family: str):
+    """The family's latest image, as images.getFromFamily answers, or None."""
+    images = [i for i in state.images.values() if i.get("family") == family]
+    return sorted(images, key=lambda i: i.get("creationTimestamp", ""))[-1] if images else None
+
+
+def _refuse_boot_disk(state: State, body: dict):
+    """What the real instances.insert says about the boot disk's source image:
+    404 when it doesn't exist, 400 when the disk is smaller than the image."""
+    boot = next((d for d in body.get("disks", []) if d.get("boot")), None)
+    params = (boot or {}).get("initializeParams", {})
+    source = params.get("sourceImage", "")
+    if not source:
+        return None
+    if "/images/family/" in source:
+        image = _family_image(state, source.rsplit("/", 1)[1])
+    else:
+        image = state.images.get(source.rsplit("/", 1)[1])
+    if image is None:
+        return 404, {"error": {"code": 404, "message": f"The resource '{source}' was not found",
+                               "errors": [{"reason": "notFound"}]}}
+    image_gb, disk_gb = image.get("diskSizeGb"), params.get("diskSizeGb")
+    if image_gb and disk_gb and int(disk_gb) < int(image_gb):
+        return 400, {"error": {"code": 400, "errors": [{"reason": "invalid"}], "message": (
+            f"Invalid value for field 'resource.disks[0].initializeParams.diskSizeGb': '{disk_gb}'. "
+            f"Requested disk size cannot be smaller than the image size ({image_gb} GB)")}}
+    return None
 
 
 def _zone(instance: dict) -> str:

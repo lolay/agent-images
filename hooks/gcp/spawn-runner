@@ -8,7 +8,7 @@
 #   run      (the default) one execution of the type's Cloud Run job,
 #            agent-<type>, with the work order as an env override;
 #   compute  one Compute Engine VM, agent-<type>-<order id>, from the type's
-#            image family, with the work order in instance metadata
+#            image family, agent-<type>, with the work order in instance metadata
 #            (images/android/gce/files/agent-gce-order.sh reads it at boot).
 #
 # The supervisor sets RUNNER_TYPE and runs one orchestrator per type, each with
@@ -105,7 +105,7 @@ esac
 retire_margin=""
 if [[ "$BACKEND" == "compute" ]]; then
 	require "$env_files" ZONE NETWORK SUBNET RUNNER_SERVICE_ACCOUNT \
-		MACHINE_TYPE DISK_GB DISK_TYPE IMAGE_FAMILY MAX_RUN_DURATION_SEC
+		MACHINE_TYPE DISK_GB DISK_TYPE MAX_RUN_DURATION_SEC
 	retire_margin="$(gcp_retire_margin "${MAX_RUN_DURATION_SEC:-}" 2>&1)" ||
 		fail 2 "infra/gcp/$RUNNER_TYPE.env: $retire_margin"
 fi
@@ -189,14 +189,28 @@ compute_fail() {
 #     external IP (egress through Cloud NAT), the runner's service account,
 #     and Compute Engine deletes it at MAX_RUN_DURATION_SEC whatever happens.
 #     The work order goes in on stdin, built first, as above.
+#
+#     The boot disk is the larger of DISK_GB and the family's current image: a
+#     disk can't be smaller than its image, which was built at the DISK_GB of
+#     its day, so a lowered DISK_GB would fail every insert until the next
+#     build. This way it takes effect with that build instead (r1.f20).
 create_instance() {
-	local instance safe_order zone_url detail body
+	local instance safe_order zone_url detail body family image_gb disk_gb="$DISK_GB"
 	safe_order="$(name_safe "$order_id")"
 	instance="agent-$RUNNER_TYPE-$safe_order"
 	instance="${instance:0:63}"
 	instance="${instance%-}"
 	zone_url="$GCP_COMPUTE_URL/compute/v1/projects/$PROJECT_ID/zones/$ZONE"
-	body="$(gcp_instance_body "$instance" "projects/$PROJECT_ID/global/images/family/$IMAGE_FAMILY" \
+	family="$(gcp_image_family "$RUNNER_TYPE")"
+	gcp_call "$token" GET "$GCP_COMPUTE_URL/compute/v1/projects/$PROJECT_ID/global/images/family/$family"
+	[[ "$GCP_STATUS" == 200 ]] ||
+		compute_fail "reading image family $family" "HTTP $GCP_STATUS: $(gcp_error) $(jq -r '[.error.errors[]?.reason] | join(" ")' <<<"$GCP_BODY" 2>/dev/null)"
+	image_gb="$(jq -r '.diskSizeGb // empty' <<<"$GCP_BODY")"
+	if [[ "$image_gb" =~ ^[0-9]+$ && "$disk_gb" =~ ^[0-9]+$ ]] && ((image_gb > disk_gb)); then
+		log "$label: DISK_GB=$disk_gb is below $family's image ($image_gb GB) until its next build; using $image_gb"
+		disk_gb="$image_gb"
+	fi
+	body="$(DISK_GB="$disk_gb" gcp_instance_body "$instance" "projects/$PROJECT_ID/global/images/family/$family" \
 		"$RUNNER_TYPE" "$MAX_RUN_DURATION_SEC" "$RUNNER_SERVICE_ACCOUNT" |
 		jq -c --rawfile order "$CLAUDE_RUNNER_WORK_ORDER_FILE" --arg runner_env "$(runner_env)" \
 			--arg order_label "${safe_order:0:63}" '
