@@ -29,6 +29,7 @@ readonly build_err="$AGENT_IMAGES_LOG_DIR/linux-build.err"
 # The commit being built, for the versions report install-packages.sh writes.
 agent_commit="$(git -C "$AGENT_IMAGES_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
 readonly agent_commit
+# Why 24.04: images/cloud/docker-bake.hcl, beside the base target's BASE_IMAGE.
 base_image="$(setting LINUX_BASE_IMAGE ubuntu:24.04)"
 cpu="$(setting BUILD_CPU 8)"
 memory_gb="$(setting BUILD_MEMORY_GB 16)"

@@ -219,6 +219,12 @@ Choices, carried over from [design.md](design.md):
   `CUDA_CAPABILITIES` (the L4's 8.9 and Blackwell's 12.0, with PTX for the newest),
   which `base-gpu` sets as `CUDAARCHS` and `TORCH_CUDA_ARCH_LIST`, and each toolset's
   `check.txt` checks every CUDA binary for each.
+- **Every image stays on Ubuntu 24.04** (Owner, 2026-11-20, r1.f18), an exception to
+  tracking latest (`ubuntu:latest` is 26.04): CUDA 13.0 has no `ubuntu26.04` image,
+  and `linux-gpu` builds from `linux`'s Dockerfile, so all of them (with the
+  orchestrator and the `android` images) move to 26.04 together when one ships. The
+  reason is written once, beside `docker-bake.hcl`'s base `BASE_IMAGE`; the other
+  places that name 24.04 point there.
 - **Docker Hub images come through Google's mirror** (`mirror.gcr.io/library/ubuntu`,
   `mirror.gcr.io/nvidia/cuda`): Docker Hub rate-limits anonymous pulls, which CI and
   local builds hit. The mirror is a pull-through cache of Docker Hub, so a digest is

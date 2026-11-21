@@ -6,6 +6,7 @@
 # types and project settings are baked in from infra/gcp.
 # Docker Hub's ubuntu through Google's mirror: Docker Hub rate-limits anonymous
 # pulls, and mirror.gcr.io caches the same images without that limit.
+# Why 24.04: images/cloud/docker-bake.hcl, beside the base target's BASE_IMAGE.
 FROM mirror.gcr.io/library/ubuntu:24.04
 
 # apt-build.conf: a part of the archive that fails to download fails the build.
