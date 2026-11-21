@@ -8,7 +8,7 @@
 #   run      (the default) one execution of the type's Cloud Run job,
 #            agent-<type>, with the work order as an env override;
 #   compute  one Compute Engine VM, agent-<type>-<order id>, from the type's
-#            image family, with the work order in instance metadata
+#            image family, agent-<type>, with the work order in instance metadata
 #            (images/android/gce/files/agent-gce-order.sh reads it at boot).
 #
 # The supervisor sets RUNNER_TYPE and runs one orchestrator per type, each with
@@ -18,7 +18,8 @@
 #
 # Exit codes (the orchestrator's contract): 0 submitted or already submitted;
 # 1 retry later (including Compute Engine quota and capacity); 2 don't retry
-# (this setup is broken: no job or image, no permission, no env file). stderr's
+# (this setup is broken: no job or image, no permission, no env file or a
+# setting missing from one, a variable the caller didn't set). stderr's
 # tail shows in the environment's Activity tab, so it never carries the work
 # order, the token or a request body.
 set -euo pipefail
@@ -70,11 +71,24 @@ on_exit() {
 }
 trap on_exit EXIT
 
-: "${CLAUDE_RUNNER_WORK_ORDER_FILE:?}" "${CLAUDE_RUNNER_ORDER_ID:?}"
-[[ -n "${RUNNER_TYPE:-}" ]] || fail 2 "RUNNER_TYPE is not set; the supervisor sets it"
+# A missing variable or setting exits 2, not `${X:?}`'s 1 (127 at top level),
+# which on_exit would turn into a retry: every retry would find it missing too
+# (r1.f22). The orchestrator's own variables follow the same rule: a hook it
+# calls without them is a broken setup (an orchestrator this hook doesn't
+# match), like RUNNER_TYPE from the supervisor.
+require() {
+	local where="$1" name
+	shift
+	for name; do
+		[[ -n "${!name:-}" ]] || fail 2 "$name is not set; $where"
+	done
+}
+require "the orchestrator sets it" CLAUDE_RUNNER_WORK_ORDER_FILE CLAUDE_RUNNER_ORDER_ID
+require "the supervisor sets it" RUNNER_TYPE
 readonly order_id="$CLAUDE_RUNNER_ORDER_ID"
 gcp_load_env "$RUNNER_TYPE" || fail 2 "no infra/gcp/project.env or $RUNNER_TYPE.env in the image"
-: "${PROJECT_ID:?}" "${REGION:?}" "${ORDER_BUCKET:?}"
+readonly env_files="set it in infra/gcp/project.env or infra/gcp/$RUNNER_TYPE.env"
+require "$env_files" PROJECT_ID REGION ORDER_BUCKET
 : "${BACKEND:=run}"
 case "$BACKEND" in
 run | compute) ;;
@@ -85,10 +99,13 @@ esac
 # the order marked with no VM. The hook timeout is 60 s.
 : "${INSTANCE_INSERT_WAIT_SEC:=40}"
 [[ -s "$CLAUDE_RUNNER_WORK_ORDER_FILE" ]] || fail 1 "the work order file is empty"
-# A compute VM retires this long before Compute Engine deletes it. Checked
-# before anything is created: a runner past its retire time would never serve.
+# A compute type's VM settings, and the time its VM retires before Compute
+# Engine deletes it. Checked before anything is created: a runner past its
+# retire time would never serve.
 retire_margin=""
 if [[ "$BACKEND" == "compute" ]]; then
+	require "$env_files" ZONE NETWORK SUBNET RUNNER_SERVICE_ACCOUNT \
+		MACHINE_TYPE DISK_GB DISK_TYPE MAX_RUN_DURATION_SEC
 	retire_margin="$(gcp_retire_margin "${MAX_RUN_DURATION_SEC:-}" 2>&1)" ||
 		fail 2 "infra/gcp/$RUNNER_TYPE.env: $retire_margin"
 fi
@@ -118,15 +135,17 @@ readonly label
 
 # 2a. One Cloud Run execution, the work order and label as container env
 #     overrides. The body goes in on stdin, built from the file, so the work
-#     order is in no command line.
+#     order is in no command line. It's built first: from a process
+#     substitution a jq failure would post an empty body, which runs the job
+#     with no work order, and log it as started (r1.f14).
 run_job() {
-	local job="agent-$RUNNER_TYPE" execution
-	gcp_call "$token" POST "$GCP_RUN_URL/v2/projects/$PROJECT_ID/locations/$REGION/jobs/$job:run" - \
-		< <(jq -cn --rawfile order "$CLAUDE_RUNNER_WORK_ORDER_FILE" --arg label "$label" '
-			{overrides: {containerOverrides: [{name: "runner", env: [
-				{name: "SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET", value: ($order | rtrimstr("\n"))},
-				{name: "RUNNER_LABEL", value: $label}
-			]}]}}')
+	local job="agent-$RUNNER_TYPE" execution body
+	body="$(jq -cn --rawfile order "$CLAUDE_RUNNER_WORK_ORDER_FILE" --arg label "$label" '
+		{overrides: {containerOverrides: [{name: "runner", env: [
+			{name: "SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET", value: ($order | rtrimstr("\n"))},
+			{name: "RUNNER_LABEL", value: $label}
+		]}]}}' 2>/dev/null)" || fail 1 "can't read the work order file"
+	gcp_call "$token" POST "$GCP_RUN_URL/v2/projects/$PROJECT_ID/locations/$REGION/jobs/$job:run" - <<<"$body"
 	[[ "$GCP_STATUS" == 2* ]] || fail_for_status "running $job"
 	execution="$(jq -r '.metadata.name // .name // "?"' <<<"$GCP_BODY" 2>/dev/null || echo '?')"
 	log "$label: started ${execution##*/} for order $order_id${CLAUDE_RUNNER_SESSION_ID:+ (session $CLAUDE_RUNNER_SESSION_ID)}"
@@ -169,27 +188,47 @@ compute_fail() {
 # 2b. One Compute Engine VM. Nested virtualization for the emulator, no
 #     external IP (egress through Cloud NAT), the runner's service account,
 #     and Compute Engine deletes it at MAX_RUN_DURATION_SEC whatever happens.
-#     The work order goes in on stdin, as above.
+#     The work order goes in on stdin, built first, as above.
+#
+#     The boot disk is the larger of DISK_GB and the family's current image: a
+#     disk can't be smaller than its image, which was built at the DISK_GB of
+#     its day, so a lowered DISK_GB would fail every insert until the next
+#     build. This way it takes effect with that build instead (r1.f20). The
+#     VM still names the family, not the image just read: a promote moves the
+#     family and deletes the older image at once, so naming that image could
+#     404 (don't retry) where the family form at worst meets a bigger image
+#     (400, retried, and the next read sizes it).
+#
+#     The settings' body and the work order's are built apart, so only a
+#     failure to read the work order is blamed on it.
 create_instance() {
-	: "${ZONE:?}" "${NETWORK:?}" "${SUBNET:?}" "${RUNNER_SERVICE_ACCOUNT:?}"
-	: "${MACHINE_TYPE:?}" "${DISK_GB:?}" "${DISK_TYPE:?}" "${IMAGE_FAMILY:?}" "${MAX_RUN_DURATION_SEC:?}"
-	local instance safe_order zone_url detail
+	local instance safe_order zone_url detail body base settings family image_gb disk_gb="$DISK_GB"
 	safe_order="$(name_safe "$order_id")"
 	instance="agent-$RUNNER_TYPE-$safe_order"
 	instance="${instance:0:63}"
 	instance="${instance%-}"
 	zone_url="$GCP_COMPUTE_URL/compute/v1/projects/$PROJECT_ID/zones/$ZONE"
-	gcp_call "$token" POST "$zone_url/instances" - < <(
-		gcp_instance_body "$instance" "projects/$PROJECT_ID/global/images/family/$IMAGE_FAMILY" \
-			"$RUNNER_TYPE" "$MAX_RUN_DURATION_SEC" "$RUNNER_SERVICE_ACCOUNT" |
-			jq -c --rawfile order "$CLAUDE_RUNNER_WORK_ORDER_FILE" --arg runner_env "$(runner_env)" \
-				--arg order_label "${safe_order:0:63}" '
-				.labels["agent-images-order"] = $order_label
-				| .metadata.items = [
-					{key: "work-order", value: ($order | rtrimstr("\n"))},
-					{key: "runner-env", value: $runner_env}
-				] + .metadata.items'
-	)
+	family="$(gcp_image_family "$RUNNER_TYPE")"
+	gcp_call "$token" GET "$GCP_COMPUTE_URL/compute/v1/projects/$PROJECT_ID/global/images/family/$family"
+	[[ "$GCP_STATUS" == 200 ]] ||
+		compute_fail "reading image family $family" "HTTP $GCP_STATUS: $(gcp_error) $(jq -r '[.error.errors[]?.reason] | join(" ")' <<<"$GCP_BODY" 2>/dev/null)"
+	image_gb="$(jq -r '.diskSizeGb // empty' <<<"$GCP_BODY")"
+	if [[ "$image_gb" =~ ^[0-9]+$ && "$disk_gb" =~ ^[0-9]+$ ]] && ((image_gb > disk_gb)); then
+		log "$label: DISK_GB=$disk_gb is below $family's image ($image_gb GB) until its next build; using $image_gb"
+		disk_gb="$image_gb"
+	fi
+	base="$(DISK_GB="$disk_gb" gcp_instance_body "$instance" "projects/$PROJECT_ID/global/images/family/$family" \
+		"$RUNNER_TYPE" "$MAX_RUN_DURATION_SEC" "$RUNNER_SERVICE_ACCOUNT")" ||
+		fail 1 "can't build VM $instance's request from infra/gcp/$RUNNER_TYPE.env"
+	settings="$(runner_env)" || fail 1 "can't build VM $instance's runner settings"
+	body="$(jq -c --rawfile order "$CLAUDE_RUNNER_WORK_ORDER_FILE" --arg runner_env "$settings" \
+		--arg order_label "${safe_order:0:63}" '
+		.labels["agent-images-order"] = $order_label
+		| .metadata.items = [
+			{key: "work-order", value: ($order | rtrimstr("\n"))},
+			{key: "runner-env", value: $runner_env}
+		] + .metadata.items' <<<"$base" 2>/dev/null)" || fail 1 "can't read the work order file"
+	gcp_call "$token" POST "$zone_url/instances" - <<<"$body"
 	case "$GCP_STATUS" in
 	2*) ;;
 	409)

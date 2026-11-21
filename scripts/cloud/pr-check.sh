@@ -23,7 +23,7 @@ set -euo pipefail
 # script and hook, every workflow, and the Renovate config that bumps CI's
 # tools. Docs (specs/, *.md outside images/) aren't. test_pr_check.py derives
 # the paths the tests name and checks each is covered.
-readonly relevant_paths='^(images/|hooks/|infra/gcp/|scripts/|tests/unit/|\.dockerignore$|Makefile$|triage\.yaml$|\.github/(workflows/[^/]*\.yml|renovate\.json)$)'
+readonly relevant_paths='^(images/|hooks/|infra/gcp/|scripts/|tests/unit/|\.dockerignore$|Makefile$|version\.txt$|triage\.yaml$|\.github/(workflows/[^/]*\.yml|renovate\.json)$)'
 
 usage() {
 	printf 'usage: pr-check.sh relevant < paths | gate <changes> <relevant> <check> <build>\n' >&2

@@ -7,12 +7,14 @@
 #   check.txt    its binary checks, `label: command` (toolset-checks.sh);
 #   smoke.sh     its smoke test, the least real work that shows the toolchain
 #                works (toolset-checks.sh; specs/gcp.md, m4);
-#   profile.sh   environment for every session shell, sourced by the cloud
-#                profile after its own;
+#   profile.sh   environment for every session shell, sourced by both images'
+#                profiles (toolset-profile.sh) after their own; it changes PATH
+#                only while agent_set_path is set (toolset-profile.sh);
 #   path.txt     directories for the front of every session's PATH, after ~/bin
-#                and before Homebrew's.
+#                and before Homebrew's (toolset-profile.sh).
 # Each installed toolset is recorded in record_dir with those files. install.sh
-# gets TOOLSET_RECORD_DIR, and writes generated ones (<name>.profile.sh) there.
+# gets TOOLSET_RECORD_DIR, and writes generated ones (<name>.profile.sh,
+# <name>.path) there, for what's only known once installed (where the JDK is).
 # Runs as the image's user, who has sudo, from the cloud Dockerfiles and the
 # Android image's install-packages.sh.
 #
@@ -31,7 +33,8 @@
 # formulae, lock.sh's too)
 # and github_latest <releases URL> (the newest release's tag;
 # scripts/cloud/lock.sh sources this file for it too, so the build and the lock
-# read a release the same way). A toolset's install.sh
+# read a release the same way) and toolset_env <name>... (what the toolsets a
+# toolset needs first recorded). A toolset's install.sh
 # gets them exported, with TOOLSET_LOG_NAME, their log prefix, set to the
 # toolset's name. A toolset script a Dockerfile runs itself (3d's
 # build-colmap.sh) sources this file, which then defines them and returns.
@@ -217,6 +220,41 @@ github_latest() {
 	printf '%s' "${url##*/}"
 }
 
+# toolset_env <name>...: what the named toolsets recorded, as a session gets it
+# (toolset-profile.sh): their PATH entries (<name>.path) in front of PATH, and
+# their profiles (<name>.profile.sh) sourced, each in the record's file order as
+# there, with agent_set_path set, so a profile adds to PATH as at a session's
+# start. For a toolset's install.sh, in place of an image's profile, which a
+# toolset can't count on: android-go's gomobile needs the go toolset's bin and
+# the android toolset's NDK. Each must be installed already, or be the toolset
+# installing, which records as it goes.
+toolset_env() {
+	# shellcheck disable=SC2034 # the profiles read agent_set_path
+	local name file entry front="" dir="${TOOLSET_RECORD_DIR:?}" agent_set_path=1
+	for name in "$@"; do
+		[[ "$name" == "${TOOLSET_LOG_NAME:-}" ]] || grep -qxF "$name" "$dir/toolsets.txt" 2>/dev/null ||
+			die "toolset_env: $name isn't installed: install it first"
+	done
+	for file in "$dir"/*.path; do
+		name="$(basename "$file" .path)"
+		[[ -f "$file" && " $* " == *" $name "* ]] || continue
+		# One directory per line, # starts a comment, as toolset-profile.sh reads it.
+		while IFS= read -r entry || [[ -n "$entry" ]]; do
+			[[ -z "$entry" || "$entry" == "#"* ]] || front="${front:+$front:}$entry"
+		done <"$file"
+	done
+	# The paths first, then the profiles, as toolset-profile.sh does: a profile
+	# can put its own directory ahead of them (the jvm toolset's JAVA_HOME bin).
+	PATH="${front:+$front:}$PATH"
+	export PATH
+	for file in "$dir"/*.profile.sh; do
+		name="$(basename "$file" .profile.sh)"
+		[[ -f "$file" && " $* " == *" $name "* ]] || continue
+		# shellcheck source=/dev/null
+		. "$file"
+	done
+}
+
 # Sourced: the helpers are all the caller wanted. Everything above this line
 # runs in every sourcing script, scripts/cloud/lock.sh included (the lock watch,
 # the deploy's bake-args), so it holds only function definitions: no variable,
@@ -308,7 +346,8 @@ for name in "$@"; do
 		# Exported in a subshell, so they reach this install.sh and what it runs,
 		# but not the later toolsets' Homebrew and installers.
 		(
-			export -f log die apt apt_update apt_install_options apt_entries apt_list install_apt install_apt_packages github_latest
+			export -f log die apt apt_update apt_install_options apt_entries apt_list install_apt install_apt_packages github_latest \
+				toolset_env
 			TOOLSET_LOG_NAME="$name" TOOLSET_RECORD_DIR="$record_dir" bash "$dir/install.sh"
 		)
 		# Any brew command it ran refilled Homebrew's cache.

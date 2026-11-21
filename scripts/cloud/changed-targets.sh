@@ -15,8 +15,8 @@
 # base had no job to reuse (deployed_at_base). vms
 # are the Compute Engine types (BACKEND=compute) whose image needs a Packer
 # build; their env file alone rebuilds nothing, since the hook reads it from
-# the orchestrator image. prune is true when a type's env file was deleted, so
-# its jobs and images go too. A base that isn't a commit here (none yet, or
+# the orchestrator image. prune is true when a type's env file was deleted (or
+# renamed), so its jobs, VMs and images go too. A base that isn't a commit here (none yet, or
 # gone after a force push) means everything. Run from the repo root.
 set -euo pipefail
 
@@ -48,8 +48,10 @@ mapfile -t types < <(gcp_types)
 changed=()
 deleted=()
 if ! $all && [[ -z "$schedule" ]]; then
-	mapfile -t changed < <(git diff --name-only "$base" "$head")
-	mapfile -t deleted < <(git diff --name-only --diff-filter=D "$base" "$head" -- 'infra/gcp/*.env')
+	# --no-renames: a renamed file is its old path deleted and its new one
+	# added, so renaming a type's env file prunes the old type (r1.f7).
+	mapfile -t changed < <(git diff --name-only --no-renames "$base" "$head")
+	mapfile -t deleted < <(git diff --name-only --no-renames --diff-filter=D "$base" "$head" -- 'infra/gcp/*.env')
 fi
 
 touched() {
@@ -72,7 +74,8 @@ touched() {
 # also matches /, so the scripts are named outright.)
 readonly every_type=(
 	"images/shared/*" "images/toolsets/install-toolset.sh" "images/toolsets/write-claude-md.sh"
-	"images/toolsets/toolset-checks.sh" "images/toolsets/write-versions.sh" "images/toolsets/skills/*"
+	"images/toolsets/toolset-checks.sh" "images/toolsets/toolset-profile.sh" "images/toolsets/write-versions.sh"
+	"images/toolsets/skills/*"
 	"images/cloud/entrypoint.sh" "images/cloud/runner/*"
 	"images/cloud/docker-bake.hcl" ".dockerignore" "infra/gcp/project.env"
 	"scripts/cloud/lock.sh" "scripts/cloud/lib.sh"
@@ -91,7 +94,8 @@ vm_image_paths() {
 # What every Compute Engine image is built from, besides its own paths.
 readonly every_vm=(
 	"images/shared/*" "images/toolsets/install-toolset.sh" "images/toolsets/write-claude-md.sh"
-	"images/toolsets/toolset-checks.sh" "images/toolsets/write-versions.sh" "images/toolsets/skills/*"
+	"images/toolsets/toolset-checks.sh" "images/toolsets/toolset-profile.sh" "images/toolsets/write-versions.sh"
+	"images/toolsets/skills/*"
 	"infra/gcp/project.env"
 )
 

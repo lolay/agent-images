@@ -50,16 +50,30 @@ gcp_rebuild_class() { gcp_type_setting "$1" REBUILD nightly; }
 # that builds but isn't deployed, waiting for its quota).
 gcp_deploys() { [[ "$(gcp_type_setting "$1" DEPLOY true)" != false ]]; }
 
+# gcp_image_family <type>: a compute type's image family, always agent-<type>,
+# as a Cloud Run type's job is: deploy.sh builds into <family>-next and promotes
+# into it, the hook creates VMs from it, and the supervisor waits for it.
+# Derived, not set: an env file's IMAGE_FAMILY reached Packer only at the next
+# image build, so renaming it broke every spawn until then (r1.f20).
+gcp_image_family() { printf 'agent-%s\n' "$1"; }
+
 # gcp_check_type <type>: fail, with the one reason on stderr, when the type's env
-# file is a combination the pipeline can't serve. Today: DEPLOY=false on a
-# BACKEND=compute type, which deploy.sh would build and promote with no
-# orchestrator to serve it. Every reader of the rule calls this: deploy.sh
-# refuses the type, the supervisor skips it, and `make cloud-test` runs it over
-# the real infra/gcp/*.env, so a bad file fails its pull request rather than
-# reaching the host (an env-file-only change plans no type deploy, r3.f2).
+# file is something the pipeline can't serve: DEPLOY=false on a BACKEND=compute
+# type, which deploy.sh would build and promote with no orchestrator to serve
+# it; or an IMAGE_FAMILY, which nothing reads (gcp_image_family). That one is
+# refused rather than ignored: a rename that silently did nothing would look as
+# if it had worked. Every reader of the rules calls this: deploy.sh refuses the
+# type, the supervisor skips it, and `make cloud-test` runs it over the real
+# infra/gcp/*.env, so a bad file fails its pull request rather than reaching
+# the host (an env-file-only change plans no type deploy, r3.f2).
 gcp_check_type() {
 	if [[ "$(gcp_backend "$1")" == compute ]] && ! gcp_deploys "$1"; then
 		printf '%s: DEPLOY=false is for Cloud Run types only, not BACKEND=compute (a Compute Engine type would be built and promoted with no orchestrator to serve it); remove it from infra/gcp/%s.env\n' "$1" "$1" >&2
+		return 1
+	fi
+	if [[ -n "$(gcp_type_setting "$1" IMAGE_FAMILY "")" ]]; then
+		printf "%s: IMAGE_FAMILY is not a setting: a type's image family is always %s; remove it from infra/gcp/%s.env\n" \
+			"$1" "$(gcp_image_family "$1")" "$1" >&2
 		return 1
 	fi
 }

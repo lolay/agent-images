@@ -76,9 +76,14 @@ cat >/etc/profile.d/zz-agent-images.sh <<EOF
 # ~/.bashrc and, through a SessionStart hook, every Bash tool command.
 export HOMEBREW_PREFIX=/home/linuxbrew/.linuxbrew HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_ENV_HINTS=1
 export RUSTUP_HOME=/home/$user/.rustup TENV_ROOT=/home/$user/.tenv TENV_AUTO_INSTALL=true
+# agent_set_path marks the shell that sets PATH up, for the toolsets' records below.
+agent_set_path=
 case ":\$PATH:" in
 *":/opt/agent-images/bin:"*) ;;
-*) export PATH="/opt/agent-images/bin:\$HOMEBREW_PREFIX/opt/rustup/bin:\$HOMEBREW_PREFIX/bin:\$HOMEBREW_PREFIX/sbin:\$PATH" ;;
+*)
+	export PATH="/opt/agent-images/bin:\$HOMEBREW_PREFIX/opt/rustup/bin:\$HOMEBREW_PREFIX/bin:\$HOMEBREW_PREFIX/sbin:\$PATH"
+	agent_set_path=1
+	;;
 esac
 
 # The display toolset: agent-linux's entrypoint starts Xvfb at :99 before the
@@ -94,6 +99,17 @@ if [ -z "\${DISPLAY:-}" ] && command -v Xvfb >/dev/null 2>&1; then
 		done
 	fi
 fi
+
+# What the toolsets recorded under /etc/agent-images/toolsets
+# (images/toolsets/install-toolset.sh): their variables, JAVA_HOME among them,
+# after the display's start above, and in the shell that set PATH up above,
+# their PATH changes (JAVA_HOME's bin first, the go and cargo install bins at the
+# back), which they make only while agent_set_path is set
+# (images/toolsets/toolset-profile.sh). Later sources leave the caller's PATH.
+for agent_file in /etc/agent-images/toolsets/*.profile.sh; do
+	[ -f "\$agent_file" ] && . "\$agent_file"
+done
+unset agent_file agent_set_path
 EOF
 # Interactive shells that aren't login shells read ~/.bashrc only.
 grep -qF zz-agent-images.sh /root/.bashrc ||

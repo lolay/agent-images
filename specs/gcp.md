@@ -219,6 +219,12 @@ Choices, carried over from [design.md](design.md):
   `CUDA_CAPABILITIES` (the L4's 8.9 and Blackwell's 12.0, with PTX for the newest),
   which `base-gpu` sets as `CUDAARCHS` and `TORCH_CUDA_ARCH_LIST`, and each toolset's
   `check.txt` checks every CUDA binary for each.
+- **Every image stays on Ubuntu 24.04** (Owner, 2026-11-20, r1.f18), an exception to
+  tracking latest (`ubuntu:latest` is 26.04): CUDA 13.0 has no `ubuntu26.04` image,
+  and `linux-gpu` builds from `linux`'s Dockerfile, so all of them (with the
+  orchestrator and the `android` images) move to 26.04 together when one ships. The
+  reason is written once, beside `docker-bake.hcl`'s base `BASE_IMAGE`; the other
+  places that name 24.04 point there.
 - **Docker Hub images come through Google's mirror** (`mirror.gcr.io/library/ubuntu`,
   `mirror.gcr.io/nvidia/cuda`): Docker Hub rate-limits anonymous pulls, which CI and
   local builds hit. The mirror is a pull-through cache of Docker Hub, so a digest is
@@ -290,7 +296,7 @@ matrix. A failed deploy makes the next one redeploy more, never less:
 | `images/shared/**`, `images/toolsets/install-toolset.sh`, `images/toolsets/write-claude-md.sh`, `images/toolsets/toolset-checks.sh`, `images/toolsets/write-versions.sh`, `images/toolsets/skills/**`, `images/cloud/base/**`, `images/cloud/runner/**`, `images/cloud/entrypoint.sh`, `images/cloud/docker-bake.hcl`, `.dockerignore`, and `scripts/cloud/lock.sh` and `scripts/cloud/lib.sh` (the build's arguments are `lock.sh bake-args`, which reads a type's toolsets with lib.sh) | Every runner type |
 | `images/toolsets/<toolset>/**` | The types whose Dockerfiles (or build parents') install that toolset |
 | `images/cloud/<type>/**`, including its `versions.lock` | That type |
-| `hooks/gcp/**`, `images/cloud/orchestrator/**`, and the two files its build reads from elsewhere (`images/cloud/base/apt-build.conf`, `images/toolsets/install-toolset.sh`) | The orchestrator host (new image, then the host restarts its container) |
+| `hooks/gcp/**`, `images/cloud/orchestrator/**`, `images/cloud/docker-bake.hcl` and `.dockerignore` (which also rebuild every runner type, above), and the two files its build reads from elsewhere (`images/cloud/base/apt-build.conf`, `images/toolsets/install-toolset.sh`) | The orchestrator host (new image, then the host restarts its container) |
 | `infra/gcp/<type>.env` (CPU, memory, GPU, timeout, `--min-idle`, `REBUILD`, `DEPLOY`) | That type's job and orchestrator settings, no image build, unless the type had no job at the diff's base: its env file is new there, or this change removed `DEPLOY=false`. Then there's no live image for the job to reuse, so the type builds, and its first deploy takes one push. plan reads that from the base commit, not from Cloud Run (it has no GCP token). `DEPLOY=false` builds and pushes the image but writes no job, runs no smoke and starts no orchestrator: a type waiting for its quota. It is for Cloud Run types only: deploy.sh's vm commands and the supervisor refuse it for `BACKEND=compute` |
 | `scripts/cloud/job-spec.sh` | Every type's job, no image build |
 | `images/android/**` (the LXD image's scripts and files, and `gce/`), the toolsets in `images/android/toolsets.txt`, `images/shared/**`, the four toolset scripts and `images/toolsets/skills/**` | The `android` Compute Engine image: Packer build, smoke VM, then family `agent-android` ([below](#compute-engine-vm-per-session-android-and-the-gpu-fallback)) |
@@ -686,7 +692,7 @@ no-cache build promoted the same way as a push's. A type without `REBUILD` is
 | Image | Rebuild cost | `REBUILD` | Claude between builds |
 | --- | --- | --- | --- |
 | `linux` | Minutes; Claude is the last layer | `nightly`: 04:07 Pacific, Tuesday to Saturday, after the weekday's Claude releases | Locked: the watch moves it within the hour, and sessions don't update it (`CLAUDE_UPGRADE=false`, m5) |
-| Orchestrator | A minute or two | Rides `nightly` (not a type, so no env file) | Baked in; rebuilt nightly |
+| Orchestrator | A minute or two | Rides `nightly` (not a type, so no env file) | Baked in, the newest at each build (no lock: `docker-bake.hcl`'s `ORCHESTRATOR_CLAUDE_VERSION`, resolved by `lock.sh orchestrator-claude`); rebuilt nightly |
 | `gis` | 9 GB, most of the Actions cache's 10 GB; conda-forge moves slowly | `weekly`: 05:37 Pacific, Sunday | Self-updates |
 | `android` | About 45 min of Packer with no layer cache, the disk capture and a smoke VM; about $0.50 in GCP | `weekly` | Self-updates |
 | `linux-gpu`, `3d-gpu` (m3) | About 12 to 15 min from scratch; `-gpu` types build without the Actions cache (CUDA is 4 GB of it) | `weekly` | Self-updates |
@@ -779,7 +785,7 @@ it's fixed. How, per source:
 | apt package | `name=version  # pinned: <issue URL> snapshot=<id>` in `packages.txt` (or `build-packages.txt`), the id a snapshot.ubuntu.com timestamp whose index has that version | A snapshot's index lists each pocket's current version alone, so once Ubuntu replaces an update, the type's snapshot no longer has it (checked 2026-11-15: `noble-updates` had openssl `3.0.13-0ubuntu3.6` at 20260101T000000Z and only `3.0.13-0ubuntu3.16` at 20261101T000000Z). `snapshot=` resolves and installs that package from its own snapshot, and everything else keeps moving ([The lock](#the-lock)). Pin a package's same-version siblings too (`libssl3t64` with `openssl`): an exact-version dependency isn't pinned for you. Without `snapshot=`, the pin resolves against today's archive and holds only while Ubuntu keeps that version. To hold all of apt still, freeze the snapshot timestamp in the lock |
 | Homebrew formula | A versioned formula if one exists (`python@3.12`), else `brew extract --version=X <formula> lolay/tap` and name `lolay/tap/<formula>@X` in the Brewfile | `brew pin` doesn't help a fresh build. An extracted formula has no bottle, so it builds from source. The watch doesn't report a Homebrew pin: the lock records the formula the Brewfile names, with no `pinned` line, so the pin's issue is what tracks it; remove the pin when the issue closes |
 | `lolay/tap` formula | Revert in the tap, or add a versioned formula there | It's ours |
-| Claude Code | `CLAUDE_VERSION=2.1.317` (a version) | The lock holds Claude at that version, and the watch reports the pin. `stable` isn't a pin: it's a channel the watch follows, as it follows the default `latest`, resolving it each run to the version it names, with no `pinned` line; only a numbered `CLAUDE_VERSION` is a pin. `nightly` types already run with `CLAUDE_UPGRADE=false`; a `weekly` type still updates itself at start, past the pin, and has no setting to stop it yet: add one (an env file key read by `gcp_runner_settings`) if a weekly pin is ever needed |
+| Claude Code | `CLAUDE_VERSION=2.1.317` (a version) | The runner types only: the orchestrator always takes the newest Claude, from its own `ORCHESTRATOR_CLAUDE_VERSION` in `docker-bake.hcl`, which no pin reaches (Owner, 2026-11-20, #83, r3.f22); the deploy's check of its flags (`check-orchestrator-flags.sh`) is what guards it. The lock holds Claude at that version, and the watch reports the pin. `stable` isn't a pin: it's a channel the watch follows, as it follows the default `latest`, resolving it each run to the version it names, with no `pinned` line; only a numbered `CLAUDE_VERSION` is a pin. `nightly` types already run with `CLAUDE_UPGRADE=false`; a `weekly` type still updates itself at start, past the pin, and has no setting to stop it yet: add one (an env file key read by `gcp_runner_settings`) if a weekly pin is ever needed |
 | Rust toolchain | `RUST_TOOLCHAIN=1.91.0` (a version) or `1.91` (a minor line) in `images/toolsets/rust/install.sh` | The watch resolves within it: a minor line still takes patch releases |
 | Terraform | `TERRAFORM_VERSION=1.14.2` (a version) or `~> 1.14.0` (the 1.14 line) in `images/toolsets/terraform/install.sh` | `~>` means what it means to HashiCorp and tenv, which take the constraint as is where the lock doesn't reach: `~> 1.14.0` is >= 1.14.0, < 1.15.0, and holds the 1.14 line; `~> 1.14` is >= 1.14, < 2.0, and takes any 1.x from 1.14 on. The watch resolves within it |
 | Type tool from a release | Its `*_VERSION` default in the script that reads it, beside its `*_RELEASES` (the release rows of the lock table) | |
@@ -818,12 +824,23 @@ reset of the host (`gcloud compute instances reset agent-orchestrator`), so the
 container starts again and reads it. Setting `orchestrator-image` to the digest
 already running does nothing.
 
+The file per type keeps each orchestrator pointed at its own key; it doesn't keep
+the types apart. Every type's orchestrator and hook runs in the one container as the
+one uid (`ubuntu`), with the one service account, `agent-orchestrator`, whose
+condition lets it read every `claude-env-*` secret and run every type's job. So the
+types share one trust domain: whatever runs as one type's orchestrator or hook can
+read every type's key and file. That's fine while every type serves the same owner.
+A type that serves another audience (another team, a customer) needs its own
+orchestrator container and its own service account, allowed only its own secret.
+
 ## The hook
 
 `hooks/gcp/spawn-runner`, the counterpart of `hooks/linux/spawn-runner`, same contract
 (0 submitted, 1 retry, 2 don't retry; nothing secret on stderr):
 
-1. `unset SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET`.
+1. `unset SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET`. A variable the orchestrator or the
+   supervisor didn't set, or a setting the env files leave out, exits 2 before
+   anything is created: every retry would find it missing too.
 2. Create `gs://<bucket>/orders/$CLAUDE_RUNNER_ORDER_ID` with `ifGenerationMatch=0`
    (the Storage JSON API through `curl` with a metadata-server token, like every call
    the hook makes; no `gcloud` on the host). A 412 means this order already has an
@@ -870,12 +887,28 @@ it's one process per type inside one container:
 - **Types:** the supervisor reads every `infra/gcp/*.env` baked into the image except
   `project.env` and starts `claude self-hosted-runner orchestrator` for each, with
   `RUNNER_TYPE`, that type's `--min-idle` and `--expected-spawn-seconds`, its own
-  `--health-port` (8080 upward), and `--shutdown-drain-sec 70`.
+  `--health-port` (8080 upward), and `--shutdown-drain-sec 70`. The flags are one
+  list, `images/cloud/orchestrator/orchestrator-args.sh`. The orchestrator gets no
+  smoke and always the newest Claude, so before the deploy points the host at a new
+  image it runs that image's `claude self-hosted-runner orchestrator --help` and
+  fails unless every flag in the list is defined there
+  (`scripts/cloud/check-orchestrator-flags.sh`, r1.f10). The pull request check
+  runs the same check on the orchestrator image it builds, since the unit tests'
+  fake `claude`, which refuses any flag outside the list or one without its
+  value, reads that same list and can't catch a typo in it.
 - **Secrets:** each type's `claude-env-<type>`, read from Secret Manager at start by
   the host's service account and written to a file per type (mode 600, `/dev/shm`). The
   supervisor passes each orchestrator only its own, and the hook unsets it before
   doing anything else. A type whose secret can't be read is retried; the others
   start anyway.
+- **Readiness:** a type's orchestrator starts only once the type has something to
+  spawn: its Cloud Run job `agent-<type>`, or for a compute type an image in family
+  `agent-<type>`. A type without one is logged and skipped, as `DEPLOY=false` is, but
+  checked again every `RUNNER_WAIT_SEC` (5 minutes) on the supervisor's loop rather
+  than only at the next restart, and started once it's there. Only a 404 holds a type
+  back: any other answer is logged and the orchestrator starts, and the hook reports
+  a real problem per session. This is what lets the deploy's orchestrator job run
+  whether or not a type's build failed (r1.f3).
 - **Supervision:** restart any orchestrator that exits; forward `SIGTERM` to all of
   them; prefix each one's log lines with its type. Every 5 minutes it logs each
   orchestrator's memory (`Pss` from `/proc/<pid>/smaps_rollup`, with its child
@@ -887,9 +920,16 @@ it's one process per type inside one container:
   whose guest has marked it read. The deploy's smoke VMs are left to the deploy.
   Logged as `supervisor: reaper`.
 - **Deploys:** a push to `main` that touches `hooks/gcp/**`, `images/cloud/orchestrator/**`,
-  `infra/gcp/*.env`, or the two files its build mounts from elsewhere
-  (`images/cloud/base/apt-build.conf`, `images/toolsets/install-toolset.sh`) rebuilds it and restarts it on the host. Sessions in flight are
-  unaffected: they belong to runners, not to the orchestrator.
+  `infra/gcp/*.env`, its build's definition and context (`images/cloud/docker-bake.hcl`,
+  `.dockerignore`), or the two files its build mounts from elsewhere
+  (`images/cloud/base/apt-build.conf`, `images/toolsets/install-toolset.sh`) rebuilds it
+  and restarts it on the host (`scripts/cloud/changed-targets.sh` is the list). Sessions in flight are
+  unaffected: they belong to runners, not to the orchestrator. The deploy's
+  orchestrator job runs after the types and VM images, whether they passed or
+  failed: a failed type keeps its old job or image, or, on its first deploy, has
+  none, and the supervisor waits for it (readiness, above), so one broken type
+  doesn't hold back the others' hook and env changes. Running after them only
+  means a new type's first deploy finds its job when the supervisor starts.
 
 One process for all types would mean one environment for all types, with the hook
 picking an image per session. That loses the explicit choice in the picker, and
@@ -908,7 +948,8 @@ orchestrator's access is granted by that name prefix. What Terraform needs, in f
 
 The jobs need no Terraform here: the deploy workflow writes each job from its
 `infra/gcp/<type>.env` through the Cloud Run API, which is idempotent, and deletes any
-`agent-*` job labelled `managed-by=agent-images` whose env file is gone. A second Terraform in this repo (its state next to
+`agent-*` job labelled `managed-by=agent-images` whose env file is gone (deleted or
+renamed), with that type's Compute Engine VMs, in any zone, and images. A second Terraform in this repo (its state next to
 `lolay/infrastructure`'s, applied by the deploy workflow with the new digest as a
 variable) becomes worth it if the workloads grow past jobs: the Android type's
 Compute Engine templates and standby pools are the likely trigger.
@@ -988,7 +1029,8 @@ runner sets the same).
     rest of the filesystem is in memory.
   - Keep anything over 10 MB worth keeping in $AGENT_OUTPUTS (a Cloud Storage
     bucket, kept 30 days). Finish files on scratch, then copy them there; tell the
-    user the gs:// path.
+    user the gs:// path. The bucket is shared: read, write and delete only in your
+    own $AGENT_OUTPUTS folder, unless the user tells you otherwise.
   - Read shared inputs from $AGENT_DATASETS (read-only).
   - Code still goes to git: commit and push before the session ends.
 
@@ -1076,9 +1118,16 @@ rather than failing.
 
 This changes one earlier decision: sessions now have GCP access, limited to these two
 buckets. Each execution's service account, `agent-runner`, can write
-`lolay-agents-outputs` and read `lolay-agents-datasets`, and nothing else, and every
-session can see every other session's outputs. Fine for one owner; revisit if other
-people get sessions on these runners. Nothing secret goes in either bucket.
+`lolay-agents-outputs` and read `lolay-agents-datasets`, and nothing else. The
+outputs bucket is shared: every session mounts all of it read-write
+(`storage.objectAdmin`), so any session can read, overwrite or delete any other
+session's outputs; the per-session folder is a convention. Accepted for one owner
+(Owner, 2026-11-20, #40, r1.f25), visibility and integrity both: the guard is the
+session `CLAUDE.md` (`images/cloud/runner/claude/CLAUDE.md`), which tells every
+session to read, write and delete only in its own `$AGENT_OUTPUTS` folder unless the
+user says otherwise. Revisit (`objectCreator` plus `objectViewer`, or soft delete or
+versioning on the bucket) if other people get sessions on these runners. Nothing
+secret goes in either bucket.
 
 ## The head
 
@@ -1135,7 +1184,7 @@ at `0e34c0f`), deployed and tested 2026-11-06 ([m2 `android` results](#m2-androi
   reaches it through IAP, tag `packer`) and no service account. `provision.sh`
   creates the `ubuntu` user (Ubuntu's Compute Engine image has none) and runs the
   LXD image's own provisioners (`images/android/scripts`, from the same staged
-  layout), which boot the emulator once for its quickboot snapshot; then it adds the
+  layout, `images/android/staging.txt`), which boot the emulator once for its quickboot snapshot; then it adds the
   guest pieces in `gce/files`, and fails the build on any provisioner stderr. The
   image lands in family `agent-android-next`; `deploy.sh vm-promote` boots a smoke VM
   from it and only then moves it to `agent-android` (`images.patch` takes `family`),
@@ -1155,7 +1204,15 @@ at `0e34c0f`), deployed and tested 2026-11-06 ([m2 `android` results](#m2-androi
 - **Hook:** after the order marker, `agent-android-<order id>` (the whole id, so two
   orders never share a name) from the family's latest image, with metadata
   `work-order`, `runner-env` (label, base dir, retire time, the runner limits) and
-  guest attributes on.
+  guest attributes on. Its boot disk is the larger of `DISK_GB` and that image's
+  size: the image is built at `DISK_GB`, and a disk can't be smaller than its image,
+  so a lowered `DISK_GB` takes effect from the next image build rather than failing
+  every insert until then (r1.f20).
+- **Image family:** always `agent-<type>` (`gcp_image_family` in `hooks/gcp/lib.sh`),
+  as a Cloud Run type's job is `agent-<type>`; the deploy, the hook and the
+  supervisor derive it. It isn't a setting: an env file's `IMAGE_FAMILY` reached
+  Packer only at the next build, so a rename broke every spawn until then, and
+  `gcp_check_type` now refuses one (r1.f20).
 - **Guest:** `agent-gce-order.service` runs once at boot as root: it writes the work
   order to `~ubuntu/.claude-runner/environment-secret` (600), writes `runner.env`
   from `runner-env` (plain `KEY=value` lines only) with `EPHEMERAL=true`, which

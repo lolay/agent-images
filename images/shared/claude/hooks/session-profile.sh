@@ -4,9 +4,9 @@
 # taken with, which lacks the session's gh shim; every Bash tool command sources
 # $CLAUDE_ENV_FILE after the snapshot, so this has it source the image's profile
 # there, which puts the shim back in front (images/shared/profile-gh-shim.sh).
-# The cloud profile sets PATH up only once per environment (it leaves a
-# caller's order alone when a child bash re-sources it), so the line unsets its
-# marker first. An image without that profile (macOS) gets nothing.
+# The profile sets PATH up only once per environment (it leaves a caller's
+# order alone when a child bash re-sources it: images/toolsets/toolset-profile.sh),
+# so the line unsets its marker first. An image without that profile (macOS) gets nothing.
 #
 # stdin: the hook's JSON payload, unused. stdout: nothing. It never fails the
 # session.

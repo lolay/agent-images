@@ -25,6 +25,11 @@
 #                                 to the type's lock, whole or not at all: the
 #                                 one place a lock file is written (the watch,
 #                                 make cloud-lock WRITE=1)
+#   lock.sh orchestrator-claude   the Claude Code version the orchestrator's
+#                                 channel (docker-bake.hcl's
+#                                 ORCHESTRATOR_CLAUDE_VERSION) names now: it
+#                                 has no lock, and the deploy builds it at this
+#                                 so a release rebuilds its layer (r3.f22)
 #
 # A lock is `<kind> <name> <value>` lines, sorted, under a comment header:
 #
@@ -97,7 +102,7 @@ die() {
 	printf 'lock: %s\n' "$*" >&2
 	exit 1
 }
-usage() { die "usage: lock.sh resolve <type> | bake-args <type> | diff <old> <new> | summary <old> <new> | pins <type> | releases <type> | path <type> | write <type>"; }
+usage() { die "usage: lock.sh resolve <type> | bake-args <type> | diff <old> <new> | summary <old> <new> | pins <type> | releases <type> | path <type> | write <type> | orchestrator-claude"; }
 
 lock_file() { printf '%s/%s/versions.lock' "$lock_dir" "$1"; }
 
@@ -190,7 +195,7 @@ pin_note() {
 # bake_print <type>: the type's build graph as bake resolves it, with nothing
 # from the environment overriding the file's own defaults.
 bake_print() {
-	env -u CLAUDE_VERSION -u REGISTRY -u TAG -u COMMIT \
+	env -u CLAUDE_VERSION -u ORCHESTRATOR_CLAUDE_VERSION -u REGISTRY -u TAG -u COMMIT \
 		docker buildx bake -f "$bake_file" --print "$1" 2>/dev/null
 }
 
@@ -755,6 +760,18 @@ cmd_write() {
 	mv "$write_tmp" "$file"
 }
 
+# cmd_orchestrator_claude: the orchestrator's Claude Code constraint from the
+# bake file, as an exact version: a version as it is, a channel as it names now.
+cmd_orchestrator_claude() {
+	local graph version
+	graph="$(bake_print orchestrator)" || die "docker buildx bake --print orchestrator failed"
+	version="$(jq -er '.target.orchestrator.args.CLAUDE_VERSION // empty' <<<"$graph")" ||
+		die "the orchestrator's build graph has no CLAUDE_VERSION"
+	# Assigned, not printed from $(...): a failed lookup must fail the command.
+	[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || version="$(claude_channel "$version")"
+	printf '%s\n' "$version"
+}
+
 # Sourced (tests): the functions alone.
 [[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
 
@@ -794,6 +811,10 @@ write)
 	(($# == 2)) || usage
 	[[ "$2" =~ ^[a-z0-9-]+$ ]] || usage
 	cmd_write "$2"
+	;;
+orchestrator-claude)
+	(($# == 1)) || usage
+	cmd_orchestrator_claude
 	;;
 *) usage ;;
 esac

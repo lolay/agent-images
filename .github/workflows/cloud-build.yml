@@ -153,6 +153,13 @@ jobs:
           make cloud-build TYPE="$TARGET"
           df -h /
           docker system df
+      # The orchestrator has no smoke; its check is that the Claude it was built
+      # with lists every flag the supervisor passes, as the deploy checks before
+      # promoting it (r1.f10). The unit tests' fake claude reads the same list,
+      # so only a real --help catches a typo in it.
+      - name: Check the supervisor's flags
+        if: matrix.target == 'orchestrator'
+        run: scripts/cloud/check-orchestrator-flags.sh agent-orchestrator:local
       - name: Smoke ${{ matrix.target }}
         if: matrix.target != 'orchestrator'
         env:

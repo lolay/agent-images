@@ -320,6 +320,17 @@ class ChangedTargetsTests(unittest.TestCase):
         self.assertTrue(result["orchestrator"])
         self.assertEqual(result["types"], [])
 
+    def test_renaming_a_type_prunes_the_old_one_and_builds_the_new(self):
+        # git diff reports an unchanged file under a new name as a rename (R100),
+        # not a deletion, unless told not to (r1.f7).
+        self.git("mv", "infra/gcp/linux-gpu.env", "infra/gcp/linux-cuda.env")
+        self.commit("rename linux-gpu")
+        status = self.git("diff", "--name-status", self.base, self.head())
+        self.assertTrue(status.startswith("R100"), status)
+        result = self.targets()
+        self.assertTrue(result["prune"])
+        self.assertEqual(result["types"], [{"type": "linux-cuda", "build": True}])
+
 
 class ComputeTypeTests(ChangedTargetsTests):
     """With a Compute Engine type (BACKEND=compute): android, built by Packer from images/android."""
@@ -409,6 +420,21 @@ class ComputeTypeTests(ChangedTargetsTests):
     def test_no_usable_base_means_everything(self):
         result = self.targets("", self.head())
         self.assertEqual(result["vms"], self.ANDROID)
+
+
+class ScriptListTests(unittest.TestCase):
+    """Every script beside the toolsets is in what rebuilds every cloud type and
+    every Compute Engine image: the lists name each one outright."""
+
+    def test_every_file_beside_the_toolsets_is_listed(self):
+        text = SCRIPT.read_text()
+        files = sorted(path.name for path in (REPO / "images/toolsets").iterdir() if path.is_file())
+        self.assertIn("toolset-profile.sh", files)
+        for array in ("every_type", "every_vm"):
+            listed = re.search(rf"readonly {array}=\((.*?)\n\)", text, re.S).group(1)
+            for name in files:
+                with self.subTest(array=array, file=name):
+                    self.assertIn(f'"images/toolsets/{name}"', listed)
 
 
 if __name__ == "__main__":

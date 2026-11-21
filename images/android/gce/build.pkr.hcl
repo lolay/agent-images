@@ -7,6 +7,8 @@
 
 locals {
   guest_staging = "/tmp/agent-images"
+  # Where images/android/stage.sh assembles the layout on the machine running Packer.
+  host_staging = "${path.root}/../../../build/android-gce-staging"
   labels = {
     managed-by        = "agent-images"
     agent-images-type = "android"
@@ -15,8 +17,9 @@ locals {
 }
 
 source "googlecompute" "android" {
-  project_id              = var.project_id
-  zone                    = var.zone
+  project_id = var.project_id
+  zone       = var.zone
+  # Why 24.04: images/cloud/docker-bake.hcl, beside the base target's BASE_IMAGE.
   source_image_family     = "ubuntu-2404-lts-amd64"
   source_image_project_id = ["ubuntu-os-cloud"]
   machine_type            = var.machine_type
@@ -65,32 +68,23 @@ build {
   sources = ["source.googlecompute.android"]
 
   provisioner "shell" {
-    inline = ["mkdir -p ${local.guest_staging}/scripts ${local.guest_staging}/toolsets ${local.guest_staging}/gce"]
+    inline = ["mkdir -p ${local.guest_staging}"]
   }
 
-  # The layout scripts/linux/build-image.sh stages in its build VM, plus gce/.
-  provisioner "file" {
-    sources = [
-      "${path.root}/../../shared/",
-      "${path.root}/../files/",
-      "${path.root}/../toolsets.txt",
+  # The layout every Android build stages (images/android/staging.txt), plus
+  # its gce lines, assembled on this machine and uploaded whole. generated: the
+  # directory exists only once the shell-local step has run.
+  provisioner "shell-local" {
+    inline = [
+      "rm -rf '${local.host_staging}'",
+      "'${path.root}/../stage.sh' '${local.host_staging}' gce",
     ]
+  }
+
+  provisioner "file" {
+    source      = "${local.host_staging}/"
     destination = "${local.guest_staging}/"
-  }
-
-  provisioner "file" {
-    source      = "${path.root}/../../toolsets/"
-    destination = "${local.guest_staging}/toolsets/"
-  }
-
-  provisioner "file" {
-    source      = "${path.root}/../scripts/"
-    destination = "${local.guest_staging}/scripts/"
-  }
-
-  provisioner "file" {
-    source      = "${path.root}/files/"
-    destination = "${local.guest_staging}/gce/"
+    generated   = true
   }
 
   provisioner "shell" {

@@ -278,7 +278,8 @@ class SharedHelpersTests(unittest.TestCase):
         result = self.run_bash(str(probe))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "apt apt_entries apt_install_options apt_list apt_update brew_env brew_path "
-                         "brewfile_formulae die github_latest install_apt install_apt_packages log trust_taps ")
+                         "brewfile_formulae die github_latest install_apt install_apt_packages log toolset_env "
+                         "trust_taps ")
 
     def helper(self, script, stdin=""):
         return subprocess.run(["bash", "-c", f'set -euo pipefail; source "{self.script}"; {script}'],

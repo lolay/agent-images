@@ -10,19 +10,19 @@
 #       writes no job and runs no smoke (a GPU type waiting for its quota).
 #   deploy.sh vm-build <type> <image name> <commit>
 #       a Compute Engine type (BACKEND=compute): build its image with Packer
-#       from images/<type>/gce into family <IMAGE_FAMILY>-next, and keep its
+#       from images/<type>/gce into family agent-<type>-next, and keep its
 #       versions report at out/versions/<type>/versions.md.
 #   deploy.sh vm-promote <type> <image name> <commit>
 #       boot a smoke VM from that image (agent-gce-smoke: every binary check and
 #       smoke test through agent-toolset-checks, plus sudo, KVM, scratch and the
 #       emulator's boot time), and only if it passes move the image to family
-#       <IMAGE_FAMILY>, which the hook creates VMs from, and delete the type's
+#       agent-<type> (the hook creates VMs from it), and delete the type's
 #       older images (keep one).
 #   deploy.sh orchestrator <image@sha256:...>
 #       point the orchestrator VM at that image; its unit pulls it and restarts
 #       the container.
 #   deploy.sh prune
-#       delete the jobs and Compute Engine images this repo made (label
+#       delete the jobs, Compute Engine VMs and images this repo made (label
 #       managed-by=agent-images) whose type has no infra/gcp/<type>.env any more.
 #   deploy.sh status
 #       read-only: each job's image, commit and last execution, and the
@@ -62,9 +62,6 @@ readonly run_api="$GCP_RUN_URL/v2/projects/$PROJECT_ID/locations/$REGION"
 readonly compute_api="$GCP_COMPUTE_URL/compute/v1/projects/$PROJECT_ID"
 
 access_token() { gcloud auth print-access-token --quiet; }
-
-# family_of <type>: a compute type's image family.
-family_of() { gcp_type_setting "$1" IMAGE_FAMILY ""; }
 
 # wait_operation <token>: wait for the long-running operation in GCP_BODY.
 wait_operation() {
@@ -158,7 +155,9 @@ load_compute_type() {
 	local reason
 	reason="$(gcp_check_type "$1" 2>&1)" || die "$reason"
 	gcp_load_env "$1"
-	: "${IMAGE_FAMILY:?}" "${MACHINE_TYPE:?}" "${DISK_GB:?}" "${DISK_TYPE:?}" "${ZONE:?}" "${NETWORK:?}" "${SUBNET:?}"
+	# Global, not local: vm-build and vm-promote read it.
+	family="$(gcp_image_family "$1")"
+	: "${MACHINE_TYPE:?}" "${DISK_GB:?}" "${DISK_TYPE:?}" "${ZONE:?}" "${NETWORK:?}" "${SUBNET:?}"
 }
 
 valid_image_name() { [[ "$1" =~ ^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$ ]]; }
@@ -179,10 +178,10 @@ cmd_vm_build() {
 	# image would delete the live one.
 	"$PACKER" build -color=false \
 		-var "project_id=$PROJECT_ID" -var "zone=$ZONE" -var "network=$NETWORK" -var "subnetwork=$SUBNET" \
-		-var "image_name=$image" -var "image_family=$IMAGE_FAMILY-next" -var "commit=$sha" \
+		-var "image_name=$image" -var "image_family=$family-next" -var "commit=$sha" \
 		-var "machine_type=$MACHINE_TYPE" -var "disk_size_gb=$DISK_GB" -var "versions_file=$report" "$dir"
 	[[ -s "$report" ]] || die "the build left no versions report at $report"
-	log "$image: built into family $IMAGE_FAMILY-next"
+	log "$image: built into family $family-next"
 }
 
 # guest_attributes <token> <zone url> <instance>: its agent-images/* guest
@@ -236,10 +235,10 @@ cmd_vm_promote() {
 		attributes="$(guest_attributes "$token" "$zone_url" "$smoke")"
 		result="$(jq -r '.smoke // empty' <<<"$attributes")"
 		[[ -z "$result" ]] || break
-		(($(date +%s) < deadline)) || die "$smoke: no smoke result after ${VM_SMOKE_TIMEOUT_SEC}s; $IMAGE_FAMILY keeps its image"
+		(($(date +%s) < deadline)) || die "$smoke: no smoke result after ${VM_SMOKE_TIMEOUT_SEC}s; $family keeps its image"
 		gcp_call "$token" GET "$zone_url/instances/$smoke"
 		if [[ "$GCP_STATUS" == 200 && "$(jq -r '.status' <<<"$GCP_BODY")" == TERMINATED ]]; then
-			die "$smoke: powered off without a smoke result; $IMAGE_FAMILY keeps its image"
+			die "$smoke: powered off without a smoke result; $family keeps its image"
 		fi
 		sleep "$VM_SMOKE_POLL_SEC"
 	done
@@ -251,24 +250,27 @@ cmd_vm_promote() {
 			(to_entries[] | select(.key != "smoke" and .key != "smoke-log") | "| \(.key) | \(.value) |")' \
 			<<<"$attributes" >>"$GITHUB_STEP_SUMMARY"
 	fi
-	[[ "$result" == pass ]] || die "smoke failed on $image; $IMAGE_FAMILY keeps its image"
+	[[ "$result" == pass ]] || die "smoke failed on $image; $family keeps its image"
 
-	gcp_call "$token" PATCH "$compute_api/global/images/$image" - < <(jq -cn --arg family "$IMAGE_FAMILY" '{family: $family}')
-	[[ "$GCP_STATUS" == 2* ]] || die "moving $image to $IMAGE_FAMILY: HTTP $GCP_STATUS: $(gcp_error)"
-	gcp_compute_wait "$token" "$compute_api/global" 300 || die "moving $image to $IMAGE_FAMILY: ${GCP_OP_ERROR:-timed out}"
-	log "$image: now the latest in family $IMAGE_FAMILY"
+	gcp_call "$token" PATCH "$compute_api/global/images/$image" - < <(jq -cn --arg family "$family" '{family: $family}')
+	[[ "$GCP_STATUS" == 2* ]] || die "moving $image to $family: HTTP $GCP_STATUS: $(gcp_error)"
+	gcp_compute_wait "$token" "$compute_api/global" 300 || die "moving $image to $family: ${GCP_OP_ERROR:-timed out}"
+	log "$image: now the latest in family $family"
 
-	# Keep one: VMs already running keep their own disks.
-	local old
+	# Keep one: VMs already running keep their own disks. Each listing is read
+	# whole first, here and in prune: from `< <(...)` a listing's die would be
+	# lost, and the loop would go green having seen nothing.
+	local old olds
+	olds="$(list_images "$token" "labels.agent-images-type=$type" | jq -r '.name')" || exit 1
 	while read -r old; do
-		[[ "$old" != "$image" ]] || continue
+		[[ -n "$old" && "$old" != "$image" ]] || continue
 		gcp_call "$token" DELETE "$compute_api/global/images/$old"
 		if [[ "$GCP_STATUS" == 2* || "$GCP_STATUS" == 404 ]]; then
 			log "$old: deleted"
 		else
 			log "$old: couldn't delete: HTTP $GCP_STATUS: $(gcp_error)"
 		fi
-	done < <(list_images "$token" "labels.agent-images-type=$type" | jq -r '.name')
+	done <<<"$olds"
 }
 
 # list_images <token> <filter>: this project's images matching the filter, one
@@ -307,10 +309,26 @@ list_jobs() {
 	done
 }
 
+# list_instances <token> <filter>: this project's VMs matching the filter, in
+# every zone, one JSON object per line. Every zone, not project.env's: a removed
+# type's env file could have set its own ZONE, and it's gone.
+list_instances() {
+	local token="$1" filter="$2" page=""
+	while :; do
+		gcp_call "$token" GET "$compute_api/aggregated/instances?filter=$(gcp_uri "$filter")${page:+&pageToken=$(gcp_uri "$page")}"
+		[[ "$GCP_STATUS" == 200 ]] || die "listing VMs: HTTP $GCP_STATUS: $(gcp_error)"
+		jq -c '.items // {} | .[] | .instances // [] | .[]' <<<"$GCP_BODY"
+		page="$(jq -r '.nextPageToken // empty' <<<"$GCP_BODY")"
+		[[ -n "$page" ]] || break
+	done
+}
+
 cmd_prune() {
-	local token job name type
+	local token job jobs name type
 	token="$(access_token)"
+	jobs="$(list_jobs "$token")" || exit 1
 	while read -r job; do
+		[[ -n "$job" ]] || continue
 		[[ "$(jq -r '.labels["managed-by"] // empty' <<<"$job")" == "agent-images" ]] || continue
 		type="$(jq -r '.labels["agent-images-type"] // empty' <<<"$job")"
 		name="$(jq -r '.name' <<<"$job")"
@@ -319,16 +337,38 @@ cmd_prune() {
 		gcp_call "$token" DELETE "$GCP_RUN_URL/v2/$name"
 		[[ "$GCP_STATUS" == 2* ]] || die "deleting ${name##*/}: HTTP $GCP_STATUS: $(gcp_error)"
 		wait_operation "$token"
-	done < <(list_jobs "$token")
-	local image
+	done <<<"$jobs"
+	# A compute type's VMs, running or powered off: the reaper that deletes
+	# its stopped ones went with its orchestrator, and a stopped VM never
+	# reaches its max run duration, so it and its disk would stay for good.
+	local instance instances zone
+	instances="$(list_instances "$token" "labels.managed-by=agent-images")" || exit 1
+	while read -r instance; do
+		[[ -n "$instance" ]] || continue
+		type="$(jq -r '.labels["agent-images-type"] // empty' <<<"$instance")"
+		name="$(jq -r '.name' <<<"$instance")"
+		[[ -n "$type" && ! -f "$AGENT_GCP_ENV_DIR/$type.env" ]] || continue
+		zone="$(jq -r '.zone' <<<"$instance")"
+		zone="${zone##*/}"
+		log "$name: no infra/gcp/$type.env; deleting the VM in $zone"
+		gcp_call "$token" DELETE "$compute_api/zones/$zone/instances/$name"
+		case "$GCP_STATUS" in
+		2*) gcp_compute_wait "$token" "$compute_api/zones/$zone" 300 || die "deleting $name: ${GCP_OP_ERROR:-timed out}" ;;
+		404) ;;
+		*) die "deleting $name: HTTP $GCP_STATUS: $(gcp_error)" ;;
+		esac
+	done <<<"$instances"
+	local image images
+	images="$(list_images "$token" "labels.managed-by=agent-images")" || exit 1
 	while read -r image; do
+		[[ -n "$image" ]] || continue
 		type="$(jq -r '.labels["agent-images-type"] // empty' <<<"$image")"
 		name="$(jq -r '.name' <<<"$image")"
 		[[ -n "$type" && ! -f "$AGENT_GCP_ENV_DIR/$type.env" ]] || continue
 		log "$name: no infra/gcp/$type.env; deleting the image"
 		gcp_call "$token" DELETE "$compute_api/global/images/$name"
 		[[ "$GCP_STATUS" == 2* || "$GCP_STATUS" == 404 ]] || die "deleting $name: HTTP $GCP_STATUS: $(gcp_error)"
-	done < <(list_images "$token" "labels.managed-by=agent-images")
+	done <<<"$images"
 }
 
 cmd_status() {
@@ -337,7 +377,7 @@ cmd_status() {
 	while read -r type; do
 		if [[ "$(gcp_backend "$type")" == compute ]]; then
 			local family
-			family="$(family_of "$type")"
+			family="$(gcp_image_family "$type")"
 			gcp_call "$token" GET "$compute_api/global/images/family/$family"
 			if [[ "$GCP_STATUS" != 200 ]]; then
 				printf '%-22s no image in family %s (HTTP %s)\n' "$type" "$family" "$GCP_STATUS"

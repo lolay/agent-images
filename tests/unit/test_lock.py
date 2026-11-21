@@ -7,6 +7,7 @@ fails the way the real tool does on anything else (AGENTS.md, "Test fakes")."""
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -638,6 +639,38 @@ class ResolveTests(unittest.TestCase):
         entries = self.entries(self.resolve(CLAUDE_VERSION="2.1.999"))
         self.assertIn("claude - 2.1.319", entries)
         self.assertNotIn("pinned claude -", entries)
+
+    def set_default(self, variable, value):
+        path = self.repo / "images/cloud/docker-bake.hcl"
+        text, count = re.subn(rf'(variable "{variable}" {{.*?\n  default = )"[^"]*"', rf'\g<1>"{value}"',
+                              path.read_text(), count=1, flags=re.DOTALL)
+        self.assertEqual(count, 1, variable)
+        path.write_text(text)
+
+    def test_the_orchestrator_takes_the_newest_claude_whatever_the_runner_pin(self):
+        # A pin holds the runner types only (r3.f22): not the bake file's
+        # CLAUDE_VERSION default, nor one in the environment, reaches it.
+        self.set_default("CLAUDE_VERSION", "2.1.317")
+        result = self.run_lock("orchestrator-claude", CLAUDE_VERSION="2.1.999")
+        self.assertEqual((result.returncode, result.stdout), (0, "2.1.319\n"), result.stderr)
+        self.assertIn("claude - 2.1.317", self.entries(self.resolve()))
+
+    def test_the_orchestrator_claude_reads_its_own_variable(self):
+        self.set_default("ORCHESTRATOR_CLAUDE_VERSION", "stable")
+        result = self.run_lock("orchestrator-claude", ORCHESTRATOR_CLAUDE_VERSION="2.1.999")
+        self.assertEqual((result.returncode, result.stdout), (0, "2.1.311\n"), result.stderr)
+        self.set_default("ORCHESTRATOR_CLAUDE_VERSION", "2.1.300")
+        self.log.unlink(missing_ok=True)
+        result = self.run_lock("orchestrator-claude")
+        self.assertEqual((result.returncode, result.stdout), (0, "2.1.300\n"), result.stderr)
+        self.assertNotIn("claude-code-releases", self.log.read_text() if self.log.exists() else "")
+
+    def test_the_orchestrator_claude_fails_when_the_channel_does(self):
+        self.urls["https://downloads.claude.ai/claude-code-releases/latest"] = "<html>"
+        result = self.run_lock("orchestrator-claude")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("Claude Code's latest channel gave '<html>'", result.stderr)
 
     def test_a_pinned_base_keeps_its_digest(self):
         pinned = "mirror.gcr.io/library/ubuntu:24.04@sha256:" + "a" * 64
