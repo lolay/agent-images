@@ -37,11 +37,18 @@ def lib_value(name):
 VM_STOP_TIMEOUT = lib_value("VM_STOP_TIMEOUT_SEC")
 
 # A runner job standing in for runner-once: SIGTERM makes it take a moment to
-# "stop its VM", then note in $FAKE_OUT/events that it finished.
+# "stop its VM", then note in $FAKE_OUT/events that it finished. It writes
+# $FAKE_OUT/ready-<vm> once the trap is set: a SIGTERM before then would kill
+# bash with the default action (a flake seen on #155's CI), so start_job waits
+# for it.
 FAKE_JOB = r"""
 trap 'command -p sleep 0.5; echo "finished $1" >>"$FAKE_OUT/events"; exit 0' TERM
+: >"$FAKE_OUT/ready-$1"
 while :; do command -p sleep 0.05; done
 """
+
+# How long start_job waits for a fake job to set its trap.
+JOB_READY_TIMEOUT = 5
 
 # Each fake appends its argv to $FAKE_OUT/<name>.calls, and notes in
 # $FAKE_OUT/leaked if the orchestrator's key reached it.
@@ -487,11 +494,20 @@ class HostCase(unittest.TestCase):
 
     def start_job(self, name, job):
         """A fake runner job under launchd label or systemd unit <job>, reaped as
-        soon as it exits (so kill -0 doesn't see a zombie)."""
+        soon as it exits (so kill -0 doesn't see a zombie). Returns once the job
+        has set its SIGTERM trap, so a stop can't kill it before it can finish."""
         script = write_executable(self.tmp / "fake-job", FAKE_JOB)
+        ready = self.out / f"ready-{name}"
         child = subprocess.Popen(["bash", str(script), name], env=self.env())
         threading.Thread(target=child.wait, daemon=True).start()
         self.children.append(child)
+        deadline = time.monotonic() + JOB_READY_TIMEOUT
+        while not ready.exists():
+            if child.returncode is not None:
+                self.fail(f"fake job {name} exited ({child.returncode}) before setting its trap")
+            if time.monotonic() > deadline:
+                self.fail(f"fake job {name} didn't set its trap within {JOB_READY_TIMEOUT}s")
+            time.sleep(0.01)
         (self.out / "jobs").mkdir(exist_ok=True)
         (self.out / "jobs" / job).write_text(f"{child.pid}\n")
         return child.pid
