@@ -29,20 +29,15 @@ unset SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET
 
 hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly hook_dir
+# shellcheck source=hooks/lib.sh
+source "$hook_dir/../lib.sh"
 # shellcheck source=hooks/gcp/lib.sh
 source "$hook_dir/lib.sh"
 
 log() { printf 'agent-images: %s\n' "$*"; }
 
-failed_on_purpose=false
 marker_url=""
 token=""
-
-fail() {
-	printf 'agent-images: %s\n' "$2" >&2
-	failed_on_purpose=true
-	exit "$1"
-}
 
 # 403 and 404 mean the job or a permission is missing, which a retry won't fix.
 fail_for_status() {
@@ -71,18 +66,10 @@ on_exit() {
 }
 trap on_exit EXIT
 
-# A missing variable or setting exits 2, not `${X:?}`'s 1 (127 at top level),
-# which on_exit would turn into a retry: every retry would find it missing too
-# (r1.f22). The orchestrator's own variables follow the same rule: a hook it
-# calls without them is a broken setup (an orchestrator this hook doesn't
-# match), like RUNNER_TYPE from the supervisor.
-require() {
-	local where="$1" name
-	shift
-	for name; do
-		[[ -n "${!name:-}" ]] || fail 2 "$name is not set; $where"
-	done
-}
+# A missing variable or setting exits 2 (hooks/lib.sh's require). The
+# orchestrator's own variables follow the same rule: a hook it calls without
+# them is a broken setup (an orchestrator this hook doesn't match), like
+# RUNNER_TYPE from the supervisor.
 require "the orchestrator sets it" CLAUDE_RUNNER_WORK_ORDER_FILE CLAUDE_RUNNER_ORDER_ID
 require "the supervisor sets it" RUNNER_TYPE
 readonly order_id="$CLAUDE_RUNNER_ORDER_ID"

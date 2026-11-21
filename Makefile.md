@@ -221,6 +221,7 @@ Where things live:
 | `infra/gcp/project.env` | Terraform's outputs (`lolay/infrastructure`), committed as a copy |
 | `infra/gcp/<type>.env` | One runner type: its backend (`BACKEND=run`, a Cloud Run job, or `compute`, a VM per session), resources, scratch size, timeouts, orchestrator settings |
 | `images/cloud/` | `base`, `linux`, `orchestrator` Dockerfiles, `entrypoint.sh`, the cloud `CLAUDE.md` and SessionStart hook |
+| `hooks/lib.sh` | The orchestrator hooks' exit contract, shared by `hooks/spawn-runner`, `hooks/linux/spawn-runner` and `hooks/gcp/spawn-runner`: `fail`, and `require`, which exits 2 for a missing variable |
 | `hooks/gcp/` | `spawn-runner` and `lib.sh` (REST with curl and a metadata-server token): a Cloud Run execution or a Compute Engine VM per session |
 | `images/android/gce/` | The android type's Compute Engine image: the Packer template, `provision.sh` (runs `images/android/scripts` as in the LXD build), and the guest's `files/` (the boot-time work-order reader, the smoke checks, systemd and journald units) |
 | `scripts/cloud/` | `job-spec.sh` (the v2 Job), `changed-targets.sh` (what a push redeploys), `deploy.sh` |

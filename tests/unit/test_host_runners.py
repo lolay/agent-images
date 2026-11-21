@@ -37,11 +37,18 @@ def lib_value(name):
 VM_STOP_TIMEOUT = lib_value("VM_STOP_TIMEOUT_SEC")
 
 # A runner job standing in for runner-once: SIGTERM makes it take a moment to
-# "stop its VM", then note in $FAKE_OUT/events that it finished.
+# "stop its VM", then note in $FAKE_OUT/events that it finished. It writes
+# $FAKE_OUT/ready-<vm> once the trap is set: a SIGTERM before then would kill
+# bash with the default action (a flake seen on #155's CI), so start_job waits
+# for it.
 FAKE_JOB = r"""
 trap 'command -p sleep 0.5; echo "finished $1" >>"$FAKE_OUT/events"; exit 0' TERM
+: >"$FAKE_OUT/ready-$1"
 while :; do command -p sleep 0.05; done
 """
+
+# How long start_job waits for a fake job to set its trap.
+JOB_READY_TIMEOUT = 5
 
 # Each fake appends its argv to $FAKE_OUT/<name>.calls, and notes in
 # $FAKE_OUT/leaked if the orchestrator's key reached it.
@@ -404,6 +411,7 @@ LINKED = (
     "scripts/linux/orchestrator-service.sh",
     "hooks/spawn-runner",
     "hooks/linux/spawn-runner",
+    "hooks/lib.sh",
     "scripts/lib.sh",
     "scripts/runner-once.sh",
     "scripts/linux/lib.sh",
@@ -487,11 +495,20 @@ class HostCase(unittest.TestCase):
 
     def start_job(self, name, job):
         """A fake runner job under launchd label or systemd unit <job>, reaped as
-        soon as it exits (so kill -0 doesn't see a zombie)."""
+        soon as it exits (so kill -0 doesn't see a zombie). Returns once the job
+        has set its SIGTERM trap, so a stop can't kill it before it can finish."""
         script = write_executable(self.tmp / "fake-job", FAKE_JOB)
+        ready = self.out / f"ready-{name}"
         child = subprocess.Popen(["bash", str(script), name], env=self.env())
         threading.Thread(target=child.wait, daemon=True).start()
         self.children.append(child)
+        deadline = time.monotonic() + JOB_READY_TIMEOUT
+        while not ready.exists():
+            if child.returncode is not None:
+                self.fail(f"fake job {name} exited ({child.returncode}) before setting its trap")
+            if time.monotonic() > deadline:
+                self.fail(f"fake job {name} didn't set its trap within {JOB_READY_TIMEOUT}s")
+            time.sleep(0.01)
         (self.out / "jobs").mkdir(exist_ok=True)
         (self.out / "jobs" / job).write_text(f"{child.pid}\n")
         return child.pid
@@ -615,6 +632,18 @@ class SpawnRunnerCase(HostCase):
         result = self.run_hook()
         self.assertEqual(result.returncode, 1)
         self.assertEqual(self.submits(), [])
+
+    def test_a_missing_orchestrator_variable_does_not_retry(self):
+        # A retry would find it missing too, so it's a broken setup: exit 2, not
+        # `${X:?}`'s exit that the trap turned into a retry (r1.f22).
+        for key in ("CLAUDE_RUNNER_WORK_ORDER_FILE", "CLAUDE_RUNNER_ORDER_ID"):
+            for value in (None, ""):
+                with self.subTest(key=key, value=value):
+                    result = self.run_hook(**{key: value})
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn(f"{key} is not set; the orchestrator sets it", result.stderr)
+                    self.assertEqual(self.submits(), [], "nothing submitted")
+                    self.assertFalse(self.runners.exists() and any(self.runners.iterdir()), "nothing claimed")
 
 
 class StopBudgetTests(unittest.TestCase):
