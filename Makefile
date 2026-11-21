@@ -97,10 +97,13 @@ PKR_VAR_base_image ?= ghcr.io/cirruslabs/macos-$(MACOS_CODENAME)-xcode:latest
 
 # The GCP runners (specs/gcp.md): the Cloud Run images, the orchestrator
 # container, the hook and the deploy scripts. Built and tested on Linux with
-# Docker; the deploy itself runs only from main, in GitHub Actions.
+# Docker; the deploy itself runs only from main, in GitHub Actions. With them,
+# the scripts CI installs its tools with (scripts/ci), which both workflows run,
+# and the setup script that gives Anthropic's cloud agent-linux's toolsets
+# (scripts/anthropic), so a session's gate (cloud-lint) lints them too.
 CLOUD_SCRIPTS := $(wildcard images/cloud/*.sh images/cloud/base/*.sh images/cloud/runner/*.sh images/cloud/runner/claude/hooks/*.sh \
                    images/toolsets/*.sh images/toolsets/*/*.sh \
-                   images/cloud/orchestrator/*.sh scripts/cloud/*.sh hooks/lib.sh hooks/gcp/*.sh \
+                   images/cloud/orchestrator/*.sh scripts/cloud/*.sh scripts/ci/*.sh scripts/anthropic/*.sh hooks/lib.sh hooks/gcp/*.sh \
                    images/android/*.sh images/android/gce/*.sh images/android/gce/files/*.sh) hooks/gcp/spawn-runner
 # Every Cloud Run type (the BACKEND=run files in infra/gcp) and the orchestrator:
 # what TYPE=all and cloud-ci build, and the pull request check's matrix.
@@ -205,7 +208,7 @@ format: ## Auto-fix Packer and shell formatting
 	packer fmt -recursive $(MACOS_DIR)
 	shfmt -w $(SHELL_SCRIPTS)
 
-test: ## Validate the Packer build and run helper unit tests
+test: ## Validate the macOS Packer template (packer validate); the unit tests are make cloud-test
 	packer validate $(MACOS_DIR)
 
 # The gate is lint + test, what ci.yml runs on macOS. A cloud session (AGENT_TYPE

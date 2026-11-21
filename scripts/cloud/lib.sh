@@ -4,6 +4,8 @@
 # (what a push redeploys) and anything else that needs a type's toolsets, so the
 # Dockerfile parsing lives here once. Run from the repo root. Sources
 # hooks/gcp/lib.sh for the per-type settings (gcp_backend, gcp_rebuild_class).
+# scripts/anthropic/setup.sh sources it too, on Anthropic's VM (no gcloud, no
+# Docker), for cloud_toolsets: sourcing it must need neither.
 
 # shellcheck source=hooks/gcp/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../../hooks/gcp/lib.sh"

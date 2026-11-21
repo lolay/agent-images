@@ -35,13 +35,15 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         # What this workflow checks: the paths that build, smoke or test a cloud
-        # image, and the workflows that do it.
+        # image, the workflows (the unit tests read them all), CI's tool
+        # versions and the Renovate config that bumps them, and Anthropic's
+        # setup script (it installs linux's toolsets).
         run: |
           set -euo pipefail
           changed="$(git diff --name-only "$BASE...$HEAD")"
           printf '%s\n' "$changed"
           relevant=false
-          if grep -qE '^(images/(cloud|android|shared|toolsets)/|hooks/gcp/|hooks/lib\.sh$|infra/gcp/|scripts/cloud/|tests/unit/|\.dockerignore$|Makefile$|triage\.yaml$|\.github/workflows/(cloud-[^/]*|lock-watch)\.yml$)' <<<"$changed"; then
+          if grep -qE '^(images/(cloud|android|shared|toolsets)/|hooks/gcp/|hooks/lib\.sh$|infra/gcp/|scripts/(cloud|ci|anthropic)/|tests/unit/|\.dockerignore$|Makefile$|triage\.yaml$|\.github/(workflows/[^/]*\.yml|renovate\.json)$)' <<<"$changed"; then
             relevant=true
           fi
           echo "relevant=$relevant" | tee -a "$GITHUB_OUTPUT"
@@ -53,14 +55,20 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # CI's tool versions, one file every workflow reads.
+      - name: Tool versions
+        run: scripts/cloud/github-env.sh scripts/ci/tools.env >>"$GITHUB_ENV"
+      # The same shellcheck and shfmt as ci.yml, which lints the same cloud
+      # scripts; ahead of the runner image's own shellcheck.
       - name: Install tools
-        run: sudo apt-get install -y --no-install-recommends shellcheck shfmt
+        run: |
+          scripts/ci/install-lint-tools.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
       # The android image's Packer template is validated here; the image itself
-      # builds only on main, in GCP (cloud-deploy.yml). Keep in step with
-      # required_version in images/android/gce/plugins.pkr.hcl.
+      # builds only on main, in GCP (cloud-deploy.yml).
       - uses: hashicorp/setup-packer@ce93c3c08a6c2ff2275bf4b54ff0d9a75f6c9789 # v3.4.0
         with:
-          version: "1.16.2"
+          version: ${{ env.PACKER_VERSION }}
       # make doctor's session-android profile against this job, which has the
       # tools the session gate needs: fails on a triage.yaml triage can't load,
       # or a profile asking for a tool the gate's runner lacks.

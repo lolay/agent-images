@@ -15,13 +15,20 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Pinned here, not via brew: the runner image preinstalls an older Packer
-      # that `brew install` leaves in place. Keep in step with required_version.
+      # CI's tool versions, one file every workflow reads.
+      - name: Tool versions
+        run: scripts/cloud/github-env.sh scripts/ci/tools.env >>"$GITHUB_ENV"
+      # Pinned, not via brew: the runner image preinstalls an older Packer that
+      # `brew install` leaves in place.
       - uses: hashicorp/setup-packer@ce93c3c08a6c2ff2275bf4b54ff0d9a75f6c9789 # v3.4.0
         with:
-          version: "1.16.2"
+          version: ${{ env.PACKER_VERSION }}
+      # The same shellcheck and shfmt as cloud-build.yml, which lints the same
+      # cloud scripts; ahead of any the runner image has.
       - name: Install tools
-        run: brew install shellcheck shfmt
+        run: |
+          scripts/ci/install-lint-tools.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
       - name: Init
         # packer init looks the Tart plugin up through GitHub's API; anonymous
         # calls share the hosted runner's IP limit and fail with a 403 once it's
