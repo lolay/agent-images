@@ -6,9 +6,10 @@
 #   bash agent-images/scripts/anthropic/setup.sh
 #
 # It runs as root, one directory above the session's repositories, so
-# agent-images must be one of them. It installs the same toolsets as
-# images/cloud/linux/Dockerfile with the same installer, timing each into
-# /var/log/agent-images-setup.tsv.
+# agent-images must be one of them. It installs agent-linux's toolsets, read
+# from its Dockerfiles' build chain (base's too) as the image builds them, with
+# the same installer, timing each into /var/log/agent-images-setup.tsv.
+# `setup.sh toolsets` prints that list and changes nothing.
 #
 # Homebrew won't run as root outside a container it recognizes, and Anthropic's
 # VM isn't one (no /.dockerenv), so Homebrew is owned by the stock image's
@@ -16,11 +17,34 @@
 # as ubuntu.
 set -euo pipefail
 
-readonly toolsets=(core native jvm browser display node python go rust proto terraform)
 readonly log=/var/log/agent-images-setup.tsv
 readonly user=ubuntu
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly here
+
+# agent-linux's toolsets in install order, from the one parser the image's
+# build and deploy use (r1.f34): a toolset added to linux or base reaches this
+# environment too. It reads paths relative to the repo root.
+# shellcheck source=scripts/cloud/lib.sh
+source "$here/scripts/cloud/lib.sh"
+mapfile -t toolsets < <(cd "$here" && cloud_toolsets linux)
+readonly toolsets
+if ((${#toolsets[@]} == 0)); then
+	printf 'setup.sh: no toolsets found for linux in %s/images/cloud\n' "$here" >&2
+	exit 1
+fi
+
+case "${1:-}" in
+"") ;;
+toolsets)
+	printf '%s\n' "${toolsets[@]}"
+	exit 0
+	;;
+*)
+	printf 'usage: setup.sh [toolsets]\n' >&2
+	exit 2
+	;;
+esac
 
 now() { date +%s.%N; }
 mark() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >>"$log"; }

@@ -246,7 +246,10 @@ Gives an Anthropic environment `agent-linux`'s tools, and records how fast its
 sessions start.
 
 `scripts/anthropic/setup.sh` installs `agent-linux`'s toolsets in `agent-linux`'s
-order, with the same `install-toolset.sh`, timing each into
+order, read from its Dockerfiles' build chain (`cloud_toolsets linux` in
+`scripts/cloud/lib.sh`, base's `core` first) rather than a copy of the list, so a
+toolset added to `linux` or `base` reaches this environment too (`setup.sh toolsets`
+prints the list), with the same `install-toolset.sh`, timing each into
 `/var/log/agent-images-setup.tsv`. The environment's setup script is one line, and
 agent-images must be one of the session's repositories:
 
