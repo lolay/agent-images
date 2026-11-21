@@ -10,6 +10,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,6 +20,31 @@ from test_bake import run_types
 
 SCRIPT = REPO / "scripts/cloud/lock.sh"
 REAL_DOCKER = shutil.which("docker")
+# ResolveTests give lock.sh a scratch HOME, where the real docker (for bake
+# --print) would look for its CLI plugins and miss a buildx installed in the
+# user's docker config, as Homebrew's docker-buildx is (r3.f18). So the real
+# config dir, DOCKER_CONFIG or ~/.docker as docker reads it, goes through too.
+# CI's runners have buildx system-wide, where any config finds it.
+DOCKER_CONFIG = os.environ.get("DOCKER_CONFIG") or str(Path.home() / ".docker")
+
+
+def docker_env(home) -> dict:
+    """The environment ResolveTests run lock.sh, and so the real docker, in."""
+    return {"HOME": str(home), "DOCKER_CONFIG": DOCKER_CONFIG}
+
+
+def have_buildx() -> bool:
+    """Whether the real docker's buildx works in docker_env: docker on PATH
+    isn't enough, as a docker without the plugin fails every resolve."""
+    if not REAL_DOCKER:
+        return False
+    with tempfile.TemporaryDirectory() as home:
+        result = subprocess.run([REAL_DOCKER, "buildx", "version"], capture_output=True, timeout=60,
+                                env={"PATH": os.environ["PATH"], **docker_env(home)})
+    return result.returncode == 0
+
+
+HAVE_BUILDX = have_buildx()
 
 FAKE_DOCKER = r'''#!/usr/bin/env python3
 import hashlib, json, os, re, subprocess, sys
@@ -275,8 +301,17 @@ def digest_of(ref: str, salt: str = "") -> str:
     return "sha256:" + hashlib.sha256((ref + salt).encode()).hexdigest()
 
 
-@unittest.skipUnless(REAL_DOCKER, "needs docker buildx for bake --print")
 class ResolveTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # bake --print is the real one. A session has no docker (Makefile.md,
+        # cloud-test); the pull request check runs these, and there a missing
+        # buildx fails, as in test_bake.
+        if not HAVE_BUILDX:
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                raise AssertionError("needs docker buildx for bake --print, and this CI runner has none")
+            raise unittest.SkipTest("needs docker buildx for bake --print")
+
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp)
@@ -334,7 +369,7 @@ class ResolveTests(unittest.TestCase):
         (self.tmp / "brew.json").write_text(json.dumps(self.brew))
         settings = {
             "PATH": f"{self.bin}:{os.environ['PATH']}",
-            "HOME": str(self.tmp),
+            **docker_env(self.tmp),
             "REAL_DOCKER": REAL_DOCKER,
             "FAKE_LOG": str(self.log),
             "FAKE_APT": str(self.apt),
@@ -840,6 +875,102 @@ class ResolveTests(unittest.TestCase):
                 result = self.run_lock("resolve", type_)
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("isn't a Cloud Run type", result.stderr)
+
+
+# docker as it finds a CLI plugin: in <config>/cli-plugins or a directory
+# config.json's cliPluginsExtraDirs names (where Homebrew's docker-buildx asks to
+# be added), <config> being DOCKER_CONFIG or ~/.docker. Without the plugin,
+# `docker buildx` fails as docker does. FAKE_DOCKER_LOG records the environment
+# each call had.
+FAKE_DOCKER_CLI = r'''#!/usr/bin/env python3
+import json, os, sys
+args = sys.argv[1:]
+if os.environ.get("FAKE_DOCKER_LOG"):
+    with open(os.environ["FAKE_DOCKER_LOG"], "a") as f:
+        f.write(json.dumps({"args": args, "HOME": os.environ.get("HOME"),
+                            "DOCKER_CONFIG": os.environ.get("DOCKER_CONFIG")}) + "\n")
+config = os.environ.get("DOCKER_CONFIG") or os.path.join(os.environ["HOME"], ".docker")
+dirs = [os.path.join(config, "cli-plugins")]
+if os.path.exists(os.path.join(config, "config.json")):
+    dirs += json.load(open(os.path.join(config, "config.json"))).get("cliPluginsExtraDirs", [])
+if args[:1] == ["buildx"]:
+    if not any(os.access(os.path.join(d, "docker-buildx"), os.X_OK) for d in dirs):
+        sys.exit("docker: unknown command: docker buildx\n\nRun 'docker --help' for more information")
+    if args == ["buildx", "version"]:
+        print("github.com/docker/buildx v0.29.1 fake"); sys.exit(0)
+sys.exit("docker: fake: unexpected call: " + " ".join(args))
+'''
+
+
+class ResolveSkipTests(unittest.TestCase):
+    """ResolveTests skip when the real docker's buildx doesn't work in the
+    environment they give it, not merely when docker is missing, and give it
+    the user's docker config so an installed buildx is found (r3.f18). Run
+    against a fake docker, so no Docker is needed."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        executable(self.bin / "docker", FAKE_DOCKER_CLI)
+        self.home = self.tmp / "home"
+        self.home.mkdir()
+
+    def env(self, **extra):
+        env = {k: v for k, v in os.environ.items() if k not in ("DOCKER_CONFIG", "GITHUB_ACTIONS")}
+        return {**env, "PATH": f"{self.bin}:{os.environ['PATH']}", "HOME": str(self.home), **extra}
+
+    def plugin(self, directory: Path):
+        executable(directory / "docker-buildx", "#!/bin/sh\nexit 0\n")
+
+    def have_buildx(self, **extra):
+        result = subprocess.run([sys.executable, "-c", "import test_lock; print(test_lock.HAVE_BUILDX)"],
+                                cwd=Path(__file__).parent, env=self.env(**extra), capture_output=True,
+                                text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
+
+    def test_a_docker_without_buildx_skips_the_resolve_tests(self):
+        result = subprocess.run([sys.executable, "-m", "unittest", "test_lock.ResolveTests"],
+                                cwd=Path(__file__).parent, env=self.env(), capture_output=True, text=True,
+                                timeout=300)
+        self.assertEqual(result.returncode, 0, result.stderr[-3000:])
+        self.assertRegex(result.stderr, r"\nOK \(skipped=\d+\)\n")
+
+    def test_buildx_in_the_docker_config_is_found(self):
+        (self.home / ".docker/cli-plugins").mkdir(parents=True)
+        self.plugin(self.home / ".docker/cli-plugins")
+        self.assertEqual(self.have_buildx(), "True")
+
+    def test_buildx_in_a_directory_the_config_names_is_found(self):
+        # Homebrew's docker-buildx: the plugin stays in Homebrew's prefix, and
+        # ~/.docker/config.json names that directory.
+        (self.tmp / "brew/lib/docker/cli-plugins").mkdir(parents=True)
+        self.plugin(self.tmp / "brew/lib/docker/cli-plugins")
+        (self.home / ".docker").mkdir()
+        (self.home / ".docker/config.json").write_text(
+            json.dumps({"cliPluginsExtraDirs": [str(self.tmp / "brew/lib/docker/cli-plugins")]}))
+        self.assertEqual(self.have_buildx(), "True")
+
+    def test_buildx_in_docker_config_is_found(self):
+        (self.tmp / "config/cli-plugins").mkdir(parents=True)
+        self.plugin(self.tmp / "config/cli-plugins")
+        self.assertEqual(self.have_buildx(DOCKER_CONFIG=str(self.tmp / "config")), "True")
+        self.assertEqual(self.have_buildx(), "False")
+
+    def test_resolve_runs_the_real_docker_with_the_docker_config(self):
+        # lock.sh's bake --print reaches the real docker (REAL_DOCKER, here the
+        # fake), which must see the config, not one in ResolveTests' scratch HOME.
+        test = ResolveTests("test_linux_resolves_every_dependency")
+        test.setUp()
+        self.addCleanup(test.doCleanups)
+        log = self.tmp / "docker.log"
+        test.run_lock("resolve", "linux", REAL_DOCKER=str(self.bin / "docker"), FAKE_DOCKER_LOG=str(log))
+        calls = [json.loads(line) for line in log.read_text().splitlines()]
+        self.assertEqual(calls[0]["args"][:3], ["buildx", "bake", "-f"])
+        self.assertEqual({call["DOCKER_CONFIG"] for call in calls}, {DOCKER_CONFIG})
+        self.assertEqual({call["HOME"] for call in calls}, {str(test.tmp)})
 
 
 class TerraformTests(unittest.TestCase):
