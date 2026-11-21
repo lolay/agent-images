@@ -1,7 +1,7 @@
 # shellcheck shell=sh
 # Installed as /etc/agent-images/profile-gh-shim.sh and sourced last by each
-# Linux image's profile (images/cloud/runner/profile.sh,
-# images/android/files/profile.sh). Safe to source any number of times.
+# Linux image's profile, through images/toolsets/toolset-profile.sh. Safe to
+# source any number of times.
 #
 # Claude Code's agent proxy (the runner's --use-anthropic-git-proxy) writes a gh
 # shim into each session's config dir. The shim wraps Homebrew's gh and, when no

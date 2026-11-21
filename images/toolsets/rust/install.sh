@@ -9,10 +9,16 @@ set -euo pipefail
 # version (scripts/cloud/lock.sh); the VM images take this default.
 toolchain="${RUST_TOOLCHAIN:-stable}"
 
+: "${TOOLSET_RECORD_DIR:?}"
+
 # brew --prefix rustup would look the formula up in the API data, which
 # install-toolset.sh has just cleaned up, and fetch it again (on stderr); opt/
-# is the same path without the lookup.
-PATH="$(brew --prefix)/opt/rustup/bin:$PATH"
+# is the same path without the lookup. rustup is keg-only, so its proxies
+# (cargo, rustc) go on every session's PATH from the record, ahead of Homebrew's
+# bin, where a formula's own rust would otherwise win.
+rustup_bin="$(brew --prefix)/opt/rustup/bin"
+PATH="$rustup_bin:$PATH"
+printf '%s\n' "$rustup_bin" | sudo tee "$TOOLSET_RECORD_DIR/rust.path" >/dev/null
 # The minimal profile plus clippy and rustfmt is the default profile without
 # rust-docs, the offline docs (about 900 MB). rustup reports progress on stderr,
 # which a green build doesn't allow, so it goes to the log with the rest.

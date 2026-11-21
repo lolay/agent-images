@@ -15,6 +15,7 @@ from support import REPO, write_executable
 GH_SHIM_PROFILE = REPO / "images/shared/profile-gh-shim.sh"
 ANDROID_PROFILE = REPO / "images/android/files/profile.sh"
 CLOUD_PROFILE = REPO / "images/cloud/runner/profile.sh"
+TOOLSET_PROFILE = REPO / "images/toolsets/toolset-profile.sh"
 HOOK = REPO / "images/shared/claude/hooks/session-profile.sh"
 SHARED_SETTINGS = REPO / "images/shared/claude/settings.json"
 CLOUD_SETTINGS = REPO / "images/cloud/runner/claude/settings.json"
@@ -49,8 +50,13 @@ class ShimCase(unittest.TestCase):
             gh.chmod(0o644)
 
     def env(self, path, **extra):
+        # An empty toolset record: the host's own (this repo's sessions run on the
+        # image) must not reach the profiles.
+        toolsets = self.tmp / "toolsets"
+        toolsets.mkdir(exist_ok=True)
         return {"HOME": str(self.home), "PATH": path, "CLAUDE_CONFIG_DIR": str(self.config),
-                "AGENT_GH_SHIM_PROFILE": str(GH_SHIM_PROFILE), **extra}
+                "AGENT_GH_SHIM_PROFILE": str(GH_SHIM_PROFILE), "AGENT_TOOLSET_PROFILE": str(TOOLSET_PROFILE),
+                "AGENT_TOOLSETS_DIR": str(toolsets), **extra}
 
 
 class GhShimProfileTests(ShimCase):
@@ -85,8 +91,8 @@ class GhShimProfileTests(ShimCase):
 
 
 class AndroidProfileTests(ShimCase):
-    """images/android/files/profile.sh puts Homebrew first on every source, then the
-    shim ahead of it."""
+    """images/android/files/profile.sh (through images/toolsets/toolset-profile.sh)
+    puts Homebrew first, then the shim ahead of it."""
 
     def path_after(self, start, times=1, **extra):
         script = '. "$PROFILE"; ' * times + 'printf %s "$PATH"'

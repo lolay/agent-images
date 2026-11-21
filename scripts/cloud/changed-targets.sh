@@ -70,7 +70,8 @@ touched() {
 # (A * in these patterns also matches /, so the scripts are named outright.)
 readonly every_type=(
 	"images/shared/*" "images/toolsets/install-toolset.sh" "images/toolsets/write-claude-md.sh"
-	"images/toolsets/toolset-checks.sh" "images/toolsets/write-versions.sh" "images/toolsets/skills/*"
+	"images/toolsets/toolset-checks.sh" "images/toolsets/toolset-profile.sh" "images/toolsets/write-versions.sh"
+	"images/toolsets/skills/*"
 	"images/cloud/entrypoint.sh" "images/cloud/runner/*"
 	"images/cloud/docker-bake.hcl" ".dockerignore" "infra/gcp/project.env"
 )
@@ -88,7 +89,8 @@ vm_image_paths() {
 # What every Compute Engine image is built from, besides its own paths.
 readonly every_vm=(
 	"images/shared/*" "images/toolsets/install-toolset.sh" "images/toolsets/write-claude-md.sh"
-	"images/toolsets/toolset-checks.sh" "images/toolsets/write-versions.sh" "images/toolsets/skills/*"
+	"images/toolsets/toolset-checks.sh" "images/toolsets/toolset-profile.sh" "images/toolsets/write-versions.sh"
+	"images/toolsets/skills/*"
 	"infra/gcp/project.env"
 )
 

@@ -3,9 +3,10 @@
 # builds the emulator it boots in every session, then fails the build if either
 # doesn't work. Run by install-toolset.sh after the toolset's apt packages, as
 # the image's user; needs the jvm toolset first (and core's curl and unzip).
-# It uses the Android image's own files from images/android (setup-user.sh puts
-# them in place first): /etc/profile.d/agent-images.sh for ANDROID_HOME, and
-# agent-emulator.
+# It records the SDK for every session (ANDROID_HOME, ANDROID_SDK_ROOT and
+# ANDROID_NDK_HOME in android.profile.sh, its tools in android.path), and uses
+# one of the Android image's own files from images/android, agent-emulator in
+# ~/bin (setup-user.sh puts it in place first).
 #
 # Nothing is pinned: the newest command-line tools, and the newest stable API
 # level that has both a platform and an x86_64 Google APIs system image, with
@@ -31,11 +32,23 @@ set -euo pipefail
 
 : "${TOOLSET_RECORD_DIR:?}"
 
-# The environment login shells get: ANDROID_HOME, JAVA_HOME, and PATH.
-# shellcheck source=/dev/null
-source /etc/profile.d/agent-images.sh
+# Where the SDK goes, recorded for every session: ANDROID_HOME (and
+# ANDROID_SDK_ROOT, which older tools read), with its tools on PATH. Set
+# outright, not as a default: it's the SDK the image's AVD was built with, and a
+# hosted runner (android-image-smoke.yml) presets its own. The NDK joins the
+# profile once its version is known.
+readonly sdk=/opt/android-sdk
+{
+	printf 'export ANDROID_HOME=%s\n' "$sdk"
+	printf 'export ANDROID_SDK_ROOT=%s\n' "$sdk"
+} | sudo tee "$TOOLSET_RECORD_DIR/android.profile.sh" >/dev/null
+printf '%s\n' "$sdk/cmdline-tools/latest/bin" "$sdk/platform-tools" "$sdk/emulator" |
+	sudo tee "$TOOLSET_RECORD_DIR/android.path" >/dev/null
+# The jvm toolset's JDK and the SDK's tools, as a session gets them; then
+# agent-emulator, the image's.
+toolset_env jvm android
+PATH="$HOME/bin:$PATH"
 
-readonly sdk="$ANDROID_HOME"
 readonly repository=https://dl.google.com/android/repository
 readonly avd=agent
 
@@ -91,7 +104,7 @@ android_cli sdk install cmdline-tools/latest platform-tools emulator "platforms/
 	"ndk/$ndk_version" "$system_image"
 [[ -x "$sdk/ndk/$ndk_version/ndk-build" ]] || die "no ndk-build in $sdk/ndk/$ndk_version"
 printf 'export ANDROID_NDK_HOME=%s\n' "$sdk/ndk/$ndk_version" |
-	sudo tee "$TOOLSET_RECORD_DIR/android.profile.sh" >/dev/null
+	sudo tee -a "$TOOLSET_RECORD_DIR/android.profile.sh" >/dev/null
 
 gradle_url="$(curl -fsSL https://services.gradle.org/versions/current | sed -nE 's/.*"downloadUrl" *: *"([^"]+)".*/\1/p')"
 [[ "$gradle_url" == https://*-bin.zip ]] || die "no Gradle download in services.gradle.org/versions/current"

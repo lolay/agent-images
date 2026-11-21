@@ -7,12 +7,17 @@
 # @latest is its newest commit.
 set -euo pipefail
 
-# ANDROID_HOME and ANDROID_NDK_HOME, which gomobile init reads.
-# shellcheck source=/dev/null
-source /etc/profile.d/agent-images.sh
-PATH="/home/linuxbrew/.linuxbrew/bin:$(go env GOPATH)/bin:$PATH"
+# The go toolset's install bin (~/go/bin), where gomobile lands, and the android
+# toolset's ANDROID_HOME and ANDROID_NDK_HOME, which gomobile init reads. go is
+# Homebrew's, on PATH already (install-toolset.sh).
+toolset_env go android
 
-# Into $(go env GOPATH)/bin (~/go/bin), which the image's profile puts on PATH.
+# Into ~/go/bin, which the go toolset's profile puts on every session's PATH.
 go install golang.org/x/mobile/cmd/gomobile@latest golang.org/x/mobile/cmd/gobind@latest 2>&1
+# The gomobile just installed, not an older one earlier on PATH: Go's install
+# dir first, as go itself reports it.
+go_bin="$(go env GOBIN)"
+[[ -n "$go_bin" ]] || go_bin="$(go env GOPATH | cut -d: -f1)/bin"
+PATH="$go_bin:$PATH"
 gomobile init 2>&1
 log "gomobile $(go version -m "$(command -v gomobile)" | awk '$1 == "mod" { print $3 }')"
