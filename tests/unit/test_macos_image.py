@@ -22,7 +22,14 @@ class MacosTemplateTests(unittest.TestCase):
         # beyond the plugin's shutdown, which the running sshd still serves.
         last = provisioners(TEMPLATE.read_text())[-1]
         self.assertIn('"sudo launchctl disable system/com.openssh.sshd"', last)
-        self.assertIn("print-disabled system", last, "the build fails if it didn't take")
+        # The check has to be able to fail: print-disabled exits 0 either way, so
+        # the build fails only through grep -q matching sshd's disabled state.
+        self.assertRegex(
+            last,
+            r"print-disabled system \| grep -Eq '\\\"com\.openssh\.sshd\\\" => \(disabled\|true\)'\",",
+            "the build fails if the disable didn't take",
+        )
+        self.assertNotRegex(last, r"\|\|\s*true", "nothing swallows the check's failure")
         # Turning sshd off now (systemsetup, bootout, unload) would cut the
         # plugin's SSH shutdown and leave the build waiting.
         self.assertNotRegex(last, r"setremotelogin|bootout|unload|kill")
