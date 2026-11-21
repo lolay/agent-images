@@ -64,7 +64,7 @@ default:
         - command: sh -c '! xattr -p com.apple.quarantine "$(realpath "$(command -v claude)")" >/dev/null 2>&1'
           label: claude not quarantined (no Gatekeeper prompt at launch)
           severity: warn
-          hint: xattr -d com.apple.quarantine "$(realpath "$(command -v claude)")"
+          hint: images/shared/clear-quarantine.sh "$(realpath "$(command -v claude)")"
         - path: vms/runner.env
           hint: cp vms/example-claude.env vms/runner.env
         # Reading the value (-w, sent to /dev/null) is what the scripts do, and only

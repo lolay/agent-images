@@ -103,20 +103,14 @@ claude_account_email() {
 	plutil -extract oauthAccount.emailAddress raw -o - "$config_file" 2>/dev/null || true
 }
 
-# Homebrew quarantines what a cask downloads, so after every brew upgrade
-# Gatekeeper asks "downloaded from the Internet, are you sure you want to open
-# it?" at claude's next launch, and a LaunchAgent or an SSH session can't answer.
-# Homebrew 5 dropped --no-quarantine. Clears the flag, but only on a binary
-# signed with an Apple-issued (Developer ID) certificate. The guest does the same
-# in images/shared/runners/claude.sh.
+# Clears Homebrew's quarantine on the host's claude, which a LaunchAgent or an
+# SSH session can't answer Gatekeeper's prompt for, after checking it's signed
+# by Anthropic: images/shared/clear-quarantine.sh, the check the guest runs too.
 clear_claude_quarantine() {
 	local claude_bin
 	claude_bin="$(realpath "$(command -v claude)")"
-	xattr -p com.apple.quarantine "$claude_bin" >/dev/null 2>&1 || return 0
-	codesign --verify --strict -R='anchor apple generic' "$claude_bin" ||
-		die "$claude_bin is quarantined and its signature doesn't verify; reinstall it: brew reinstall --cask claude-code@latest"
-	xattr -d com.apple.quarantine "$claude_bin"
-	log "cleared Homebrew's quarantine on $claude_bin"
+	"$AGENT_IMAGES_DIR/images/shared/clear-quarantine.sh" "$claude_bin" ||
+		die "$claude_bin is still quarantined; reinstall it: brew reinstall --cask claude-code@latest"
 }
 
 # Writes stdin to a path under the guest user's home, owner-only. tart exec runs

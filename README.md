@@ -151,8 +151,9 @@ apart from a missing secret.
 
 Each `brew upgrade` leaves a quarantined `claude`, and Gatekeeper's "downloaded from the
 Internet" prompt would block a launch nobody is at the screen for. The orchestrator
-clears the quarantine whenever it starts, after checking that `claude` has a Developer ID
-signature.
+clears the quarantine whenever it starts, after checking that `claude` is signed by
+Anthropic's Developer ID (`images/shared/clear-quarantine.sh`, which each macOS VM runs
+too).
 
 Runner VMs outlive an orchestrator restart; `make runner-stop` deletes them (their sessions requeue), and
 `make runner-uninstall` stops everything (see [Stop, rebuild, restart](#stop-rebuild-restart)).

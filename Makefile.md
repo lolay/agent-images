@@ -85,7 +85,7 @@ Linux hosts only, from `.env` (see `.env.linux.example`):
 | Target | Description |
 | --- | --- |
 | `runner-run` | `scripts/orchestrator-run.sh` in the foreground: Keychain secret into the environment, then `claude self-hosted-runner orchestrator --hooks-dir hooks`. Runner VMs outlive Ctrl-C |
-| `runner-install` | `scripts/orchestrator-service.sh install`: host LaunchAgent `com.agent-images.orchestrator`; logs in `build/logs/orchestrator.{out,err}`. Over SSH, run `security unlock-keychain ~/Library/Keychains/login.keychain-db` first. The install and every orchestrator start clear Homebrew's quarantine on a Developer ID-signed `claude` |
+| `runner-install` | `scripts/orchestrator-service.sh install`: host LaunchAgent `com.agent-images.orchestrator`; logs in `build/logs/orchestrator.{out,err}`. Over SSH, run `security unlock-keychain ~/Library/Keychains/login.keychain-db` first. The install and every orchestrator start clear Homebrew's quarantine on a `claude` signed by Anthropic (`images/shared/clear-quarantine.sh`, which the macOS guest runs too) |
 | `runner-uninstall` | Boots out the orchestrator, then stops and deletes every runner VM |
 | `runner-stop` | Stops and deletes every runner VM (sessions requeue); a running orchestrator boots replacements |
 | `runner-status` | Orchestrator state, its `/healthz` body and log tail, then `vm-status` for each runner VM |

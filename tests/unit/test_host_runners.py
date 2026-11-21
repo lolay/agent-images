@@ -17,6 +17,7 @@ import unittest
 from pathlib import Path
 
 from support import REPO, base_env, write_executable
+from test_shared_runner import install_fake_claude, install_fake_quarantine_tools, quarantine, quarantined
 
 WORK_ORDER = "eyJhbGciOi.work-order.signature"
 ORDER_ID = "ORD0123456789abcdef"
@@ -238,6 +239,7 @@ exit "${FAKE_CONFIGURE_STATUS:-0}"
 """
 
 LINKED = (
+    "images/shared/clear-quarantine.sh",
     "hooks/spawn-runner",
     "hooks/linux/spawn-runner",
     "scripts/lib.sh",
@@ -668,6 +670,32 @@ class LxdReclaimTests(ReclaimCase):
         super().assert_reclaimed(vm)
         self.assertIn(f"--user stop agent-images-{vm}.service", self.calls("systemctl"))
         self.assertIn(f"delete --force {vm}", self.calls("lxc"))
+
+
+class HostQuarantineTests(HostCase):
+    """clear_claude_quarantine in scripts/lib.sh runs the shared check
+    (images/shared/clear-quarantine.sh) and stops on a claude it won't clear (r1.f29)."""
+
+    def clear(self, **env):
+        install_fake_claude(self.bin)
+        install_fake_quarantine_tools(self.bin)
+        quarantine(self.out, self.bin / "claude")
+        return subprocess.run(
+            ["bash", "-c", 'set -euo pipefail; source "$1"; clear_claude_quarantine', "_",
+             str(self.tree / "scripts/lib.sh")],
+            env=self.env(**env), capture_output=True, text=True, timeout=30)
+
+    def test_clears_an_anthropic_signed_claude(self):
+        result = self.clear()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(quarantined(self.out), [])
+        self.assertEqual(len(self.calls("codesign")), 1)
+
+    def test_stops_on_a_claude_it_will_not_clear(self):
+        result = self.clear(FAKE_SIGNER_TEAM="ABCDE12345")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("still quarantined; reinstall it", result.stderr)
+        self.assertEqual(quarantined(self.out), [str(self.bin / "claude")])
 
 
 del SpawnRunnerCase, RunnerOnceCase, ReclaimCase
