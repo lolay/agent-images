@@ -93,10 +93,11 @@ build:
   add:
     - group: Image build
       items:
-        # No version here: the floor is required_version in
-        # images/macos/plugins.pkr.hcl, which make init (packer init) enforces,
-        # and a second copy would drift from it (r1.f16).
+        # The floor is required_version in images/macos/plugins.pkr.hcl; it's
+        # repeated here so doctor catches an old Packer before make init does,
+        # and tests/unit/test_ci_tools.py keeps the two equal (r1.f16).
         - tool: packer
+          version: ">=1.16.2"
           hint: brew install hashicorp/tap/packer
         - command: packer plugins installed
           label: Packer Tart plugin

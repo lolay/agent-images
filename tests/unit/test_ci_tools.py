@@ -49,6 +49,12 @@ NOT_COPIES = re.compile(r"^(scripts/ci/tools\.env|images/cloud/[^/]+/versions\.l
 NOT_COPY_LINES = re.compile(r"^\| Linux toolchains \|")
 
 
+def macos_packer_floor():
+    """The Packer floor images/macos/plugins.pkr.hcl's required_version sets."""
+    text = (REPO / "images/macos/plugins.pkr.hcl").read_text()
+    return re.search(r'required_version\s*=\s*">=\s*([\d.]+)"', text).group(1)
+
+
 def jobs(text):
     """A workflow's jobs, name to body, split at two-space indentation."""
     section = text.split("\njobs:\n", 1)[1]
@@ -106,7 +112,10 @@ class SourceTests(unittest.TestCase):
         for path in templates:
             for constraint in re.findall(r'required_version\s*=\s*"([^"]+)"', path.read_text()):
                 for part in constraint.split(","):
-                    op, version = re.fullmatch(r"\s*(>=)\s*([\d.]+)\s*", part).groups()
+                    match = re.fullmatch(r"\s*(>=)\s*([\d.]+)\s*", part)
+                    self.assertIsNotNone(match, f"{path.relative_to(REPO)}: can't check {part.strip()!r} "
+                                                "(only >= floors); teach this test the operator")
+                    op, version = match.groups()
                     floors.append(path)
                     self.assertGreaterEqual(packer, tuple(int(n) for n in version.split(".")),
                                             f"{path.relative_to(REPO)} needs Packer {constraint}")
@@ -130,10 +139,13 @@ class WorkflowTests(unittest.TestCase):
         self.assertGreaterEqual(installs, 3)
 
     def test_no_workflow_restates_a_version(self):
+        # As a `version:` value (setup-packer's input, anything like it), not
+        # any substring: an action's tag comment (# v3.14.10) isn't a copy.
         for name, version in versions().items():
+            literal = re.compile(r"(?m)^\s*version:\s*[\"']?v?" + re.escape(version) + r"[\"']?\s*$")
             for path in sorted(WORKFLOWS.glob("*.yml")):
                 with self.subTest(tool=name, workflow=path.name):
-                    self.assertNotIn(version, path.read_text())
+                    self.assertIsNone(literal.search(path.read_text()))
 
 
 class CopyTests(unittest.TestCase):
@@ -154,6 +166,11 @@ class CopyTests(unittest.TestCase):
                 start = text.rfind("\n", 0, match.start()) + 1
                 if name == "README.md" and NOT_COPY_LINES.match(text[start:]):
                     continue
+                # The doctor's Packer floor is the macOS template's, checked
+                # equal to it below, not a copy of CI's version.
+                end = text.find("\n", match.end())
+                if name == "triage.yaml" and text[match.start():end].endswith(f'">={macos_packer_floor()}"'):
+                    continue
                 copies.append(f"{name}:{text.count(chr(10), 0, match.start()) + 1}: {match.group(0)!r}")
         self.assertEqual(copies, [], "say where the version is set (scripts/ci/tools.env), not the version")
 
@@ -169,6 +186,14 @@ class CopyTests(unittest.TestCase):
                      "shellcheck -x $(CLOUD_SCRIPTS)", "# shellcheck disable=SC2016"):
             with self.subTest(text=text):
                 self.assertFalse(COPY.search(text))
+
+    def test_the_doctor_asks_for_the_macos_template_floor(self):
+        # make doctor's build profile catches an old Packer before make init
+        # does, at the floor the template sets: one fact, read twice.
+        triage = (REPO / "triage.yaml").read_text()
+        found = re.search(r"- tool: packer\n(?:[^\S\n]+#[^\n]*\n)*[^\S\n]+version: \"(>=[\d.]+)\"", triage)
+        self.assertIsNotNone(found, "triage.yaml's build profile has no Packer version check")
+        self.assertEqual(found.group(1), ">=" + macos_packer_floor())
 
     def test_readme_exemption_is_only_the_image_record(self):
         # The one line exempted still names the tools, so the exemption isn't

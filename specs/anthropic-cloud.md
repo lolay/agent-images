@@ -80,9 +80,9 @@ when that line, the allowed hosts or the week change, so a merged change to
 04:37 had none of #31's `/usr/local/bin` links, which merged at 04:46. To pick
 up a change at once, edit the environment's setup script (a comment line is
 enough); the next session rebuilds. So a session says when it's behind: the
-script records a fingerprint of `scripts/anthropic/setup.sh` and
-`images/toolsets` (`git ls-files -s`, so committed content only) with the
-checkout's path, and the SessionStart hook compares it with the session's fresh
+script records a fingerprint of its inputs (`scripts/anthropic/setup.sh`,
+`images/toolsets`, and linux's Dockerfile chain with the libraries that read
+it; `git ls-files -s`, so committed content only) with the checkout's path, and the SessionStart hook compares it with the session's fresh
 checkout. On a mismatch it shows a notice and tells the session to pass it on.
 
 Checked 2026-11-06 in a session that ran the script (208.7 s): the session-start
