@@ -967,10 +967,11 @@ A type's env file may set any key except two kinds, which `gcp_check_type`
 and every key `project.env` sets (`PROJECT_ID`, `PROJECT_NUMBER`, `REGION`,
 `ZONE`, `NETWORK`, `SUBNET`, `ARTIFACT_REGISTRY` and the rest, read from
 `project.env` itself by `gcp_project_keys`). The project keys belong to
-`project.env` only: deploy.sh and the orchestrator's reaper read it alone, so a
-type's own `REGION` or `ZONE` would move the hook's runs but not the deploy's
-promote and smoke or the reaper's sweep, and its VMs would never be reaped
-(Owner, 2026-11-21, #161). deploy.sh refuses such a type, the supervisor skips
+`project.env` only: the reaper, the supervisor's readiness check and deploy.sh's
+Cloud Run deploy read it alone, while the hook, `job-spec.sh` and deploy.sh's vm
+commands read the type's file over it. A Cloud Run type's own `REGION` would
+have the hook run a job the deploy never wrote there, and a compute type's own
+`ZONE` would put VMs where the reaper never looks (Owner, 2026-11-21, #161). deploy.sh refuses such a type, the supervisor skips
 it, and `make cloud-test` runs the check over the real env files, so it fails its
 pull request. A type that needs another region is a design change: deploy.sh and
 the reaper would resolve the keys per type first.

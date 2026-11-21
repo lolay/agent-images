@@ -250,7 +250,7 @@ class StartTests(SupervisorCase):
         self.assertEqual(self.starts("linux"), [])
         self.assertIn(
             "supervisor: linux: REGION is a project key: it belongs in infra/gcp/project.env only, which "
-            "deploy.sh and the orchestrator's reaper read alone; remove it from infra/gcp/linux.env; "
+            "the reaper and Cloud Run deploys read alone; remove it from infra/gcp/linux.env; "
             "not starting its orchestrator",
             self.lines,
         )

@@ -220,7 +220,7 @@ class CheckTypeTests(unittest.TestCase):
                     self.assertEqual(
                         message,
                         f"{type_}: {key} is a project key: it belongs in infra/gcp/project.env only, which "
-                        f"deploy.sh and the orchestrator's reaper read alone; remove it from infra/gcp/{type_}.env\n",
+                        f"the reaper and Cloud Run deploys read alone; remove it from infra/gcp/{type_}.env\n",
                     )
 
     def test_refuses_a_project_key_set_empty_or_exported(self):
@@ -231,6 +231,30 @@ class CheckTypeTests(unittest.TestCase):
                 result = self.check(env_dir, type_)
                 self.assertEqual(result.returncode, 1)
                 self.assertTrue(result.stderr.startswith(f"{type_}: {key} is a project key"), result.stderr)
+
+    def test_a_line_that_reads_a_key_or_fails_does_not_hide_a_set_key(self):
+        # spawn-runner's gcp_load_env sources without -u and ignores the status,
+        # so it keeps REGION from both files; the check must see it too.
+        env_dir = self.fixture(
+            reads="SA=runner@${PROJECT_ID}.iam\nREGION=us-east1\n",
+            fails="REGION=us-east1\nfalse\n",
+        )
+        (env_dir / "project.env").write_text("PROJECT_ID=p\nREGION=r\n")
+        for type_ in ("reads", "fails"):
+            with self.subTest(type=type_):
+                result = self.check(env_dir, type_)
+                self.assertEqual(result.returncode, 1)
+                self.assertTrue(result.stderr.startswith(f"{type_}: REGION is a project key"), result.stderr)
+
+    def test_project_keys_are_what_project_env_sets_however_written(self):
+        env_dir = self.fixture()
+        (env_dir / "project.env").write_text("# comment\nPROJECT_ID=p\n  NETWORK=n\nexport A=1 B=2\n")
+        result = subprocess.run(
+            ["bash", "-c", f'set -euo pipefail; source "{REPO}/hooks/gcp/lib.sh"; gcp_project_keys'],
+            capture_output=True, text=True, env={"PATH": "/usr/bin:/bin", "AGENT_GCP_ENV_DIR": str(env_dir)},
+        )
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertEqual(result.stdout.split(), ["A", "B", "NETWORK", "PROJECT_ID"])
 
     def test_project_keys_already_loaded_do_not_count_as_the_types(self):
         # The supervisor and deploy.sh have project.env exported when they call it.
