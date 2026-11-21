@@ -3,3 +3,8 @@
 # (agent-gce-smoke) is this toolset's smoke test.
 adb: adb version | head -n 1
 gradle: gradle --version | grep -m1 '^Gradle'
+# JDK 17 beside the jvm toolset's 21 (packages.txt).
+java 17: /usr/lib/jvm/java-17-openjdk-*/bin/java -version
+# The variables CLAUDE.md promises (install.sh records them in the profile).
+ANDROID_HOME: test -x "${ANDROID_HOME:?is not set}/platform-tools/adb" && echo "$ANDROID_HOME"
+ANDROID_NDK_HOME: test -x "${ANDROID_NDK_HOME:?is not set}/ndk-build" && echo "$ANDROID_NDK_HOME"

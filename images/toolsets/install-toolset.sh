@@ -7,12 +7,13 @@
 #   check.txt    its binary checks, `label: command` (toolset-checks.sh);
 #   smoke.sh     its smoke test, the least real work that shows the toolchain
 #                works (toolset-checks.sh; specs/gcp.md, m4);
-#   profile.sh   environment for every session shell, sourced by the cloud
-#                profile after its own;
+#   profile.sh   environment for every session shell, sourced by both images'
+#                profiles (toolset-profile.sh) after their own;
 #   path.txt     directories for the front of every session's PATH, after ~/bin
-#                and before Homebrew's.
+#                and before Homebrew's (toolset-profile.sh).
 # Each installed toolset is recorded in record_dir with those files. install.sh
-# gets TOOLSET_RECORD_DIR, and writes generated ones (<name>.profile.sh) there.
+# gets TOOLSET_RECORD_DIR, and writes generated ones (<name>.profile.sh,
+# <name>.path) there, for what's only known once installed (where the JDK is).
 # Runs as the image's user, who has sudo, from the cloud Dockerfiles and the
 # Android image's install-packages.sh.
 #
@@ -24,10 +25,11 @@
 # apt_install_options (what every apt
 # install of a package list takes; images/cloud/base/apt-prepare.sh sources this
 # file for it, so the base's install and the lock's simulation take them too),
-# install_apt <file> (a packages.txt), install_apt_packages <package|.deb>...
-# and github_latest <releases URL> (the newest release's tag;
+# install_apt <file> (a packages.txt), install_apt_packages <package|.deb>...,
+# github_latest <releases URL> (the newest release's tag;
 # scripts/cloud/lock.sh sources this file for it too, so the build and the lock
-# read a release the same way). A toolset's install.sh
+# read a release the same way) and toolset_env <name>... (what the toolsets a
+# toolset needs first recorded). A toolset's install.sh
 # gets them exported, with TOOLSET_LOG_NAME, their log prefix, set to the
 # toolset's name. A toolset script a Dockerfile runs itself (3d's
 # build-colmap.sh) sources this file, which then defines them and returns.
@@ -158,6 +160,30 @@ github_latest() {
 	printf '%s' "${url##*/}"
 }
 
+# toolset_env <name>...: what the named toolsets recorded, as a session gets it
+# (toolset-profile.sh): their PATH entries (<name>.path) in front of PATH, and
+# their profiles (<name>.profile.sh) sourced. For a toolset's install.sh, in
+# place of an image's profile, which a toolset can't count on: android-go's
+# gomobile needs the go toolset's bin and the android toolset's NDK. Each must be
+# installed already, or be the toolset installing, which records as it goes.
+toolset_env() {
+	local name dir="${TOOLSET_RECORD_DIR:?}" entry front=""
+	for name in "$@"; do
+		[[ "$name" == "${TOOLSET_LOG_NAME:-}" ]] || grep -qxF "$name" "$dir/toolsets.txt" 2>/dev/null ||
+			die "toolset_env: $name isn't installed: install it first"
+		if [[ -f "$dir/$name.path" ]]; then
+			# One directory per line, # starts a comment, as toolset-profile.sh reads it.
+			while IFS= read -r entry || [[ -n "$entry" ]]; do
+				[[ -z "$entry" || "$entry" == "#"* ]] || front="${front:+$front:}$entry"
+			done <"$dir/$name.path"
+		fi
+		# shellcheck source=/dev/null
+		[[ ! -f "$dir/$name.profile.sh" ]] || . "$dir/$name.profile.sh"
+	done
+	PATH="${front:+$front:}$PATH"
+	export PATH
+}
+
 # Sourced: the helpers are all the caller wanted. Everything above this line
 # runs in every sourcing script, scripts/cloud/lock.sh included (the lock watch,
 # the deploy's bake-args), so it holds only function definitions: no variable,
@@ -251,7 +277,7 @@ for name in "$@"; do
 		# Exported in a subshell, so they reach this install.sh and what it runs,
 		# but not the later toolsets' Homebrew and installers.
 		(
-			export -f log die apt apt_update apt_install_options install_apt install_apt_packages github_latest
+			export -f log die apt apt_update apt_install_options install_apt install_apt_packages github_latest toolset_env
 			TOOLSET_LOG_NAME="$name" TOOLSET_RECORD_DIR="$record_dir" bash "$dir/install.sh"
 		)
 		# Any brew command it ran refilled Homebrew's cache.

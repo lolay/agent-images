@@ -18,6 +18,7 @@ RUN --mount=type=bind,source=images/shared,target=/tmp/images/shared \
 	--mount=type=bind,source=images/cloud/entrypoint.sh,target=/tmp/images/entrypoint.sh \
 	--mount=type=bind,source=images/toolsets/write-claude-md.sh,target=/tmp/images/write-claude-md.sh \
 	--mount=type=bind,source=images/toolsets/toolset-checks.sh,target=/tmp/images/toolset-checks.sh \
+	--mount=type=bind,source=images/toolsets/toolset-profile.sh,target=/tmp/images/toolset-profile.sh \
 	--mount=type=bind,source=images/toolsets/skills,target=/tmp/images/skills \
 	--mount=type=bind,source=images/cloud/base/apt-pins.sh,target=/tmp/images/apt-pins.sh \
 	<<'SCRIPT'
@@ -39,6 +40,7 @@ bash "$runner/merge-settings.sh" "$shared/claude/settings.json" "$runner/claude/
 # The cloud CLAUDE.md, with a line per toolset the type installed.
 bash /tmp/images/write-claude-md.sh "$runner/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
 sudo install -m 644 "$runner/profile.sh" /etc/profile.d/agent-images.sh
+sudo install -D -m 644 /tmp/images/toolset-profile.sh /etc/agent-images/toolset-profile.sh
 sudo install -D -m 644 "$shared/profile-gh-shim.sh" /etc/agent-images/profile-gh-shim.sh
 # Interactive shells that aren't login shells read only ~/.bashrc, so it sources
 # the profile too, above Ubuntu's early return for non-interactive shells.
@@ -61,7 +63,8 @@ sudo rm -f /etc/apt/apt.conf.d/50agent-snapshot /etc/apt/apt.conf.d/40agent-buil
 sudo bash /tmp/images/apt-pins.sh remove
 SCRIPT
 
-# profile.sh's PATH: Homebrew (and rustup's proxies) ahead of the system.
+# The profile's PATH (images/toolsets/toolset-profile.sh): Homebrew, and the
+# rust toolset's rustup proxies where a type installs it, ahead of the system.
 # Non-interactive bash (`bash -c`, scripts) reads neither profile nor bashrc,
 # only BASH_ENV.
 ENV BASH_ENV=/etc/profile.d/agent-images.sh

@@ -399,5 +399,20 @@ class ComputeTypeTests(ChangedTargetsTests):
         self.assertEqual(result["vms"], self.ANDROID)
 
 
+class ScriptListTests(unittest.TestCase):
+    """Every script beside the toolsets is in what rebuilds every cloud type and
+    every Compute Engine image: the lists name each one outright."""
+
+    def test_every_file_beside_the_toolsets_is_listed(self):
+        text = SCRIPT.read_text()
+        files = sorted(path.name for path in (REPO / "images/toolsets").iterdir() if path.is_file())
+        self.assertIn("toolset-profile.sh", files)
+        for array in ("every_type", "every_vm"):
+            listed = re.search(rf"readonly {array}=\((.*?)\n\)", text, re.S).group(1)
+            for name in files:
+                with self.subTest(array=array, file=name):
+                    self.assertIn(f'"images/toolsets/{name}"', listed)
+
+
 if __name__ == "__main__":
     unittest.main()

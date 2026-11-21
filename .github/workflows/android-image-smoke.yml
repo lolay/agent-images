@@ -27,6 +27,10 @@ jobs:
       STDERR_LOG: /tmp/agent-images-stderr.log
       # For the versions report install-packages.sh writes.
       AGENT_COMMIT: ${{ github.sha }}
+      # The hosted image presets its own JDK here; a VM has none, so the jvm
+      # toolset's profile sets its own (it only defaults JAVA_HOME). The SDK's
+      # variables the android toolset sets outright.
+      JAVA_HOME: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Hosted runners have /dev/kvm; this makes it usable by any user.
@@ -57,6 +61,22 @@ jobs:
         run: |
           sudo systemctl start agent-xvfb
           systemctl is-active agent-xvfb
+      # The toolsets' binary checks and smoke tests, from the image's record,
+      # through the runner the smoke VM (agent-gce-smoke) and the Cloud Run images
+      # use: android-go's and android-rust's builds with the NDK among them, and
+      # display's screenshot. Through a login shell, so the environment is a session's.
+      - name: Toolset checks
+        run: |
+          bash -lc '
+            set -uo pipefail
+            failed=0
+            agent-toolset-checks versions || failed=1
+            for name in $(agent-toolset-checks smoke-list); do
+              agent-toolset-checks smoke "$name" || { echo "::error::$name smoke test failed"; failed=1; }
+            done
+            exit "$failed"'
+      # What the VM adds to the toolsets: KVM and the emulator, Claude Code and
+      # the session's CLAUDE.md.
       - name: Boot the emulator as a session would
         run: |
           bash -lc '
@@ -66,32 +86,14 @@ jobs:
             adb -s emulator-5554 shell getprop ro.product.cpu.abi
             agent-emulator status
             agent-emulator stop
-            java -version 2>&1 | head -n 1
-            /usr/lib/jvm/java-17-openjdk-amd64/bin/java -version 2>&1 | head -n 1
-            gradle --version | grep -m1 ^Gradle
-            node --version && pnpm --version
-            go version && command -v gomobile gobind
-            cargo --version && cargo ndk --version
-            rustup target list --installed | grep android
-            echo "NDK: $ANDROID_NDK_HOME" && test -x "$ANDROID_NDK_HOME/ndk-build"
             du -sh "$ANDROID_HOME" "$ANDROID_NDK_HOME" /opt/gradle
-            xdpyinfo | grep -m1 dimensions
-            import -window root /tmp/display.png && identify /tmp/display.png
             claude --version
             ls ~/.claude ~/.claude/skills
             ! grep -qxF "<!-- toolsets -->" ~/.claude/CLAUDE.md
             sed -n "/^## Tools/,/^## Android/p" ~/.claude/CLAUDE.md'
-      # A Rust library for a phone and the emulator, through the NDK.
-      - name: Build a Rust library with cargo-ndk
-        run: |
-          bash -lc '
-            set -euo pipefail
-            cd "$(mktemp -d)"
-            cargo new --lib --quiet ndkcheck && cd ndkcheck
-            printf "\n[lib]\ncrate-type = [\"cdylib\"]\n" >>Cargo.toml
-            cargo ndk -t arm64-v8a -t x86_64 -o jniLibs build --release --quiet
-            file jniLibs/*/libndkcheck.so'
-      # A Go package as an Android library, through the NDK.
+      # A Go package as an Android library, through the NDK: gomobile bind needs
+      # golang.org/x/mobile/bind from the network, which the offline smoke tests
+      # can't fetch (android-go's builds with go build and the NDK's clang).
       - name: Build a Go library with gomobile
         run: |
           bash -lc '
