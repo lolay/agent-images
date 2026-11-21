@@ -89,23 +89,31 @@ gcp_shell_variables() {
 # values (`[[ $REGION == us-central1 ]] && REGION=us-east1`). Each sources
 # without -e and -u, and ignores the status, as gcp_load_env's source runs for
 # spawn-runner: a line that reads an unset key, or fails, after setting one
-# mustn't hide what the file set.
+# mustn't hide what the file set. Each pass runs as each reader loads the file:
+# with RUNNER_TYPE exported (the hook, from the supervisor) and without it
+# (job-spec.sh, deploy.sh), and the type as $1, as gcp_load_env's source sees
+# it. This catches a mistake in a reviewed file, not an author evading the
+# check: a condition on anything else (the time, the host) isn't chased.
 gcp_type_project_keys() {
-	local keys=()
+	local keys=() over runner
 	mapfile -t keys < <(gcp_project_keys)
 	((${#keys[@]} > 0)) || return 0
-	{
-		gcp_type_sets_keys "$1" unset "${keys[@]}"
-		gcp_type_sets_keys "$1" project "${keys[@]}"
-	} | awk '!seen[$0]++'
+	for runner in "" "$1"; do
+		for over in unset project; do
+			gcp_type_sets_keys "$1" "$over" "$runner" "${keys[@]}"
+		done
+	done | awk '!seen[$0]++'
 }
 
-# gcp_type_sets_keys <type> unset|project <key...>: the keys the type's file
-# sets, sourced over nothing (unset) or over project.env (project, where only a
-# changed value counts). A subshell, so nothing leaks into the caller.
+# gcp_type_sets_keys <type> unset|project <RUNNER_TYPE or ""> <key...>: the
+# keys the type's file sets, sourced over nothing (unset) or over project.env
+# (project, where only a changed value counts), with RUNNER_TYPE exported when
+# given. A subshell, so nothing leaks into the caller.
 gcp_type_sets_keys() { (
 	local type="$1" over="$2" key
-	shift 2
+	unset RUNNER_TYPE
+	[[ -z "$3" ]] || export RUNNER_TYPE="$3"
+	shift 3
 	declare -A before=()
 	unset "$@"
 	# -a as gcp_load_env sources: a condition that reads a key in a subprocess
@@ -117,7 +125,7 @@ gcp_type_sets_keys() { (
 		for key in "$@"; do before[$key]="${!key-}"; done
 	fi
 	# shellcheck source=/dev/null
-	source "$AGENT_GCP_ENV_DIR/$type.env" >/dev/null 2>&1
+	source "$AGENT_GCP_ENV_DIR/$type.env" "$type" >/dev/null 2>&1
 	for key in "$@"; do
 		if [[ "$over" == project ]]; then
 			[[ "${!key-}" == "${before[$key]}" ]] || printf '%s\n' "$key"

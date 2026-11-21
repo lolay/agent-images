@@ -266,6 +266,20 @@ class CheckTypeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertTrue(result.stderr.startswith("subprocess: REGION is a project key"), result.stderr)
 
+    def test_an_override_on_how_the_hook_loads_the_file_is_refused(self):
+        # The hook has RUNNER_TYPE exported and gcp_load_env's source sees the
+        # type as $1 (Copilot's third round on #162).
+        env_dir = self.fixture(
+            runner='if [[ "${RUNNER_TYPE:-}" == runner ]]; then REGION=us-east1; fi\n',
+            positional='if [[ "${1:-}" == positional ]]; then REGION=us-east1; fi\n',
+        )
+        (env_dir / "project.env").write_text("PROJECT_ID=p\nREGION=r\n")
+        for type_ in ("runner", "positional"):
+            with self.subTest(type=type_):
+                result = self.check(env_dir, type_)
+                self.assertEqual(result.returncode, 1)
+                self.assertTrue(result.stderr.startswith(f"{type_}: REGION is a project key"), result.stderr)
+
     def test_project_keys_are_what_project_env_sets_however_written(self):
         env_dir = self.fixture()
         (env_dir / "project.env").write_text("# comment\nPROJECT_ID=p\n  NETWORK=n\nexport A=1 B=2\n")
