@@ -124,8 +124,8 @@ to stdout, and real errors keep stderr and fail the build through `set -e`.
 Every build gates on it before publishing: `make build` copies the provisioners' stderr
 to `build/logs/linux-build.err` and, if there is any, prints it and stops before `lxc
 publish`, so `agent-android` and its image stay as they were; `ALLOW_STDERR=1 make
-build` publishes anyway after printing the lines, for that one build: the build refuses
-to start when `.env` sets it, since make exports `.env` to every target. The Compute Engine build (`images/android/gce/provision.sh`) fails the
+build` publishes anyway after printing the lines, for that one build: `make build` refuses
+to start when `.env` assigns it in any form, since make exports `.env` to every target. The Compute Engine build (`images/android/gce/provision.sh`) fails the
 same way before Packer creates the image, and the `android-image-smoke` workflow fails
 its run.
 

@@ -21,16 +21,17 @@ readonly SECRETS_DIR="$HOME/.config/agent-images"
 readonly ANDROID_IMAGE_ALIAS="agent-android"
 
 # Prints a secret: the VM-specific file if present, else the default one.
-# Returns non-zero if neither exists.
+# Returns 2 if neither exists (or both are empty), and 1 if the first present
+# one can't be read (a mode, or a directory): that isn't a reason to fall back
+# to the other, a different key. The same statuses as keychain_secret.
 host_secret() {
 	local name="$1" target_vm="$2" file
 	for file in "$SECRETS_DIR/$name.$target_vm" "$SECRETS_DIR/$name"; do
-		if [[ -s "$file" ]]; then
-			cat "$file"
-			return 0
-		fi
+		[[ -s "$file" ]] || continue
+		cat "$file" || return 1
+		return 0
 	done
-	return 1
+	return 2
 }
 
 vm_exists() { lxc info "$1" >/dev/null 2>&1; }

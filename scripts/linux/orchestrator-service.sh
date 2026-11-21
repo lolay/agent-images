@@ -66,8 +66,10 @@ case "$action" in
 install)
 	command -v claude >/dev/null 2>&1 || die "claude not found; run make host-setup"
 	[[ -f "$RUNNER_CONFIG" ]] || die "no $RUNNER_CONFIG; cp vms/example-linux.env vms/runner.env"
-	host_secret claude-environment-secret orchestrator >/dev/null ||
-		die "no $SECRETS_DIR/claude-environment-secret; run make secret-set NAME=claude-environment-secret"
+	status=0
+	host_secret claude-environment-secret orchestrator >/dev/null || status=$?
+	((status != 1)) || die "can't read the environment key in $SECRETS_DIR (see above)"
+	((status == 0)) || die "no $SECRETS_DIR/claude-environment-secret; run make secret-set NAME=claude-environment-secret"
 	systemctl --user is-enabled "$unit" >/dev/null 2>&1 && die "$unit is already installed; run make runner-uninstall first"
 	mkdir -p "$(dirname "$unit_file")" "$AGENT_IMAGES_LOG_DIR"
 	# PATH carries lxc (/snap/bin) and claude (~/.local/bin) for the orchestrator,

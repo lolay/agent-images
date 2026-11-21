@@ -67,7 +67,15 @@ else
 	[[ -s "$vm_secret_file" ]] ||
 		die "no $vm_secret_file: $vm takes a work order or its own environment key, never the orchestrator's; run make secret-set NAME=claude-environment-secret VM=$vm"
 	vm_secret="$(<"$vm_secret_file")"
-	orchestrator_secret="$(host_secret claude-environment-secret orchestrator)" || true
+	# The copy check needs the orchestrator's key: only "there is none" (2) skips
+	# it; an unreadable file stops here, or a copy would pass as a different key.
+	status=0
+	orchestrator_secret="$(host_secret claude-environment-secret orchestrator)" || status=$?
+	case "$status" in
+	0) ;;
+	2) orchestrator_secret="" ;;
+	*) die "can't read the orchestrator's key in $SECRETS_DIR to check that $vm's isn't a copy of it" ;;
+	esac
 	[[ "$vm_secret" != "$orchestrator_secret" ]] ||
 		die "$vm_secret_file is the orchestrator's environment key; give $vm a separate environment's key: make secret-set NAME=claude-environment-secret VM=$vm"
 fi

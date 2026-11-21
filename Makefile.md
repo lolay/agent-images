@@ -62,7 +62,7 @@ Linux hosts only, from `.env` (see `.env.linux.example`):
 | --- | --- | --- |
 | `LINUX_BASE_IMAGE` | `ubuntu:24.04` | `build`: the LXD image the build VM starts from |
 | `BUILD_CPU` / `BUILD_MEMORY_GB` / `BUILD_DISK_GB` | `8` / `16` / `64` | `build`: the build VM |
-| `ALLOW_STDERR` | unset | `build` (Linux), for one build (`ALLOW_STDERR=1 make build`): `1` publishes an image whose provisioners wrote stderr. The build refuses to start when `.env` sets it, since make exports `.env` to every target |
+| `ALLOW_STDERR` | unset | `build` (Linux), for one build (`ALLOW_STDERR=1 make build`): `1` publishes an image whose provisioners wrote stderr. `make build` refuses it when `.env` assigns it in any form (make's `origin`), since make exports `.env` to every target |
 | `LXD_DOWN_LIMIT_MIN` | `1440` | Linux `runner-once`: minutes it waits on an LXD that doesn't answer before giving up and leaving the claim to the next reclaim |
 | `LXD_POOL_GB` | 70% of the free space on `/` | `host-setup`: the ZFS pool (a sparse file) |
 

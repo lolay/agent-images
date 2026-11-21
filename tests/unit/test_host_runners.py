@@ -365,6 +365,11 @@ if [[ -n "${FAKE_KEYCHAIN_LOCKED:-}" ]]; then
 	echo "security: SecKeychainSearchCopyNext: User interaction is not allowed." >&2
 	exit 36
 fi
+# $FAKE_KEYCHAIN_DENY: accounts whose item this process may not read (its ACL).
+if [[ " ${FAKE_KEYCHAIN_DENY:-} " == *" $5 "* ]]; then
+	echo "security: SecKeychainSearchCopyNext: The user name or passphrase you entered is not correct." >&2
+	exit 51
+fi
 item="$FAKE_KEYCHAIN/$3.$5"
 [[ -f "$item" ]] || { echo "security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain." >&2; exit 44; }
 cat "$item"
@@ -1060,6 +1065,21 @@ class VmConfigureCase(HostCase):
 
 
 class TartVmConfigureTests(VmConfigureCase):
+    def test_an_unreadable_orchestrator_key_stops_the_copy_check(self):
+        # The VM's item reads; the orchestrator's can't be (its ACL). The copy
+        # check used to compare against "" and let this copy through.
+        for account in ("orchestrator", "default"):
+            with self.subTest(orchestrator_account=account):
+                self.set_key(account, ENV_KEY)
+                self.set_key(self.VM, ENV_KEY)
+                result = self.run_configure(FAKE_KEYCHAIN_DENY="orchestrator default")
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("can't read the orchestrator's key", result.stderr)
+                self.assertIn("passphrase you entered is not correct", result.stderr, "security's reason")
+                self.assertEqual(self.guest_calls(), [])
+                self.assertFalse(self.guest_secret.exists())
+                subprocess.run(["rm", "-rf", str(self.tmp / "keychain")], check=True)
+
     def test_a_locked_keychain_says_so(self):
         self.set_key(self.VM, "sk-ant-cc-a.separate.key")
         result = self.run_configure(FAKE_KEYCHAIN_LOCKED="1")
@@ -1071,6 +1091,44 @@ class TartVmConfigureTests(VmConfigureCase):
 
 class LxdVmConfigureTests(VmConfigureCase):
     linux = True
+
+    def secrets(self):
+        return self.tmp / "home/.config/agent-images"
+
+    def unreadable(self, name):
+        """The orchestrator's key file, made unreadable: a directory, which no
+        mode lets cat read (mode 000 wouldn't stop root)."""
+        path = self.secrets() / name
+        path.mkdir(parents=True)
+        (path / "x").write_text("x")
+
+    def test_an_unreadable_orchestrator_key_stops_the_copy_check(self):
+        for name in ("claude-environment-secret", "claude-environment-secret.orchestrator"):
+            with self.subTest(orchestrator_file=name):
+                self.unreadable(name)
+                self.set_key(self.VM, ENV_KEY)
+                result = self.run_configure()
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("can't read the orchestrator's key", result.stderr)
+                self.assertEqual(self.guest_calls(), [])
+                self.assertFalse(self.guest_secret.exists())
+                subprocess.run(["rm", "-rf", str(self.secrets())], check=True)
+
+    def host_secret(self, account):
+        lib = self.tree / "scripts/linux/lib.sh"
+        return subprocess.run(
+            ["bash", "-c", 'source "$1"; host_secret claude-environment-secret "$2"', "_", str(lib), account],
+            env=self.env(), capture_output=True, text=True, timeout=30)
+
+    def test_host_secret_tells_absent_from_unreadable(self):
+        self.assertEqual(self.host_secret("orchestrator").returncode, 2, "no file at all")
+        self.set_key("default", ENV_KEY)
+        result = self.host_secret("orchestrator")
+        self.assertEqual((result.returncode, result.stdout), (0, ENV_KEY), "falls back to the plain file")
+        self.unreadable("claude-environment-secret.orchestrator")
+        result = self.host_secret("orchestrator")
+        self.assertEqual(result.returncode, 1, "an unreadable file isn't a reason to use another key")
+        self.assertNotIn(ENV_KEY, result.stdout)
 
 
 class BuildImageTests(HostCase):
@@ -1085,7 +1143,7 @@ class BuildImageTests(HostCase):
         super().setUp()
         # The whole of images/shared, not just the quarantine check HostCase links.
         subprocess.run(["rm", "-rf", str(self.tree / "images/shared")], check=True)
-        for relative in ("scripts/linux/build-image.sh", "images/android/stage.sh",
+        for relative in ("version.txt", "scripts/linux/build-image.sh", "images/android/stage.sh",
                          "images/android/staging.txt", "images/shared", "images/android/files",
                          "images/android/toolsets.txt", "images/toolsets", "images/android/scripts"):
             link = self.tree / relative
@@ -1135,14 +1193,36 @@ class BuildImageTests(HostCase):
         self.assertEqual(len(self.publishes()), 1)
         self.assertNotEqual(self.live_image(), self.LIVE)
 
-    def test_allow_stderr_in_env_file_is_refused(self):
-        # make reads .env and exports it to every target, so the script sees it
-        # in its environment too; a line there would publish every bad build.
-        (self.tree / ".env").write_text("LINUX_BASE_IMAGE=ubuntu:24.04\nALLOW_STDERR=1\n")
-        result = self.build(FAKE_PROVISIONER_STDERR="W: a warning", ALLOW_STDERR="1")
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("ALLOW_STDERR is set in .env", result.stderr)
-        self.assertEqual(self.calls("lxc"), [], "refused before anything started")
+    def make_build(self, *args, **env):
+        """make build in the tree, with the repo's Makefile: it reads the tree's .env."""
+        return subprocess.run(
+            ["make", "--no-print-directory", "-f", str(REPO / "Makefile"), "build", *args],
+            cwd=self.tree, env=self.env(**env), capture_output=True, text=True, timeout=60)
+
+    def test_make_refuses_allow_stderr_from_env_file(self):
+        # make reads .env and exports it to every target; there ALLOW_STDERR would
+        # publish every bad build. Every assignment form, not one spelling.
+        for line in ("ALLOW_STDERR=1", "ALLOW_STDERR += 1", "export ALLOW_STDERR += 1",
+                     "ALLOW_STDERR ?= 1", "ALLOW_STDERR := 1", "override ALLOW_STDERR = 1"):
+            with self.subTest(line=line):
+                (self.tree / ".env").write_text(f"LINUX_BASE_IMAGE=ubuntu:24.04\n{line}\n")
+                result = self.make_build(FAKE_PROVISIONER_STDERR="W: a warning")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("ALLOW_STDERR is set in .env", result.stderr)
+                self.assertEqual(self.calls("lxc"), [], "refused before anything started")
+
+    def test_make_takes_allow_stderr_from_the_command_line_or_environment(self):
+        (self.tree / ".env").write_text("LINUX_BASE_IMAGE=ubuntu:24.04\n")
+        for args, env in ((["ALLOW_STDERR=1"], {}), ([], {"ALLOW_STDERR": "1"})):
+            with self.subTest(args=args, env=env):
+                result = self.make_build(*args, FAKE_PROVISIONER_STDERR="W: a warning", **env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("ALLOW_STDERR=1: publishing", result.stderr)
+                self.assertNotEqual(self.live_image(), self.LIVE)
+                (self.lxd / "aliases/agent-android").write_text(self.LIVE + "\n")
+                (self.lxd / "images" / self.LIVE).touch()
+        result = self.make_build(FAKE_PROVISIONER_STDERR="W: a warning")
+        self.assertNotEqual(result.returncode, 0, "without it, not green stops")
 
     def test_stages_the_shared_list(self):
         self.assertEqual(self.build().returncode, 0)

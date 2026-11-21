@@ -69,8 +69,20 @@ else
 	# 1: keychain_secret has said why (a locked keychain); 2: no item for this VM.
 	((status != 1)) || exit 1
 	((status == 0)) || die "$vm takes a work order or its own environment key, never the orchestrator's"
-	orchestrator_secret="$(keychain_secret claude-environment-secret orchestrator default 2>/dev/null)" || true
-	[[ "$vm_secret" != "$orchestrator_secret" ]] ||
+	# The copy check needs the orchestrator's key: only "there is none" (2) skips
+	# it. Any other failure (a locked keychain, a denied read) stops here, or a
+	# copy would pass as a different key. stderr is kept only for that case.
+	status=0
+	orchestrator_lookup="$(keychain_secret claude-environment-secret orchestrator default 2>&1)" || status=$?
+	case "$status" in
+	0) ;;
+	2) orchestrator_lookup="" ;;
+	*)
+		printf '%s\n' "$orchestrator_lookup" >&2
+		die "can't read the orchestrator's key to check that $vm's isn't a copy of it"
+		;;
+	esac
+	[[ "$vm_secret" != "$orchestrator_lookup" ]] ||
 		die "$vm's Keychain item is the orchestrator's environment key; give $vm a separate environment's key: make secret-set NAME=claude-environment-secret VM=$vm"
 fi
 readonly vm_secret

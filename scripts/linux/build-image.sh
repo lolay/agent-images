@@ -15,7 +15,7 @@
 # prints it and stops before publishing, so agent-android stays as it was, as
 # the Compute Engine build (images/android/gce/provision.sh) does. ALLOW_STDERR=1
 # for one build (ALLOW_STDERR=1 make build) publishes anyway once you've read the
-# lines. The build refuses to start with ALLOW_STDERR in .env, which make
+# lines. make build refuses ALLOW_STDERR from .env (the Makefile), which make
 # exports to every target: there it would publish every bad build.
 set -euo pipefail
 
@@ -42,9 +42,6 @@ disk_gb="$(setting BUILD_DISK_GB 64)"
 readonly base_image cpu memory_gb disk_gb
 
 command -v lxc >/dev/null 2>&1 || die "lxc not found; run make host-setup"
-if [[ -f "$AGENT_IMAGES_DIR/.env" ]] && grep -Eq '^[[:space:]]*(export[[:space:]]+)?ALLOW_STDERR[[:space:]]*[:?]?=' "$AGENT_IMAGES_DIR/.env"; then
-	die "ALLOW_STDERR is set in .env, which would publish every build that isn't green; remove it and pass it for one build: ALLOW_STDERR=1 make build"
-fi
 
 cleanup() {
 	if vm_exists "$build_vm"; then
