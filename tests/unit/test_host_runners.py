@@ -128,10 +128,14 @@ FAKE_PLUTIL = RECORD + r"""
 python3 -I -c 'import plistlib, sys; plistlib.load(open(sys.argv[1], "rb"))' "$2"
 """
 
-# LXD keeps a file per instance under $FAKE_LXD/instances. Existence checks
-# (info, list) are numbered: LXD doesn't answer on the ones in
-# $FAKE_LXD_DOWN_AT, and the VM powers off (an ephemeral one is gone) from
-# $FAKE_POWEROFF_AT on. Unknown commands and flags fail, as lxc's do.
+# LXD keeps a file per instance under $FAKE_LXD/instances (holding "ephemeral"
+# for one, which stopping deletes), and an alias per file under $FAKE_LXD/aliases
+# holding its image's fingerprint. Existence checks (info, list) are numbered:
+# LXD doesn't answer on the ones in $FAKE_LXD_DOWN_AT, and the VM powers off (an
+# ephemeral one is gone) from $FAKE_POWEROFF_AT on. In exec, a tar from stdin
+# keeps the archive's listing in $FAKE_OUT/staged.list, and a provisioner
+# (scripts/<name>.sh) writes $FAKE_PROVISIONER_STDERR on stderr. Unknown
+# commands and flags fail, as lxc's do.
 FAKE_LXC = RECORD + r"""
 instances="$FAKE_LXD/instances"
 die() { echo "Error: $*" >&2; exit 1; }
@@ -155,15 +159,17 @@ launch)
 	shift 2
 	while (($#)); do
 		case "$1" in
-		--vm | --ephemeral) ;;
+		--vm) ;;
+		--ephemeral) ephemeral=ephemeral ;;
 		--config) [[ "${2:-}" == ?*=?* ]] || die "Bad key=value pair: ${2:-}"; shift ;;
+		--device) [[ "${2:-}" == ?*,?*=?* ]] || die "Bad device override syntax: ${2:-}"; shift ;;
 		*) die "unknown flag: $1" ;;
 		esac
 		shift
 	done
 	[[ ! -e "$instances/$name" ]] || die "Instance \"$name\" already exists"
 	mkdir -p "$instances"
-	touch "$instances/$name"
+	echo "${ephemeral:-}" >"$instances/$name"
 	;;
 info)
 	(($# == 1)) || die "Invalid number of arguments"
@@ -183,7 +189,7 @@ stop)
 	fi
 	(($# == 1)) || die "Invalid number of arguments"
 	[[ -e "$instances/$1" ]] || die "Instance not found"
-	rm -f "$instances/$1"
+	if grep -qx ephemeral "$instances/$1"; then rm -f "$instances/$1"; else echo stopped >"$instances/$1"; fi
 	;;
 delete)
 	[[ "${1:-}" != --force ]] || shift
@@ -199,11 +205,62 @@ exec)
 	[[ "$1" != --force-noninteractive ]] || shift
 	[[ "$1" == -- ]] || die "unknown flag: $1"
 	shift
-	if [[ "$1" == sudo ]]; then
+	if [[ "$1" == tar ]]; then
+		[[ "${2:-}" == -xf && "${3:-}" == - ]] || die "tar: usage"
+		command -p tar -tf - | sort >>"$FAKE_OUT/staged.list"
+	elif [[ "$1" == sudo ]]; then
 		[[ "${2:-}" == -u && -n "${3:-}" && "${4:-}" == -H ]] || die "sudo: usage"
 		shift 4
-		HOME="$FAKE_OUT/guest" "$@"
+		if [[ "${*: -1}" == */scripts/*.sh ]]; then
+			echo "provisioner ${*: -1}"
+			[[ -z "${FAKE_PROVISIONER_STDERR:-}" ]] || echo "$FAKE_PROVISIONER_STDERR" >&2
+		else
+			HOME="$FAKE_OUT/guest" "$@"
+		fi
 	fi
+	;;
+publish)
+	(($# >= 2)) && [[ -e "$instances/$1" && "$2" == local: ]] || die "Invalid arguments"
+	[[ "$(cat "$instances/$1")" == stopped ]] || die "The instance is running"
+	shift 2
+	alias=""
+	while (($#)); do
+		case "$1" in
+		--alias) alias="${2:?}"; shift ;;
+		--compression) [[ "${2:-}" == zstd ]] || die "bad compression"; shift ;;
+		description=*) ;;
+		*) die "unknown flag: $1" ;;
+		esac
+		shift
+	done
+	fingerprint="$(printf '%s' "$RANDOM$RANDOM" | sha256sum | cut -c1-64)"
+	mkdir -p "$FAKE_LXD/images" "$FAKE_LXD/aliases"
+	touch "$FAKE_LXD/images/$fingerprint"
+	[[ -z "$alias" ]] || echo "$fingerprint" >"$FAKE_LXD/aliases/$alias"
+	;;
+image)
+	sub="${1:-}"
+	shift || true
+	resolve() { if [[ -f "$FAKE_LXD/aliases/$1" ]]; then cat "$FAKE_LXD/aliases/$1"; elif [[ -e "$FAKE_LXD/images/$1" ]]; then echo "$1"; else return 1; fi; }
+	case "$sub" in
+	info)
+		fingerprint="$(resolve "$1")" || die "Image not found"
+		echo "Fingerprint: $fingerprint"
+		;;
+	delete)
+		fingerprint="$(resolve "$1")" || die "Image not found"
+		rm -f "$FAKE_LXD/images/$fingerprint"
+		grep -lx "$fingerprint" "$FAKE_LXD/aliases"/* 2>/dev/null | xargs -r rm -f
+		;;
+	alias)
+		case "${1:-}" in
+		create) [[ -e "$FAKE_LXD/images/${3:-}" && ! -e "$FAKE_LXD/aliases/$2" ]] || die "alias create"; echo "$3" >"$FAKE_LXD/aliases/$2" ;;
+		delete) [[ -f "$FAKE_LXD/aliases/${2:-}" ]] || die "Alias not found"; rm -f "$FAKE_LXD/aliases/$2" ;;
+		*) die "unknown command" ;;
+		esac
+		;;
+	*) die "unknown command \"$sub\" for \"lxc image\"" ;;
+	esac
 	;;
 *) die "unknown command \"$command\" for \"lxc\"" ;;
 esac
@@ -806,6 +863,85 @@ class TartVmConfigureTests(VmConfigureCase):
 
 class LxdVmConfigureTests(VmConfigureCase):
     linux = True
+
+
+class BuildImageTests(HostCase):
+    """scripts/linux/build-image.sh: green builds only. Provisioner stderr stops
+    it before `lxc publish`, so the live alias and image stay; ALLOW_STDERR=1
+    publishes anyway once the lines are printed (r1.f31)."""
+
+    linux = True
+    LIVE = "a" * 64
+
+    def setUp(self):
+        super().setUp()
+        # The whole of images/shared, not just the quarantine check HostCase links.
+        subprocess.run(["rm", "-rf", str(self.tree / "images/shared")], check=True)
+        for relative in ("scripts/linux/build-image.sh", "images/android/stage.sh",
+                         "images/android/staging.txt", "images/shared", "images/android/files",
+                         "images/android/toolsets.txt", "images/toolsets", "images/android/scripts"):
+            link = self.tree / relative
+            link.parent.mkdir(parents=True, exist_ok=True)
+            link.symlink_to(REPO / relative)
+        # Off this host, snap has no lxd to refresh.
+        write_executable(self.bin / "snap", 'echo "error: no matching snaps installed" >&2\nexit 1\n')
+        (self.lxd / "images").mkdir()
+        (self.lxd / "aliases").mkdir()
+        (self.lxd / "images" / self.LIVE).touch()
+        (self.lxd / "aliases/agent-android").write_text(self.LIVE + "\n")
+
+    def build(self, **env):
+        return subprocess.run(
+            ["bash", str(self.tree / "scripts/linux/build-image.sh")], env=self.env(**env),
+            capture_output=True, text=True, timeout=60)
+
+    def live_image(self):
+        return (self.lxd / "aliases/agent-android").read_text().strip()
+
+    def publishes(self):
+        return [call for call in self.calls("lxc") if call.startswith("publish")]
+
+    def test_a_green_build_publishes_and_moves_the_alias(self):
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("green: no stderr from the provisioners", result.stdout)
+        self.assertEqual(len(self.publishes()), 1)
+        self.assertNotEqual(self.live_image(), self.LIVE)
+        self.assertFalse((self.lxd / "images" / self.LIVE).exists(), "the old image is deleted")
+        self.assertFalse((self.lxd / "instances/agent-android-build").exists())
+
+    def test_stderr_stops_before_publish(self):
+        result = self.build(FAKE_PROVISIONER_STDERR="E: Unable to locate package nosuch")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("E: Unable to locate package nosuch", result.stderr, "the lines are shown")
+        self.assertIn("not publishing; agent-android stays as it was", result.stderr)
+        self.assertEqual(self.publishes(), [])
+        self.assertEqual(self.live_image(), self.LIVE)
+        self.assertTrue((self.lxd / "images" / self.LIVE).exists())
+        self.assertFalse((self.lxd / "instances/agent-android-build").exists(), "build VM deleted")
+
+    def test_allow_stderr_publishes_after_printing_it(self):
+        result = self.build(FAKE_PROVISIONER_STDERR="W: a warning", ALLOW_STDERR="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertLess(result.stderr.index("W: a warning"), result.stderr.index("ALLOW_STDERR=1: publishing"))
+        self.assertEqual(len(self.publishes()), 1)
+        self.assertNotEqual(self.live_image(), self.LIVE)
+
+    def test_allow_stderr_from_env_file_is_ignored(self):
+        # Only the environment: a line in .env would publish every bad build.
+        (self.tree / ".env").write_text("ALLOW_STDERR=1\n")
+        result = self.build(FAKE_PROVISIONER_STDERR="W: a warning")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.publishes(), [])
+
+    def test_stages_the_shared_list(self):
+        self.assertEqual(self.build().returncode, 0)
+        staged = (self.out / "staged.list").read_text().splitlines()
+        for path in ("./scripts/setup-user.sh", "./scripts/install-packages.sh", "./toolsets.txt",
+                     "./agent-runner.sh", "./agent-emulator.sh", "./toolsets/install-toolset.sh"):
+            self.assertIn(path, staged)
+        self.assertFalse([path for path in staged if path.startswith("./gce")], "gce is the Compute Engine build's")
+        self.assertFalse((self.tree / "build/android-staging").exists(), "the host copy is removed")
 
 
 class HostQuarantineTests(HostCase):

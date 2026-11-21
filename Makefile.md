@@ -62,6 +62,7 @@ Linux hosts only, from `.env` (see `.env.linux.example`):
 | --- | --- | --- |
 | `LINUX_BASE_IMAGE` | `ubuntu:24.04` | `build`: the LXD image the build VM starts from |
 | `BUILD_CPU` / `BUILD_MEMORY_GB` / `BUILD_DISK_GB` | `8` / `16` / `64` | `build`: the build VM |
+| `ALLOW_STDERR` | unset | `build` (Linux), environment only: `1` publishes an image whose provisioners wrote stderr |
 | `LXD_POOL_GB` | 70% of the free space on `/` | `host-setup`: the ZFS pool (a sparse file) |
 
 ## Targets
@@ -164,7 +165,7 @@ step. It passes `--var image_ref=$(IMAGE_REF)` so the image check follows `.env`
 | --- | --- |
 | `host-setup` | `scripts/linux/host-setup.sh`: checks VT-x/AMD-V and turns on nested KVM, installs the LXD snap (refreshes held) and initializes it with a ZFS pool and the `lxdbr0` bridge, installs Claude Code, enables lingering. Idempotent; uses sudo |
 | `doctor` | `triage --profile linux` (one profile; `MODE` is ignored) |
-| `build` | `scripts/linux/build-image.sh`: refreshes LXD, launches `agent-android-build` from `ubuntu:24.04`, runs `images/android/scripts` in it, which install the toolsets in `images/android/toolsets.txt` (the `android` toolset boots the emulator once for its snapshot), publishes `agent-android-next`, then moves the `agent-android` alias to it |
+| `build` | `scripts/linux/build-image.sh`: refreshes LXD, launches `agent-android-build` from `ubuntu:24.04`, stages `images/android/staging.txt`'s layout (`images/android/stage.sh`) and runs `images/android/scripts` in it, which install the toolsets in `images/android/toolsets.txt` (the `android` toolset boots the emulator once for its snapshot), publishes `agent-android-next`, then moves the `agent-android` alias to it. Any provisioner stderr stops it before publishing (the live image stays); `ALLOW_STDERR=1 make build` publishes anyway after printing it |
 | `runner-run` | `scripts/linux/orchestrator-run.sh`: the secret from `~/.config/agent-images` into the environment, then `claude self-hosted-runner orchestrator --hooks-dir hooks/linux` |
 | `runner-install` | `scripts/linux/orchestrator-service.sh install`: systemd user unit `agent-images-orchestrator.service`, started at boot (lingering) |
 | `runner-uninstall` / `runner-stop` / `runner-status` | As on macOS, with systemd and `lxc` |

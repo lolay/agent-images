@@ -121,9 +121,17 @@ follow-up.
 As on the Mac, a good build writes nothing to stderr: tools that report routine
 progress there (`snap refresh`, `cloud-init status`, `adb`'s daemon notices) are sent
 to stdout, and real errors keep stderr and fail the build through `set -e`.
-`make build` copies the provisioners' stderr to `build/logs/linux-build.err` and ends
-with "green" or the number of stderr lines. The `android-image-smoke` workflow fails
-if the image scripts write any stderr.
+Every build gates on it before publishing: `make build` copies the provisioners' stderr
+to `build/logs/linux-build.err` and, if there is any, prints it and stops before `lxc
+publish`, so `agent-android` and its image stay as they were; `ALLOW_STDERR=1 make
+build` publishes anyway after printing the lines (environment only, so it can't be left
+on in `.env`). The Compute Engine build (`images/android/gce/provision.sh`) fails the
+same way before Packer creates the image, and the `android-image-smoke` workflow fails
+its run.
+
+All three stage the same layout for the provisioners: `images/android/stage.sh`
+assembles it from one list, `images/android/staging.txt` (the Compute Engine build adds
+its `gce` lines).
 
 ## Hardware
 
