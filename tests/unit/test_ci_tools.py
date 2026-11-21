@@ -314,6 +314,15 @@ class InstallLintToolsTests(unittest.TestCase):
         self.assertIn("no shellcheck or shfmt release for", result.stderr)
         self.assertFalse(self.log.exists(), "nothing downloaded")
 
+    def test_the_session_gate_lints_it(self):
+        # Both workflows run it; a session's gate is cloud-lint.
+        result = subprocess.run(["make", "--no-print-directory", "-n", "cloud-lint"], cwd=REPO, capture_output=True,
+                                text=True, check=True)
+        for tool in ("shellcheck", "shfmt"):
+            with self.subTest(tool=tool):
+                line = re.search(rf"(?m)^{tool} .*$", result.stdout).group(0)
+                self.assertIn(f" {INSTALL.relative_to(REPO)}", line)
+
     def test_a_missing_asset_fails(self):
         assets = self.assets(("linux.x86_64", "linux_amd64"))
         assets.pop(next(url for url in assets if "/mvdan/" in url))
