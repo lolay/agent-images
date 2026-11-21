@@ -208,7 +208,7 @@ or deploys: only a push to `main` does, through `.github/workflows/cloud-deploy.
 | `TYPE` | `linux` | `cloud-build`, `cloud-smoke`, `cloud-lock` |
 | `SMOKE` | `pr` | `cloud-smoke`: `pr` skips the smoke tests marked `# smoke: live` (they need a GPU); empty runs them all, as the deploy does |
 | `COMMIT` | checked-out commit | `cloud-build`: the commit the versions report names (the pull request check passes the head commit it builds) |
-| `CLAUDE_VERSION` | `latest` | `cloud-build`, `cloud-ci`, the orchestrator only: an exact version or a channel. A runner type's Claude Code comes from its lock |
+| `CLAUDE_VERSION` | (empty: `docker-bake.hcl`'s `ORCHESTRATOR_CLAUDE_VERSION`, the newest) | `cloud-build`, `cloud-ci`, the orchestrator only: an exact version or a channel. A runner type's Claude Code comes from its lock |
 | `WRITE` | (empty) | `cloud-lock`: set, writes the resolved lock, for a local `cloud-build`; never committed |
 
 Where things live:

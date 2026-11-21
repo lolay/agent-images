@@ -1,5 +1,6 @@
 """scripts/cloud/bake.sh: a runner type builds from its lock, with its versions
-report; the orchestrator builds at CLAUDE_VERSION. docker is a fake that records
+report; the orchestrator builds at CLAUDE_VERSION, or the bake file's newest.
+docker is a fake that records
 what bake was given and refuses anything but `buildx bake -f <file>`."""
 
 import json
@@ -38,7 +39,8 @@ class BakeScriptTests(unittest.TestCase):
             '  echo "docker: fake: unexpected call: $*" >&2; exit 125\n'
             "fi\n"
             "python3 -c 'import json, os, sys; print(json.dumps({\"argv\": sys.argv[1:], "
-            "\"claude\": os.environ.get(\"CLAUDE_VERSION\"), \"commit\": os.environ.get(\"COMMIT\")}))' "
+            "\"claude\": os.environ.get(\"CLAUDE_VERSION\"), \"commit\": os.environ.get(\"COMMIT\"), "
+            "\"orchestrator_claude\": os.environ.get(\"ORCHESTRATOR_CLAUDE_VERSION\")}))' "
             '"${@:5}" >>"$FAKE_CALLS"\n',
         )
 
@@ -51,6 +53,7 @@ class BakeScriptTests(unittest.TestCase):
             "COMMIT": "abc123",
         }
         settings.pop("CLAUDE_VERSION", None)
+        settings.pop("ORCHESTRATOR_CLAUDE_VERSION", None)
         settings.update(env)
         return subprocess.run(
             ["bash", str(SCRIPT), *args], cwd=REPO, env=settings, capture_output=True, text=True, timeout=30
@@ -145,9 +148,20 @@ class BakeScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         call = self.call()
         self.assertEqual(call["argv"], ["--load", "orchestrator"])
-        self.assertEqual(call["claude"], "2.1.300")
-        self.assertEqual(self.bake("orchestrator").returncode, 0)
-        self.assertEqual(json.loads(self.calls.read_text().splitlines()[1])["claude"], "latest")
+        self.assertEqual(call["orchestrator_claude"], "2.1.300")
+
+    def test_the_orchestrator_otherwise_leaves_the_bake_files_default(self):
+        # Unset or empty (make passes CLAUDE_VERSION= when it has none): bake.sh
+        # sets nothing, so the bake file's ORCHESTRATOR_CLAUDE_VERSION, the
+        # newest, is the one copy of it (r3.f22).
+        for env in ({}, {"CLAUDE_VERSION": ""}):
+            with self.subTest(env=env):
+                self.calls.unlink(missing_ok=True)
+                result = self.bake("orchestrator", **env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                call = self.call()
+                self.assertIsNone(call["orchestrator_claude"])
+                self.assertIn(call["claude"], (None, ""))
 
     def test_usage(self):
         self.assertEqual(self.bake().returncode, 2)
@@ -175,6 +189,26 @@ class BuildsFromTheLockTests(unittest.TestCase):
         self.assertIn('make cloud-build TYPE="$TARGET"', workflow)
         self.assertNotIn("docker buildx bake", workflow)
         self.assertNotIn("claude-code-releases", workflow)
+
+    def test_claudes_release_url_is_only_in_lock_sh(self):
+        # The deploy asks lock.sh for the orchestrator's version rather than
+        # curl the channel itself (r3.f22). Any spelling of the host counts.
+        holders = []
+        for root in (".github", "scripts", "hooks", "images/cloud", "Makefile"):
+            path = REPO / root
+            for file in [path] if path.is_file() else path.rglob("*"):
+                if file.is_file() and "downloads.claude.ai" in file.read_text(errors="replace"):
+                    holders.append(str(file.relative_to(REPO)))
+        self.assertEqual(holders, ["scripts/cloud/lock.sh"])
+        workflow = (REPO / ".github/workflows/cloud-deploy.yml").read_text()
+        self.assertIn('version="$(scripts/cloud/lock.sh orchestrator-claude)"', workflow)
+        orchestrator = workflow[workflow.index("\n  orchestrator:\n"):workflow.index("\n  prune:\n")]
+        self.assertIn("ORCHESTRATOR_CLAUDE_VERSION: ${{ needs.plan.outputs.claude-version }}", orchestrator)
+
+    def test_make_and_bake_sh_restate_no_claude_default(self):
+        # The bake file's ORCHESTRATOR_CLAUDE_VERSION is the one default (r3.f22).
+        self.assertNotIn("CLAUDE_VERSION ?=", (REPO / "Makefile").read_text())
+        self.assertNotRegex(SCRIPT.read_text(), r"CLAUDE_VERSION:-\w")
 
     def test_make_builds_through_bake_sh(self):
         makefile = (REPO / "Makefile").read_text()

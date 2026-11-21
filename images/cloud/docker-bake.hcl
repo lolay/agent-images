@@ -26,7 +26,22 @@ variable "TAG" {
 }
 
 variable "CLAUDE_VERSION" {
-  # An exact version, or the installer's channel name (latest, stable).
+  # The runner types' Claude Code: an exact version, or the installer's channel
+  # name (latest, stable). Their locks resolve it (scripts/cloud/lock.sh), so a
+  # version here pins every runner type (specs/gcp.md, "Pinning a dependency").
+  # A pin holds the runner types only: the orchestrator always takes the newest
+  # Claude (ORCHESTRATOR_CLAUDE_VERSION, below).
+  default = "latest"
+}
+
+variable "ORCHESTRATOR_CLAUDE_VERSION" {
+  # The orchestrator's Claude Code, always the newest (Owner, 2026-11-20, #83,
+  # r3.f22): it has no lock, and the deploy checks its flags against it instead
+  # (scripts/cloud/check-orchestrator-flags.sh). The deploy passes the version
+  # this channel names now (lock.sh orchestrator-claude), so a release rebuilds
+  # its layer rather than the cache keeping the first; bake.sh passes a
+  # CLAUDE_VERSION from the environment (make CLAUDE_VERSION=...) for a local
+  # build of another.
   default = "latest"
 }
 
@@ -257,7 +272,7 @@ target "orchestrator" {
   context    = "."
   dockerfile = "images/cloud/orchestrator/Dockerfile"
   args = {
-    CLAUDE_VERSION = CLAUDE_VERSION
+    CLAUDE_VERSION = ORCHESTRATOR_CLAUDE_VERSION
   }
   tags = tags("orchestrator")
 }

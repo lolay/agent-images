@@ -7,9 +7,11 @@
 #                                       arguments scripts/cloud/lock.sh bake-args
 #                                       gives, with the versions report
 #                                       (versions-<type>, out/versions/<type>)
-#   bake.sh orchestrator [bake options] the orchestrator, with Claude Code at
-#                                       CLAUDE_VERSION (default latest): it has
-#                                       no lock (specs/gcp.md, m5)
+#   bake.sh orchestrator [bake options] the orchestrator, with the newest Claude
+#                                       Code (the bake file's
+#                                       ORCHESTRATOR_CLAUDE_VERSION), or
+#                                       CLAUDE_VERSION from the environment: it
+#                                       has no lock (specs/gcp.md, m5)
 #
 # COMMIT names the commit in the versions report (default HEAD). The deploy
 # builds with docker/bake-action instead, from the same lock.sh bake-args.
@@ -26,7 +28,12 @@ shift
 readonly bake=(docker buildx bake -f images/cloud/docker-bake.hcl)
 
 if [[ "$target" == orchestrator ]]; then
-	CLAUDE_VERSION="${CLAUDE_VERSION:-latest}" exec "${bake[@]}" "$@" orchestrator
+	# Unset or empty leaves the bake file's default, so it has no second copy
+	# here (r3.f22); a runner-type pin in CLAUDE_VERSION's default never reaches it.
+	if [[ -n "${CLAUDE_VERSION:-}" ]]; then
+		export ORCHESTRATOR_CLAUDE_VERSION="$CLAUDE_VERSION"
+	fi
+	exec "${bake[@]}" "$@" orchestrator
 fi
 
 # Read into a variable, not `mapfile < <(...)`: a failed process substitution

@@ -113,9 +113,9 @@ CLOUD_WORKFLOWS := $(wildcard .github/workflows/cloud-*.yml) .github/workflows/l
 ACTIONLINT_VERSION := v1.7.12
 # TYPE=all builds every type and the orchestrator (CLOUD_TARGETS).
 TYPE ?= linux
-# The orchestrator's Claude Code: an exact version or a channel. Runner types
-# take theirs from their lock (scripts/cloud/bake.sh).
-CLAUDE_VERSION ?= latest
+# CLAUDE_VERSION=<version or channel> builds the orchestrator with that Claude
+# Code; unset, it takes the bake file's ORCHESTRATOR_CLAUDE_VERSION, the newest.
+# Runner types take theirs from their lock (scripts/cloud/bake.sh).
 
 SHELL_SCRIPTS := $(wildcard $(MACOS_DIR)/scripts/*.sh $(MACOS_DIR)/files/*.sh \
                    $(SHARED_DIR)/*.sh $(SHARED_DIR)/runners/*.sh $(SHARED_DIR)/claude/hooks/*.sh \
