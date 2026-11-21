@@ -257,17 +257,20 @@ cmd_vm_promote() {
 	gcp_compute_wait "$token" "$compute_api/global" 300 || die "moving $image to $family: ${GCP_OP_ERROR:-timed out}"
 	log "$image: now the latest in family $family"
 
-	# Keep one: VMs already running keep their own disks.
-	local old
+	# Keep one: VMs already running keep their own disks. Each listing is read
+	# whole first, here and in prune: from `< <(...)` a listing's die would be
+	# lost, and the loop would go green having seen nothing.
+	local old olds
+	olds="$(list_images "$token" "labels.agent-images-type=$type" | jq -r '.name')" || exit 1
 	while read -r old; do
-		[[ "$old" != "$image" ]] || continue
+		[[ -n "$old" && "$old" != "$image" ]] || continue
 		gcp_call "$token" DELETE "$compute_api/global/images/$old"
 		if [[ "$GCP_STATUS" == 2* || "$GCP_STATUS" == 404 ]]; then
 			log "$old: deleted"
 		else
 			log "$old: couldn't delete: HTTP $GCP_STATUS: $(gcp_error)"
 		fi
-	done < <(list_images "$token" "labels.agent-images-type=$type" | jq -r '.name')
+	done <<<"$olds"
 }
 
 # list_images <token> <filter>: this project's images matching the filter, one
@@ -321,9 +324,11 @@ list_instances() {
 }
 
 cmd_prune() {
-	local token job name type
+	local token job jobs name type
 	token="$(access_token)"
+	jobs="$(list_jobs "$token")" || exit 1
 	while read -r job; do
+		[[ -n "$job" ]] || continue
 		[[ "$(jq -r '.labels["managed-by"] // empty' <<<"$job")" == "agent-images" ]] || continue
 		type="$(jq -r '.labels["agent-images-type"] // empty' <<<"$job")"
 		name="$(jq -r '.name' <<<"$job")"
@@ -332,12 +337,14 @@ cmd_prune() {
 		gcp_call "$token" DELETE "$GCP_RUN_URL/v2/$name"
 		[[ "$GCP_STATUS" == 2* ]] || die "deleting ${name##*/}: HTTP $GCP_STATUS: $(gcp_error)"
 		wait_operation "$token"
-	done < <(list_jobs "$token")
+	done <<<"$jobs"
 	# A compute type's VMs, running or powered off: the reaper that deletes
 	# its stopped ones went with its orchestrator, and a stopped VM never
 	# reaches its max run duration, so it and its disk would stay for good.
-	local instance zone
+	local instance instances zone
+	instances="$(list_instances "$token" "labels.managed-by=agent-images")" || exit 1
 	while read -r instance; do
+		[[ -n "$instance" ]] || continue
 		type="$(jq -r '.labels["agent-images-type"] // empty' <<<"$instance")"
 		name="$(jq -r '.name' <<<"$instance")"
 		[[ -n "$type" && ! -f "$AGENT_GCP_ENV_DIR/$type.env" ]] || continue
@@ -350,16 +357,18 @@ cmd_prune() {
 		404) ;;
 		*) die "deleting $name: HTTP $GCP_STATUS: $(gcp_error)" ;;
 		esac
-	done < <(list_instances "$token" "labels.managed-by=agent-images")
-	local image
+	done <<<"$instances"
+	local image images
+	images="$(list_images "$token" "labels.managed-by=agent-images")" || exit 1
 	while read -r image; do
+		[[ -n "$image" ]] || continue
 		type="$(jq -r '.labels["agent-images-type"] // empty' <<<"$image")"
 		name="$(jq -r '.name' <<<"$image")"
 		[[ -n "$type" && ! -f "$AGENT_GCP_ENV_DIR/$type.env" ]] || continue
 		log "$name: no infra/gcp/$type.env; deleting the image"
 		gcp_call "$token" DELETE "$compute_api/global/images/$name"
 		[[ "$GCP_STATUS" == 2* || "$GCP_STATUS" == 404 ]] || die "deleting $name: HTTP $GCP_STATUS: $(gcp_error)"
-	done < <(list_images "$token" "labels.managed-by=agent-images")
+	done <<<"$images"
 }
 
 cmd_status() {

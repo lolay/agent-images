@@ -205,6 +205,16 @@ class BuildsFromTheLockTests(unittest.TestCase):
         orchestrator = workflow[workflow.index("\n  orchestrator:\n"):workflow.index("\n  prune:\n")]
         self.assertIn("ORCHESTRATOR_CLAUDE_VERSION: ${{ needs.plan.outputs.claude-version }}", orchestrator)
 
+    def test_plan_resolves_the_orchestrators_claude_only_when_it_builds_it(self):
+        # A hiccup at Claude's release server must not fail plan, and every type's deploy
+        # with it, when no orchestrator is planned.
+        workflow = (REPO / ".github/workflows/cloud-deploy.yml").read_text()
+        plan = workflow[workflow.index("\n  plan:\n"):workflow.index("\n  types:\n")]
+        step = plan[plan.index("      - name: Claude Code version"):]
+        self.assertIn("        if: steps.targets.outputs.orchestrator == 'true'\n", step)
+        self.assertIn('echo "orchestrator=$(jq \'.orchestrator\' <<<"$plan")"', plan, "the output it reads")
+        self.assertIn("id: targets", plan)
+
     def test_make_and_bake_sh_restate_no_claude_default(self):
         # The bake file's ORCHESTRATOR_CLAUDE_VERSION is the one default (r3.f22).
         self.assertNotIn("CLAUDE_VERSION ?=", (REPO / "Makefile").read_text())

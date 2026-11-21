@@ -326,6 +326,20 @@ class VmDeployTests(DeployTests):
         self.assertTrue(build.endswith(f"{REPO}/images/android/gce"))
         self.assertNotIn("-force", build, "a same-named image is the live one")
 
+    def test_no_packer_template_names_its_family(self):
+        # The family is gcp_image_family's alone (r1.f20): each compute type's
+        # template takes it from deploy.sh, with no default of its own to drift.
+        compute = [path.stem for path in sorted((REPO / "infra/gcp").glob("*.env"))
+                   if "BACKEND=compute" in path.read_text()]
+        self.assertIn("android", compute)
+        for type_ in compute:
+            with self.subTest(type=type_):
+                variables = "".join(path.read_text() for path in (REPO / f"images/{type_}/gce").glob("*.pkr.hcl"))
+                block = variables[variables.index('variable "image_family" {'):]
+                block = block[:block.index("\n}\n")]
+                self.assertNotIn("default", block)
+                self.assertIn("gcp_image_family", block)
+
     def test_workflow_image_name_is_unique_per_run_and_valid(self):
         workflow = (REPO / ".github/workflows/cloud-deploy.yml").read_text()
         line = next(l for l in workflow.splitlines() if 'echo "image=' in l)
@@ -409,6 +423,15 @@ class VmDeployTests(DeployTests):
         self.assertIn("  ok    kvm: KVM acceleration can be used", result.stdout)
         self.assertIn("| emulator-boot-sec-cold | 41.2 |", summary.read_text())
 
+    def test_vm_promote_fails_when_it_cant_list_the_older_images(self):
+        # Promoted, but the older images it should delete went unlisted: say so.
+        self.smoke_reports("pass")
+        self.gcp.fail("GET", "/global/images", 403, "permission denied")
+        result = self.deploy("vm-promote", "android", ANDROID_IMAGE, "abc123def456789")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("listing images: HTTP 403", result.stderr)
+        self.assertEqual(self.gcp.state.images[ANDROID_IMAGE]["family"], "agent-android")
+
     def test_a_failed_smoke_leaves_the_family_alone(self):
         self.smoke_reports("fail")
         result = self.deploy("vm-promote", "android", ANDROID_IMAGE, "abc123def456789")
@@ -459,6 +482,30 @@ class VmDeployTests(DeployTests):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(sorted(self.gcp.state.instances), ["agent-android-1", "agent-other"])
         self.assertIn("agent-retired-b: no infra/gcp/retired.env; deleting the VM in europe-west4-a", result.stdout)
+
+    def test_prune_fails_when_a_listing_fails(self):
+        # A listing that dies inside `< <(...)` lost its exit, and prune passed
+        # having deleted nothing.
+        listings = {
+            "jobs": ("/locations/us-central1/jobs", "listing jobs"),
+            "instances": ("/aggregated/instances", "listing VMs"),
+            "images": ("/global/images", "listing images"),
+        }
+        for what, (suffix, message) in listings.items():
+            for status in (403, "000"):
+                with self.subTest(what=what, status=status):
+                    self.gcp.state.failures.clear()
+                    self.gcp.state.delays.clear()
+                    env = {}
+                    if status == "000":
+                        # No answer in time: curl gives up, as on a dropped connection.
+                        self.gcp.state.delays[suffix] = 2
+                        env["GCP_CURL_MAX_TIME"] = "1"
+                    else:
+                        self.gcp.fail("GET", suffix, status, "permission denied")
+                    result = self.deploy("prune", **env)
+                    self.assertEqual(result.returncode, 1, result.stdout)
+                    self.assertIn(f"{message}: HTTP {status}", result.stderr)
 
     def test_prune_fails_when_a_vm_delete_fails(self):
         self.gcp.state.instances["agent-retired-a"] = {

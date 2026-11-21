@@ -288,6 +288,27 @@ class ReadinessTests(SupervisorCase):
         self.wait_for(lambda: self.starts("android"), what="android once its family has an image")
         self.stop()
 
+    def test_sigterm_during_a_slow_readiness_check_starts_nothing_more(self):
+        # gis sorts first; its check takes 1.5 s, and the trap runs only once it
+        # returns. Then neither gis nor linux may start: they'd miss the drain.
+        self.gcp.state.delays["/jobs/agent-gis"] = 1.5
+        self.start()
+        self.wait_for(lambda: any(line.startswith("supervisor: runner types:") for line in self.lines),
+                      what="the supervisor to start")
+        time.sleep(0.5)
+        self.assertEqual(self.stop(), 0)
+        self.assertEqual(self.gcp.requests("GET", "/jobs/agent-linux"), [], "linux not even checked")
+        self.assertEqual(self.gcp.requests("GET", "/secrets/"), [], "no secret fetched")
+        self.assertFalse(any("started orchestrator" in line for line in self.lines), self.lines)
+        tokens = self.gcp.requests("GET", "/service-accounts/default/token")
+        self.assertEqual(len(tokens), 1)
+
+    def test_one_token_serves_the_check_and_the_secret(self):
+        self.start()
+        self.wait_for(lambda: self.starts("linux") and self.starts("gis"), what="both types")
+        self.assertEqual(len(self.gcp.requests("GET", "/service-accounts/default/token")), 2, "one per type")
+        self.stop()
+
     def test_an_answer_other_than_404_starts_it_anyway(self):
         self.gcp.fail("GET", "/jobs/agent-gis", 503, "unavailable")
         self.start(RUNNER_WAIT_SEC="3600")
@@ -519,12 +540,40 @@ def help_text(flags_listed):
     return "\n".join(lines) + "\n"
 
 
-class FlagCheckTests(unittest.TestCase):
-    """scripts/cloud/check-orchestrator-flags.sh: the deploy's check of the
-    supervisor's flags against the image's own Claude (r1.f10)."""
+# docker as the check runs it: `run --rm --entrypoint claude <image>
+# self-hosted-runner orchestrator --help` and nothing else, printing $FAKE_HELP,
+# or failing as a pull does when $FAKE_PULL_FAILS is set.
+FAKE_DOCKER = r"""
+expected="run --rm --entrypoint claude ${FAKE_IMAGE} self-hosted-runner orchestrator --help"
+if [[ "$*" != "$expected" ]]; then
+	echo "docker: fake: unexpected call: $*" >&2
+	exit 125
+fi
+if [[ -n "${FAKE_PULL_FAILS:-}" ]]; then
+	echo "docker: Error response from daemon: pull access denied for ${FAKE_IMAGE}" >&2
+	exit 125
+fi
+cat "$FAKE_HELP"
+"""
 
-    def check(self, text):
-        return subprocess.run(["bash", str(CHECK_FLAGS)], input=text, capture_output=True, text=True)
+IMAGE = "registry.example/agent-orchestrator@sha256:abc"
+
+
+class FlagCheckTests(unittest.TestCase):
+    """scripts/cloud/check-orchestrator-flags.sh: the check of the supervisor's
+    flags against an orchestrator image's own Claude (r1.f10)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(subprocess.run, ["rm", "-rf", str(self.tmp)], check=True)
+        write_executable(self.tmp / "bin/docker", FAKE_DOCKER)
+
+    def check(self, text, *args, **env):
+        (self.tmp / "help.txt").write_text(text)
+        return subprocess.run(
+            ["bash", str(CHECK_FLAGS), *(args or (IMAGE,))], capture_output=True, text=True, timeout=30,
+            env=base_env(self.tmp, self.tmp / "bin", FAKE_HELP=str(self.tmp / "help.txt"), FAKE_IMAGE=IMAGE, **env),
+        )
 
     def test_the_supervisor_passes_the_flags_in_the_list(self):
         self.assertEqual(flags(), [
@@ -555,13 +604,50 @@ class FlagCheckTests(unittest.TestCase):
     def test_fails_with_no_help_text(self):
         result = self.check("")
         self.assertEqual(result.returncode, 1)
-        self.assertIn("no --help text", result.stderr)
+        self.assertIn("--help printed nothing", result.stderr)
+
+    def test_an_image_that_wont_run_fails_with_dockers_error(self):
+        # Not as seven missing flags (the help text was docker's error).
+        result = self.check(help_text(flags()), FAKE_PULL_FAILS="1")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f"couldn't run {IMAGE}'s claude self-hosted-runner orchestrator --help", result.stderr)
+        self.assertIn("pull access denied", result.stderr)
+        self.assertNotIn("lists no", result.stderr)
+
+    def test_takes_exactly_one_image(self):
+        result = self.check(help_text(flags()), IMAGE, "extra")
+        self.assertEqual(result.returncode, 2)
+
+
+class FlagCheckWiringTests(unittest.TestCase):
+    """Where the workflows run the check: the deploy before the host takes the
+    image, and the pull request check on the image it built (r1.f10)."""
+
+    @staticmethod
+    def step(job, name):
+        text = job[job.index(f"      - name: {name}"):]
+        return text[:text.find("\n      - ", 1)]
 
     def test_the_deploy_checks_before_pointing_the_host_at_the_image(self):
         workflow = (REPO / ".github/workflows/cloud-deploy.yml").read_text()
-        check = workflow.index("scripts/cloud/check-orchestrator-flags.sh")
-        self.assertIn("self-hosted-runner orchestrator --help", workflow[check - 300:check])
-        self.assertLess(check, workflow.index("scripts/cloud/deploy.sh orchestrator"))
+        job = workflow[workflow.index("\n  orchestrator:\n"):workflow.index("\n  prune:\n")]
+        check = self.step(job, "Check the supervisor's flags")
+        self.assertIn('scripts/cloud/check-orchestrator-flags.sh "$ARTIFACT_REGISTRY/agent-orchestrator@$digest"',
+                      check)
+        self.assertLess(job.index("check-orchestrator-flags.sh"), job.index("scripts/cloud/deploy.sh orchestrator"))
+        self.assertLess(job.index("id: bake"), job.index("check-orchestrator-flags.sh"))
+
+    def test_the_pull_request_checks_the_orchestrator_it_built(self):
+        workflow = (REPO / ".github/workflows/cloud-build.yml").read_text()
+        job = workflow[workflow.index("\n  build:\n"):workflow.index("\n  gate:\n")]
+        check = self.step(job, "Check the supervisor's flags")
+        self.assertIn("if: matrix.target == 'orchestrator'", check)
+        # make cloud-build's local tag (REGISTRY empty, TAG local).
+        self.assertIn("run: scripts/cloud/check-orchestrator-flags.sh agent-orchestrator:local", check)
+        self.assertLess(job.index('make cloud-build TYPE="$TARGET"'), job.index("check-orchestrator-flags.sh"))
+        bake = (REPO / "images/cloud/docker-bake.hcl").read_text()
+        self.assertIn('result = [REGISTRY == "" ? "agent-${name}:${TAG}"', bake)
+        self.assertRegex(bake, r'variable "TAG" \{\n  default = "local"\n\}')
 
 
 class FakeClaudeTests(unittest.TestCase):

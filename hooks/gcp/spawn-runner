@@ -193,9 +193,16 @@ compute_fail() {
 #     The boot disk is the larger of DISK_GB and the family's current image: a
 #     disk can't be smaller than its image, which was built at the DISK_GB of
 #     its day, so a lowered DISK_GB would fail every insert until the next
-#     build. This way it takes effect with that build instead (r1.f20).
+#     build. This way it takes effect with that build instead (r1.f20). The
+#     VM still names the family, not the image just read: a promote moves the
+#     family and deletes the older image at once, so naming that image could
+#     404 (don't retry) where the family form at worst meets a bigger image
+#     (400, retried, and the next read sizes it).
+#
+#     The settings' body and the work order's are built apart, so only a
+#     failure to read the work order is blamed on it.
 create_instance() {
-	local instance safe_order zone_url detail body family image_gb disk_gb="$DISK_GB"
+	local instance safe_order zone_url detail body base settings family image_gb disk_gb="$DISK_GB"
 	safe_order="$(name_safe "$order_id")"
 	instance="agent-$RUNNER_TYPE-$safe_order"
 	instance="${instance:0:63}"
@@ -210,15 +217,17 @@ create_instance() {
 		log "$label: DISK_GB=$disk_gb is below $family's image ($image_gb GB) until its next build; using $image_gb"
 		disk_gb="$image_gb"
 	fi
-	body="$(DISK_GB="$disk_gb" gcp_instance_body "$instance" "projects/$PROJECT_ID/global/images/family/$family" \
-		"$RUNNER_TYPE" "$MAX_RUN_DURATION_SEC" "$RUNNER_SERVICE_ACCOUNT" |
-		jq -c --rawfile order "$CLAUDE_RUNNER_WORK_ORDER_FILE" --arg runner_env "$(runner_env)" \
-			--arg order_label "${safe_order:0:63}" '
-			.labels["agent-images-order"] = $order_label
-			| .metadata.items = [
-				{key: "work-order", value: ($order | rtrimstr("\n"))},
-				{key: "runner-env", value: $runner_env}
-			] + .metadata.items' 2>/dev/null)" || fail 1 "can't read the work order file"
+	base="$(DISK_GB="$disk_gb" gcp_instance_body "$instance" "projects/$PROJECT_ID/global/images/family/$family" \
+		"$RUNNER_TYPE" "$MAX_RUN_DURATION_SEC" "$RUNNER_SERVICE_ACCOUNT")" ||
+		fail 1 "can't build VM $instance's request from infra/gcp/$RUNNER_TYPE.env"
+	settings="$(runner_env)" || fail 1 "can't build VM $instance's runner settings"
+	body="$(jq -c --rawfile order "$CLAUDE_RUNNER_WORK_ORDER_FILE" --arg runner_env "$settings" \
+		--arg order_label "${safe_order:0:63}" '
+		.labels["agent-images-order"] = $order_label
+		| .metadata.items = [
+			{key: "work-order", value: ($order | rtrimstr("\n"))},
+			{key: "runner-env", value: $runner_env}
+		] + .metadata.items' <<<"$base" 2>/dev/null)" || fail 1 "can't read the work order file"
 	gcp_call "$token" POST "$zone_url/instances" - <<<"$body"
 	case "$GCP_STATUS" in
 	2*) ;;

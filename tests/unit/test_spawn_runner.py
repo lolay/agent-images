@@ -1,5 +1,6 @@
 """hooks/gcp/spawn-runner against the fake GCP endpoints."""
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -8,7 +9,7 @@ import unittest
 from pathlib import Path
 
 from fake_gcp import FakeGcp
-from support import REPO, base_env
+from support import REPO, base_env, write_executable
 
 HOOK = REPO / "hooks/gcp/spawn-runner"
 WORK_ORDER = "eyJhbGciOi.work-order.signature"
@@ -369,6 +370,20 @@ class SpawnComputeTests(SpawnRunnerTests):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.boot_disk()["diskSizeGb"], "100")
         self.assertNotIn("is below", result.stdout)
+
+    def test_a_failed_vm_request_is_not_blamed_on_the_work_order(self):
+        # gcp_instance_body's jq fails (it alone passes --arg machine); the work
+        # order file is fine, so the message must say what did fail.
+        jq_bin = self.tmp / "jq-bin"
+        write_executable(jq_bin / "jq", (
+            'if [[ " $* " == *" --arg machine "* ]]; then echo "jq: error: fake" >&2; exit 5; fi\n'
+            f'exec {shutil.which("jq")} "$@"\n'))
+        result = self.run_hook(PATH=f"{jq_bin}:{os.environ['PATH']}")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn(f"can't build VM {INSTANCE}'s request from infra/gcp/android.env", result.stderr)
+        self.assertNotIn("work order", result.stderr)
+        self.assertEqual(self.gcp.requests("POST", INSTANCES_PATH), [])
+        self.assertNotIn(self.marker_key(), self.gcp.state.objects, "a retry can submit again")
 
     def test_no_image_in_the_family_does_not_retry(self):
         self.gcp.state.images.clear()

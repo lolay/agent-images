@@ -479,6 +479,20 @@ class WatchdogTests(unittest.TestCase):
         self.assertIn("stopping the runner so the session requeues", result.stderr)
         self.assertEqual(len(self.pkill_calls()), 1)
 
+    def test_a_runner_env_that_does_not_source_is_warned_about(self):
+        # Its WATCHDOG_ACTION=terminate is lost; the fallback to log mustn't be silent.
+        self.runner_env.write_text(f"CLAUDE_BASE_DIR={self.tmp / 'ws'}\nWATCHDOG_ACTION=terminate\nif then\n")
+        self.run_watchdog()
+        result = self.run_watchdog()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"{self.runner_env} doesn't source; using the defaults", result.stderr)
+        self.assertEqual(self.pkill_calls(), [])
+
+    def test_a_runner_env_that_sources_gives_no_warning(self):
+        self.runner_env.write_text(f"AGENT=claude\nCLAUDE_BASE_DIR={self.tmp / 'ws'}\n")
+        result = self.run_watchdog()
+        self.assertNotIn("doesn't source", result.stderr)
+
     def test_log_only_by_default(self):
         self.runner_env.write_text(f"AGENT=claude\nCLAUDE_BASE_DIR={self.tmp / 'ws'}\n")
         self.run_watchdog()

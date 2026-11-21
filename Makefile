@@ -352,7 +352,7 @@ cloud-smoke: ## Check a built image's toolset record, then run its binary checks
 define CLOUD_LINT_ANDROID
 packer init $(ANDROID_GCE_DIR) >/dev/null
 packer fmt -check -recursive $(ANDROID_GCE_DIR)
-packer validate -var project_id=check -var zone=check -var network=check -var subnetwork=check -var image_name=agent-android-check -var commit=check $(ANDROID_GCE_DIR)
+packer validate -var project_id=check -var zone=check -var network=check -var subnetwork=check -var image_name=agent-android-check -var image_family=agent-android-check -var commit=check $(ANDROID_GCE_DIR)
 endef
 
 cloud-lint: ## Lint the cloud scripts, workflows and settings; MODE=android adds the android Packer template (no writes; needs Go, and Packer for android)

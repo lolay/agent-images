@@ -295,7 +295,7 @@ matrix. A failed deploy makes the next one redeploy more, never less:
 | `images/shared/**`, `images/toolsets/install-toolset.sh`, `images/toolsets/write-claude-md.sh`, `images/toolsets/toolset-checks.sh`, `images/toolsets/write-versions.sh`, `images/toolsets/skills/**`, `images/cloud/base/**`, `images/cloud/runner/**`, `images/cloud/entrypoint.sh`, `images/cloud/docker-bake.hcl`, `.dockerignore` | Every runner type |
 | `images/toolsets/<toolset>/**` | The types whose Dockerfiles (or build parents') install that toolset |
 | `images/cloud/<type>/**`, including its `versions.lock` | That type |
-| `hooks/gcp/**`, `images/cloud/orchestrator/**`, and the two files its build reads from elsewhere (`images/cloud/base/apt-build.conf`, `images/toolsets/install-toolset.sh`) | The orchestrator host (new image, then the host restarts its container) |
+| `hooks/gcp/**`, `images/cloud/orchestrator/**`, `images/cloud/docker-bake.hcl` and `.dockerignore` (which also rebuild every runner type, above), and the two files its build reads from elsewhere (`images/cloud/base/apt-build.conf`, `images/toolsets/install-toolset.sh`) | The orchestrator host (new image, then the host restarts its container) |
 | `infra/gcp/<type>.env` (CPU, memory, GPU, timeout, `--min-idle`, `REBUILD`, `DEPLOY`) | That type's job and orchestrator settings, no image build, unless the type had no job at the diff's base: its env file is new there, or this change removed `DEPLOY=false`. Then there's no live image for the job to reuse, so the type builds, and its first deploy takes one push. plan reads that from the base commit, not from Cloud Run (it has no GCP token). `DEPLOY=false` builds and pushes the image but writes no job, runs no smoke and starts no orchestrator: a type waiting for its quota. It is for Cloud Run types only: deploy.sh's vm commands and the supervisor refuse it for `BACKEND=compute` |
 | `scripts/cloud/job-spec.sh` | Every type's job, no image build |
 | `images/android/**` (the LXD image's scripts and files, and `gce/`), the toolsets in `images/android/toolsets.txt`, `images/shared/**`, the four toolset scripts and `images/toolsets/skills/**` | The `android` Compute Engine image: Packer build, smoke VM, then family `agent-android` ([below](#compute-engine-vm-per-session-android-and-the-gpu-fallback)) |
@@ -878,8 +878,10 @@ it's one process per type inside one container:
   smoke and always the newest Claude, so before the deploy points the host at a new
   image it runs that image's `claude self-hosted-runner orchestrator --help` and
   fails unless every flag in the list is defined there
-  (`scripts/cloud/check-orchestrator-flags.sh`, r1.f10); the unit tests' fake
-  `claude` refuses any flag outside the list, or one without its value.
+  (`scripts/cloud/check-orchestrator-flags.sh`, r1.f10). The pull request check
+  runs the same check on the orchestrator image it builds, since the unit tests'
+  fake `claude`, which refuses any flag outside the list or one without its
+  value, reads that same list and can't catch a typo in it.
 - **Secrets:** each type's `claude-env-<type>`, read from Secret Manager at start by
   the host's service account and written to a file per type (mode 600, `/dev/shm`). The
   supervisor passes each orchestrator only its own, and the hook unsets it before
@@ -904,8 +906,10 @@ it's one process per type inside one container:
   whose guest has marked it read. The deploy's smoke VMs are left to the deploy.
   Logged as `supervisor: reaper`.
 - **Deploys:** a push to `main` that touches `hooks/gcp/**`, `images/cloud/orchestrator/**`,
-  `infra/gcp/*.env`, or the two files its build mounts from elsewhere
-  (`images/cloud/base/apt-build.conf`, `images/toolsets/install-toolset.sh`) rebuilds it and restarts it on the host. Sessions in flight are
+  `infra/gcp/*.env`, its build's definition and context (`images/cloud/docker-bake.hcl`,
+  `.dockerignore`), or the two files its build mounts from elsewhere
+  (`images/cloud/base/apt-build.conf`, `images/toolsets/install-toolset.sh`) rebuilds it
+  and restarts it on the host (`scripts/cloud/changed-targets.sh` is the list). Sessions in flight are
   unaffected: they belong to runners, not to the orchestrator. The deploy's
   orchestrator job runs after the types and VM images, whether they passed or
   failed: a failed type keeps its old job or image, or, on its first deploy, has

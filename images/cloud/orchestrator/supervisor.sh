@@ -78,14 +78,10 @@ if ((${#types[@]} == 0)); then
 	exit 1
 fi
 
-# fetch_secret <type> <file>: the type's Claude environment key, to an
+# fetch_secret <token> <type> <file>: the type's Claude environment key, to an
 # owner-only file. The value passes through a pipe, never a command line.
 fetch_secret() {
-	local type="$1" file="$2" token
-	token="$(gcp_token)" || {
-		log "$type: no access token from the metadata server"
-		return 1
-	}
+	local token="$1" type="$2" file="$3"
 	gcp_call "$token" GET "$GCP_SECRETS_URL/v1/projects/$PROJECT_NUMBER/secrets/claude-env-$type/versions/latest:access"
 	if [[ "$GCP_STATUS" != 200 ]]; then
 		log "$type: can't read secret claude-env-$type: HTTP $GCP_STATUS: $(gcp_error)"
@@ -226,13 +222,13 @@ done
 mkdir -p "$SUPERVISOR_SECRETS_DIR"
 chmod 700 "$SUPERVISOR_SECRETS_DIR"
 
-# runner_ready <type>: whether the type has something to spawn: its Cloud Run
-# job, or an image in its family. Only a 404 says no: on any other answer it
-# can't tell, logs why and says yes, and the hook reports a real problem per
-# session as before. "Not yet" is logged once, and its end once.
+# runner_ready <token> <type>: whether the type has something to spawn: its
+# Cloud Run job, or an image in its family. Only a 404 says no: on any other
+# answer it can't tell, logs why and says yes, and the hook reports a real
+# problem per session as before. "Not yet" is logged once, and its end once.
 declare -A waiting=()
 runner_ready() {
-	local type="$1" token what url
+	local token="$1" type="$2" what url
 	if [[ "$(gcp_backend "$type")" == compute ]]; then
 		what="image in family $(gcp_image_family "$type")"
 		url="$GCP_COMPUTE_URL/compute/v1/projects/$PROJECT_ID/global/images/family/$(gcp_image_family "$type")"
@@ -240,10 +236,6 @@ runner_ready() {
 		what="Cloud Run job agent-$type"
 		url="$GCP_RUN_URL/v2/projects/$PROJECT_ID/locations/$REGION/jobs/agent-$type"
 	fi
-	token="$(gcp_token)" || {
-		log "$type: no access token to check for its $what; starting its orchestrator anyway"
-		return 0
-	}
 	gcp_call "$token" GET "$url"
 	case "$GCP_STATUS" in
 	200)
@@ -260,16 +252,28 @@ runner_ready() {
 	esac
 }
 
+# start_type <type> <now>: start its orchestrator, or schedule another try.
+# Its API calls can each take up to GCP_CURL_MAX_TIME, and a SIGTERM's trap runs
+# only once the call in progress returns, so it checks $stopping after them: an
+# orchestrator started after the stop began would miss the drain the host's
+# docker stop allows. One token serves both calls.
 start_type() {
-	local type="$1" now="$2" secret_file="$SUPERVISOR_SECRETS_DIR/$1" pid
-	if ! runner_ready "$type"; then
-		next_start[$type]=$((now + RUNNER_WAIT_SEC))
-		return
-	fi
-	if ! fetch_secret "$type" "$secret_file"; then
+	local type="$1" now="$2" secret_file="$SUPERVISOR_SECRETS_DIR/$1" pid token
+	if ! token="$(gcp_token)"; then
+		log "$type: no access token from the metadata server"
 		next_start[$type]=$((now + SECRET_RETRY_SEC))
 		return
 	fi
+	if ! runner_ready "$token" "$type"; then
+		next_start[$type]=$((now + RUNNER_WAIT_SEC))
+		return
+	fi
+	$stopping && return
+	if ! fetch_secret "$token" "$type" "$secret_file"; then
+		next_start[$type]=$((now + SECRET_RETRY_SEC))
+		return
+	fi
+	$stopping && return
 	local min_idle expected
 	min_idle="$(gcp_type_setting "$type" MIN_IDLE 0)"
 	expected="$(gcp_type_setting "$type" EXPECTED_SPAWN_SECONDS 120)"
@@ -435,6 +439,8 @@ while :; do
 	now="$(date +%s)"
 	if ! $stopping; then
 		for type in "${types[@]}"; do
+			# A signal that arrived during the last type's start ends the round.
+			$stopping && break
 			if [[ -z "${pid_of[$type]:-}" ]] && ((now >= next_start[$type])); then
 				start_type "$type" "$now"
 			fi

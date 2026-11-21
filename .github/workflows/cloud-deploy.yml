@@ -107,9 +107,12 @@ jobs:
       # names now, from the bake file's ORCHESTRATOR_CLAUDE_VERSION through
       # lock.sh, which holds the release URL. The version is part of its build,
       # so a new release rebuilds that layer instead of the cache keeping the
-      # first one. Runner types take theirs from their lock.
+      # first one. Runner types take theirs from their lock. Only when the
+      # orchestrator is planned: a hiccup at Claude's release server must not
+      # fail plan, and with it every type's deploy.
       - name: Claude Code version
         id: claude
+        if: steps.targets.outputs.orchestrator == 'true'
         run: |
           set -euo pipefail
           version="$(scripts/cloud/lock.sh orchestrator-claude)"
@@ -401,8 +404,7 @@ jobs:
         run: |
           set -euo pipefail
           digest="$(jq -er '.orchestrator["containerimage.digest"]' <<<"$METADATA")"
-          docker run --rm --entrypoint claude "$ARTIFACT_REGISTRY/agent-orchestrator@$digest" \
-            self-hosted-runner orchestrator --help 2>&1 | scripts/cloud/check-orchestrator-flags.sh
+          scripts/cloud/check-orchestrator-flags.sh "$ARTIFACT_REGISTRY/agent-orchestrator@$digest"
       - name: Point the VM at it
         env:
           METADATA: ${{ steps.bake.outputs.metadata }}
