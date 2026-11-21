@@ -108,7 +108,9 @@ gcp_type_sets_keys() { (
 	shift 2
 	declare -A before=()
 	unset "$@"
-	set +eu
+	# -a as gcp_load_env sources: a condition that reads a key in a subprocess
+	# sees what it would there.
+	set +eu -a
 	if [[ "$over" == project ]]; then
 		# shellcheck source=/dev/null
 		source "$AGENT_GCP_ENV_DIR/project.env" >/dev/null 2>&1

@@ -255,6 +255,17 @@ class CheckTypeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertTrue(result.stderr.startswith("conditional: REGION is a project key"), result.stderr)
 
+    def test_an_override_whose_condition_reads_a_key_in_a_subprocess_is_refused(self):
+        # gcp_load_env sources with -a, so a subprocess sees project.env's REGION
+        # (Copilot's second round on #162).
+        env_dir = self.fixture(
+            subprocess='if [[ "$(bash -c \'printf %s "${REGION:-}"\')" == r ]]; then REGION=us-east1; fi\n'
+        )
+        (env_dir / "project.env").write_text("PROJECT_ID=p\nREGION=r\n")
+        result = self.check(env_dir, "subprocess")
+        self.assertEqual(result.returncode, 1)
+        self.assertTrue(result.stderr.startswith("subprocess: REGION is a project key"), result.stderr)
+
     def test_project_keys_are_what_project_env_sets_however_written(self):
         env_dir = self.fixture()
         (env_dir / "project.env").write_text("# comment\nPROJECT_ID=p\n  NETWORK=n\nexport A=1 B=2\n")
