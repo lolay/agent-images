@@ -62,6 +62,12 @@ class StageTests(unittest.TestCase):
         self.assertIn("gce/agent-gce-order.sh", self.files(dest))
         self.assertIn("scripts/setup-user.sh", self.files(dest))
 
+    def test_an_unknown_variant_is_refused(self):
+        # A misspelled variant would stage the common layout alone.
+        result, _ = self.stage("gcee")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no lines for variant gcee", result.stderr)
+
     def test_a_non_empty_destination_is_refused(self):
         dest = self.tmp / "staging"
         dest.mkdir()

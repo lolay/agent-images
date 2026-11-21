@@ -24,10 +24,12 @@ if [[ -e "$dest" ]] && [[ -n "$(ls -A "$dest")" ]]; then
 fi
 mkdir -p "$dest"
 
+variant_lines=0
 while read -r src target line_variant extra; do
 	[[ -n "$src" && "$src" != \#* ]] || continue
 	[[ -n "$target" && -z "$extra" ]] || die "$list: bad line: $src $target $line_variant $extra"
 	[[ -z "$line_variant" || "$line_variant" == "$variant" ]] || continue
+	[[ -z "$line_variant" ]] || variant_lines=$((variant_lines + 1))
 	[[ -e "$repo/$src" ]] || die "$list: no $src"
 	mkdir -p "$dest/$target"
 	if [[ -d "$repo/$src" ]]; then
@@ -36,3 +38,5 @@ while read -r src target line_variant extra; do
 		cp "$repo/$src" "$dest/$target/"
 	fi
 done <"$list"
+# A misspelled variant would stage the common layout alone and pass unnoticed.
+[[ -z "$variant" || "$variant_lines" -gt 0 ]] || die "$list has no lines for variant $variant"

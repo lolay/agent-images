@@ -9,6 +9,11 @@
 # hooks/linux/spawn-runner claims the name and submits this as systemd user unit
 # agent-images-<vm>.service, so it outlives the hook. SIGTERM (make runner-stop,
 # or runner-uninstall) stops and deletes the VM; its session requeues.
+#
+# The name is released only once LXD says the VM is gone. While LXD doesn't
+# answer (a snap refresh restarts it) this waits, up to LXD_DOWN_LIMIT_MIN
+# (default 1440, three times a session's 480-minute cap), then gives up with an
+# error and leaves the claim to reclaim_stale_runners.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,7 +28,8 @@ readonly work_order="$runner_dir/work-order"
 image_ref="$(setting IMAGE_REF "$ANDROID_IMAGE_ALIAS")"
 cpu="$(setting VM_CPU 6)"
 memory_gb="$(setting VM_MEMORY_GB 24)"
-readonly image_ref cpu memory_gb
+lxd_down_limit_min="$(setting LXD_DOWN_LIMIT_MIN 1440)"
+readonly image_ref cpu memory_gb lxd_down_limit_min
 
 [[ -d "$runner_dir" ]] || die "$vm: not claimed (no $runner_dir)"
 printf '%s\n' "$$" >"$runner_dir/pid"
@@ -32,17 +38,29 @@ mkdir -p "$AGENT_IMAGES_LOG_DIR"
 guest_log_pid=""
 
 cleanup() {
+	local listed=0
 	rm -f "$work_order"
+	vm_listed_patiently "$vm" || listed=$?
 	# Stopped early (SIGTERM): a clean shutdown lets the runner drain and push its
 	# session's work before the VM goes.
-	if vm_exists "$vm"; then
+	if ((listed == 0)); then
 		lxc stop --timeout "$VM_STOP_TIMEOUT_SEC" "$vm" >/dev/null 2>&1 || true
 	fi
 	if [[ -n "$guest_log_pid" ]]; then
 		kill "$guest_log_pid" 2>/dev/null || true
 	fi
-	if vm_exists "$vm"; then
+	if ((listed != 1)); then
+		listed=0
+		vm_listed_patiently "$vm" || listed=$?
+	fi
+	if ((listed == 0)); then
 		lxc delete --force "$vm" >/dev/null 2>&1 || true
+		listed=0
+		vm_listed_patiently "$vm" || listed=$?
+	fi
+	if ((listed != 1)); then
+		log "$vm: not deleted (LXD isn't answering, or the delete failed); keeping its claim for reclaim" >&2
+		return
 	fi
 	rm -rf "$runner_dir"
 	log "$vm: deleted"
@@ -75,19 +93,21 @@ if EPHEMERAL=true ENVIRONMENT_SECRET_FILE="$work_order" \
 	log "$vm: waiting for its session to finish"
 	# Only a VM that LXD no longer lists has powered off. A failed lxc (LXD
 	# restarting) ends nothing: stopping on it would cut a live session short.
-	lxd_down=false
+	down_sec=0
 	while :; do
 		listed=0
 		vm_listed "$vm" || listed=$?
 		case "$listed" in
 		0)
-			! $lxd_down || log "$vm: LXD answers again"
-			lxd_down=false
+			((down_sec == 0)) || log "$vm: LXD answers again"
+			down_sec=0
 			;;
 		1) break ;;
 		*)
-			$lxd_down || log "$vm: LXD isn't answering; still waiting" >&2
-			lxd_down=true
+			((down_sec > 0)) || log "$vm: LXD isn't answering; still waiting" >&2
+			((down_sec < lxd_down_limit_min * 60)) ||
+				die "$vm: LXD hasn't answered for $lxd_down_limit_min minutes; giving up (the claim stays for reclaim)"
+			down_sec=$((down_sec + 10))
 			;;
 		esac
 		sleep 10

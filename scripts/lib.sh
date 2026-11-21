@@ -22,14 +22,18 @@ readonly RUNNER_CONFIG="$AGENT_IMAGES_DIR/vms/runner.env"
 # Mac rather than in a VM.
 # shellcheck disable=SC2034 # used by the scripts that source this
 readonly HOST_RUNNER_CONFIG="$AGENT_IMAGES_DIR/vms/host.env"
-# How long a runner VM gets to shut down cleanly, so its runner can drain and
-# push its session's work: the guest gives the runner 120 s (ExitTimeOut in
-# images/macos/files/com.agent-images.runner.plist, TimeoutStopSec in
-# images/android/files/agent-runner.service). Tart's own default is 30 s.
-readonly VM_STOP_TIMEOUT_SEC=120
-# A runner job's stop budget: the VM's, then time to delete it and release its name.
-# shellcheck disable=SC2034 # used by the scripts that source this
-readonly RUNNER_JOB_STOP_SEC=$((VM_STOP_TIMEOUT_SEC + 30))
+# Stop budgets, each built on the one before (tests/unit/test_host_runners.py
+# checks them against the guest files).
+# The runner's own, to drain and push its session's work: the guest gives it
+# this (ExitTimeOut in images/macos/files/com.agent-images.runner.plist,
+# TimeoutStopSec in images/android/files/agent-runner.service), and so does the
+# host runner's LaunchAgent.
+readonly RUNNER_DRAIN_SEC=120
+# A runner VM's clean shutdown: the runner's drain, then the guest OS stopping.
+# Tart's own default is 30 s.
+readonly VM_STOP_TIMEOUT_SEC=$((RUNNER_DRAIN_SEC + 30))
+# A runner job's (runner-once's): the VM's, then deleting it and releasing its name.
+readonly RUNNER_JOB_STOP_SEC=$((VM_STOP_TIMEOUT_SEC + 60))
 
 die() {
 	printf 'error: %s\n' "$*" >&2
@@ -107,10 +111,11 @@ claude_account_email() {
 # SSH session can't answer Gatekeeper's prompt for, after checking it's signed
 # by Anthropic: images/shared/clear-quarantine.sh, the check the guest runs too.
 clear_claude_quarantine() {
-	local claude_bin
+	local claude_bin output
 	claude_bin="$(realpath "$(command -v claude)")"
-	"$AGENT_IMAGES_DIR/images/shared/clear-quarantine.sh" "$claude_bin" ||
+	output="$("$AGENT_IMAGES_DIR/images/shared/clear-quarantine.sh" "$claude_bin")" ||
 		die "$claude_bin is still quarantined; reinstall it: brew reinstall --cask claude-code@latest"
+	[[ -z "$output" ]] || log "$output"
 }
 
 # Writes stdin to a path under the guest user's home, owner-only. tart exec runs
@@ -125,6 +130,11 @@ guest_write() {
 		'umask 077; target="$HOME/$1"; mkdir -p "$(dirname "$target")"; cat >"$target.partial" && mv -f "$target.partial" "$target"' \
 		_ "$relative_path"
 }
+
+# Whether a name is the account of a host-side environment key: the
+# orchestrator's (orchestrator, or default) or the host runner's (host,
+# host-<context>). vm-configure refuses these as VM names, so no VM reads one.
+is_host_secret_account() { [[ "$1" == orchestrator || "$1" == default || "$1" == host || "$1" == host-* ]]; }
 
 # Fails unless a value looks like a whole Claude environment key: sk-ant-cc-
 # followed by a signed token (header.payload.signature). The orchestrator reads
@@ -166,12 +176,13 @@ launchd_domain() { printf 'gui/%s' "$(id -u)"; }
 runner_job_label() { printf 'com.agent-images.%s' "$1"; }
 
 # Writes and lints a host LaunchAgent plist. stdout and stderr go to
-# <log-base>.out and <log-base>.err. Locals are prefixed so they can't collide
-# with a caller's readonly globals.
-# Usage: write_host_plist <plist> <label> <log-base> <keep-alive: true|false> <command>...
+# <log-base>.out and <log-base>.err. <exit-timeout> is how long launchd waits
+# after SIGTERM before SIGKILL: the job's stop budget. Locals are prefixed so
+# they can't collide with a caller's readonly globals.
+# Usage: write_host_plist <plist> <label> <log-base> <keep-alive: true|false> <exit-timeout> <command>...
 write_host_plist() {
-	local plist_path="$1" job_label="$2" job_log="$3" keep_alive="$4" job_arg
-	shift 4
+	local plist_path="$1" job_label="$2" job_log="$3" keep_alive="$4" exit_timeout="$5" job_arg
+	shift 5
 	{
 		printf '%s\n' \
 			'<?xml version="1.0" encoding="UTF-8"?>' \
@@ -185,7 +196,6 @@ write_host_plist() {
 			printf '    <string>%s</string>\n' \
 				"$(printf '%s' "$job_arg" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')"
 		done
-		# ExitTimeOut leaves runner-once time to stop and delete a VM after SIGTERM.
 		printf '%s\n' \
 			'  </array>' \
 			"  <key>WorkingDirectory</key><string>$AGENT_IMAGES_DIR</string>" \
@@ -196,7 +206,7 @@ write_host_plist() {
 			'  <key>RunAtLoad</key><true/>' \
 			"  <key>KeepAlive</key><$keep_alive/>" \
 			'  <key>ThrottleInterval</key><integer>30</integer>' \
-			"  <key>ExitTimeOut</key><integer>$RUNNER_JOB_STOP_SEC</integer>" \
+			"  <key>ExitTimeOut</key><integer>$exit_timeout</integer>" \
 			"  <key>StandardOutPath</key><string>$job_log.out</string>" \
 			"  <key>StandardErrorPath</key><string>$job_log.err</string>" \
 			'</dict>' \
@@ -205,16 +215,15 @@ write_host_plist() {
 	plutil -lint "$plist_path" >/dev/null
 }
 
-# Deletes runner VMs whose runner-once job is gone (a host crash, a killed job)
-# and releases their names.
-# Usage: reclaim_stale_runners [grace-minutes]
+# Prints the claimed runner names whose runner-once job is gone (a host crash, a
+# killed job), one per line. Both platforms' reclaim_stale_runners read it.
+# Usage: stale_runner_claims [grace-minutes]
 # A claim with no PID yet is spared for grace-minutes (default 2), since the hook
 # may have just made it; pass 0 when no hook can be running.
-reclaim_stale_runners() {
-	local grace_minutes="${1:-2}" claim_dir claim_vm claim_pid
+stale_runner_claims() {
+	local grace_minutes="${1:-2}" claim_dir claim_pid
 	for claim_dir in "$RUNNERS_DIR"/runner-*/; do
 		[[ -d "$claim_dir" ]] || continue
-		claim_vm="$(basename "$claim_dir")"
 		claim_pid="$(cat "$claim_dir/pid" 2>/dev/null || true)"
 		if [[ -n "$claim_pid" ]] && kill -0 "$claim_pid" 2>/dev/null; then
 			continue
@@ -223,13 +232,48 @@ reclaim_stale_runners() {
 			[[ -n "$(find "$claim_dir" -maxdepth 0 -mmin "-$grace_minutes")" ]]; then
 			continue
 		fi
+		basename "$claim_dir"
+	done
+}
+
+# Waits until none of the given PIDs runs, for at most a runner job's stop
+# budget plus a margin: the jobs were all signalled first, so they stop their
+# VMs side by side, and N runners take one budget, not N.
+# Usage: wait_for_runner_jobs <pid>...
+wait_for_runner_jobs() {
+	local waited=0 job_pid running
+	while ((waited < RUNNER_JOB_STOP_SEC + 10)); do
+		running=false
+		for job_pid in "$@"; do
+			if kill -0 "$job_pid" 2>/dev/null; then
+				running=true
+			fi
+		done
+		$running || return 0
+		sleep 2
+		waited=$((waited + 2))
+	done
+}
+
+# Deletes runner VMs whose runner-once job is gone and releases their names.
+# Usage: reclaim_stale_runners [grace-minutes] (see stale_runner_claims)
+reclaim_stale_runners() {
+	local grace_minutes="${1:-2}" claim_vm stale_vms=() stop_pids=()
+	for claim_vm in $(stale_runner_claims "$grace_minutes"); do
 		log "$claim_vm: reclaiming (its runner job is gone)"
 		launchctl bootout "$(launchd_domain)/$(runner_job_label "$claim_vm")" >/dev/null 2>&1 || true
-		# Its `tart run` may outlive a killed job, mid-session: let the runner drain.
-		tart stop --timeout "$VM_STOP_TIMEOUT_SEC" "$claim_vm" >/dev/null 2>&1 || true
+		# Its `tart run` may outlive a killed job, mid-session: let the runner
+		# drain. All stop at once, so several take one budget.
+		tart stop --timeout "$VM_STOP_TIMEOUT_SEC" "$claim_vm" >/dev/null 2>&1 &
+		stop_pids+=("$!")
+		stale_vms+=("$claim_vm")
+	done
+	((${#stale_vms[@]} > 0)) || return 0
+	wait "${stop_pids[@]}" || true
+	for claim_vm in "${stale_vms[@]}"; do
 		if vm_exists "$claim_vm"; then
 			tart delete "$claim_vm"
 		fi
-		rm -rf "$claim_dir"
+		rm -rf "${RUNNERS_DIR:?}/$claim_vm"
 	done
 }

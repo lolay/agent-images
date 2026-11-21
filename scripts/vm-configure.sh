@@ -13,8 +13,9 @@
 # single-use work order), else the VM's own Keychain item
 # agent-images.claude-environment-secret, account <vm> (make secret-set
 # NAME=claude-environment-secret VM=<vm>): a separate environment's key. Never
-# the orchestrator's (account orchestrator or default), which any session on the
-# VM could read and reuse.
+# the orchestrator's (account orchestrator or default) or the host runner's
+# (host, host-<context>), which any session on the VM could read and reuse: those
+# names are refused as VM names, and a copy of the orchestrator's key too.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -61,8 +62,13 @@ vm_secret=""
 if [[ -n "${ENVIRONMENT_SECRET_FILE:-}" ]]; then
 	[[ -s "$ENVIRONMENT_SECRET_FILE" ]] || die "$ENVIRONMENT_SECRET_FILE is missing or empty"
 else
-	vm_secret="$(keychain_secret claude-environment-secret "$vm")" ||
-		die "$vm takes a work order or its own environment key, never the orchestrator's"
+	is_host_secret_account "$vm" &&
+		die "$vm names the Keychain account of a host key (orchestrator, default, host, host-*); name the VM something else"
+	status=0
+	vm_secret="$(keychain_secret claude-environment-secret "$vm")" || status=$?
+	# 1: keychain_secret has said why (a locked keychain); 2: no item for this VM.
+	((status != 1)) || exit 1
+	((status == 0)) || die "$vm takes a work order or its own environment key, never the orchestrator's"
 	orchestrator_secret="$(keychain_secret claude-environment-secret orchestrator default 2>/dev/null)" || true
 	[[ "$vm_secret" != "$orchestrator_secret" ]] ||
 		die "$vm's Keychain item is the orchestrator's environment key; give $vm a separate environment's key: make secret-set NAME=claude-environment-secret VM=$vm"

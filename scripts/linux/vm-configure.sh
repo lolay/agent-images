@@ -15,7 +15,8 @@
 # ~/.config/agent-images/claude-environment-secret.<vm> (make secret-set
 # NAME=claude-environment-secret VM=<vm>): a separate environment's key. Never
 # the orchestrator's (the plain file, or its .orchestrator one), which any
-# session on the VM could read and reuse.
+# session on the VM could read and reuse: VM names that would read a host key
+# are refused, and a copy of the orchestrator's key too.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -60,6 +61,8 @@ vm_secret=""
 if [[ -n "${ENVIRONMENT_SECRET_FILE:-}" ]]; then
 	[[ -s "$ENVIRONMENT_SECRET_FILE" ]] || die "$ENVIRONMENT_SECRET_FILE is missing or empty"
 else
+	is_host_secret_account "$vm" &&
+		die "$vm names a host key's account (orchestrator, default, host, host-*); name the VM something else"
 	vm_secret_file="$SECRETS_DIR/claude-environment-secret.$vm"
 	[[ -s "$vm_secret_file" ]] ||
 		die "no $vm_secret_file: $vm takes a work order or its own environment key, never the orchestrator's; run make secret-set NAME=claude-environment-secret VM=$vm"

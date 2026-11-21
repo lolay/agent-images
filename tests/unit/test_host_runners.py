@@ -9,9 +9,11 @@ there, not in the checkout."""
 
 import os
 import plistlib
+import re
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -22,8 +24,24 @@ from test_shared_runner import install_fake_claude, install_fake_quarantine_tool
 WORK_ORDER = "eyJhbGciOi.work-order.signature"
 ORDER_ID = "ORD0123456789abcdef"
 ENV_KEY = "sk-ant-cc-the.environment.key"
-# Every script's stop budget for a VM's runner to drain (r1.f30).
-VM_STOP_TIMEOUT = "120"
+
+
+def lib_value(name):
+    """A constant from scripts/lib.sh, the one source for the stop budgets."""
+    return subprocess.run(
+        ["bash", "-c", 'source "$1"; printf %s "${!2}"', "_", str(REPO / "scripts/lib.sh"), name],
+        capture_output=True, text=True, check=True).stdout
+
+
+# How long a stop gives a runner VM to drain and shut down (r1.f30).
+VM_STOP_TIMEOUT = lib_value("VM_STOP_TIMEOUT_SEC")
+
+# A runner job standing in for runner-once: SIGTERM makes it take a moment to
+# "stop its VM", then note in $FAKE_OUT/events that it finished.
+FAKE_JOB = r"""
+trap 'command -p sleep 0.5; echo "finished $1" >>"$FAKE_OUT/events"; exit 0' TERM
+while :; do command -p sleep 0.05; done
+"""
 
 # Each fake appends its argv to $FAKE_OUT/<name>.calls, and notes in
 # $FAKE_OUT/leaked if the orchestrator's key reached it.
@@ -78,8 +96,11 @@ stop)
 	(($# == 1)) || die "usage: tart stop [--timeout <timeout>] <name>"
 	[[ -d "$vms/$1" ]] || die "the specified VM \"$1\" does not exist"
 	running "$1" || die "VM \"$1\" is not running"
+	echo "stop-start $1" >>"$FAKE_OUT/events"
 	touch "$vms/$1/stop"
 	while running "$1"; do command -p sleep 0.05; done
+	command -p sleep "${FAKE_STOP_DELAY:-0}"
+	echo "stop-end $1" >>"$FAKE_OUT/events"
 	;;
 delete)
 	(($# == 1)) || die "usage: tart delete <name>"
@@ -115,7 +136,14 @@ bootstrap)
 	exit "${FAKE_BOOTSTRAP_STATUS:-0}"
 	;;
 bootout)
+	# A job in $FAKE_OUT/jobs/<label> (its PID) gets SIGTERM, as launchd sends.
 	(($# == 2)) && [[ "$2" =~ ^gui/[0-9]+/.+ ]] || usage "bootout <service-target>"
+	job="$FAKE_OUT/jobs/${2##*/}"
+	if [[ -f "$job" ]] && kill -0 "$(<"$job")" 2>/dev/null; then
+		echo "signal ${2##*/}" >>"$FAKE_OUT/events"
+		kill -TERM "$(<"$job")"
+		exit 0
+	fi
 	exit "${FAKE_BOOTOUT_STATUS:-3}"
 	;;
 *) echo "Unrecognized subcommand: ${1:-}" >&2; exit 64 ;;
@@ -143,7 +171,19 @@ check() {
 	local count
 	count=$(($(cat "$FAKE_LXD/checks" 2>/dev/null || echo 0) + 1))
 	echo "$count" >"$FAKE_LXD/checks"
-	if [[ " ${FAKE_LXD_DOWN_AT:-} " == *" $count "* ]]; then
+	local down="" left
+	[[ " ${FAKE_LXD_DOWN_AT:-} " != *" $count "* ]] || down=yes
+	# $FAKE_LXD/down: "always", or how many more checks fail.
+	if [[ -f "$FAKE_LXD/down" ]]; then
+		left="$(<"$FAKE_LXD/down")"
+		if [[ "$left" == always ]]; then
+			down=yes
+		elif ((left > 0)); then
+			echo $((left - 1)) >"$FAKE_LXD/down"
+			down=yes
+		fi
+	fi
+	if [[ -n "$down" ]]; then
 		die "LXD unix socket \"/var/snap/lxd/common/lxd/unix.socket\" not accessible: connection refused"
 	fi
 	if [[ -n "${FAKE_POWEROFF_AT:-}" ]] && ((count >= FAKE_POWEROFF_AT)); then
@@ -266,12 +306,33 @@ image)
 esac
 """
 
-# systemctl --user reset-failed|stop <unit>: 5, "Unit not loaded", unless told.
+# systemctl --user reset-failed|stop [--no-block] <unit>: 5, "Unit not loaded",
+# unless the unit is a job in $FAKE_OUT/jobs/<unit> (its PID): stop sends it
+# SIGTERM and, without --no-block, waits for it to exit, as systemctl does.
 FAKE_SYSTEMCTL = RECORD + r"""
 [[ "${1:-}" == --user ]] || { echo "systemctl: --user expected" >&2; exit 1; }
-case "${2:-}" in
-reset-failed | stop) (($# == 3)) || exit 1; exit "${FAKE_SYSTEMCTL_STATUS:-5}" ;;
-*) echo "Unknown command verb ${2:-}." >&2; exit 1 ;;
+verb="${2:-}"
+shift 2 || exit 1
+block=true
+if [[ "${1:-}" == --no-block ]]; then
+	block=false
+	shift
+fi
+case "$verb" in
+reset-failed | stop)
+	(($# == 1)) || exit 1
+	job="$FAKE_OUT/jobs/$1"
+	if [[ "$verb" == stop && -f "$job" ]] && kill -0 "$(<"$job")" 2>/dev/null; then
+		echo "signal $1" >>"$FAKE_OUT/events"
+		kill -TERM "$(<"$job")"
+		if $block; then
+			while kill -0 "$(<"$job")" 2>/dev/null; do command -p sleep 0.05; done
+		fi
+		exit 0
+	fi
+	exit "${FAKE_SYSTEMCTL_STATUS:-5}"
+	;;
+*) echo "Unknown command verb $verb." >&2; exit 1 ;;
 esac
 """
 
@@ -300,6 +361,10 @@ exit "${FAKE_SYSTEMD_RUN_STATUS:-0}"
 FAKE_SECURITY = RECORD + r"""
 (($# == 6)) && [[ "$1" == find-generic-password && "$2" == -s && "$4" == -a && "$6" == -w ]] ||
 	{ echo "security: unknown command or option" >&2; exit 2; }
+if [[ -n "${FAKE_KEYCHAIN_LOCKED:-}" ]]; then
+	echo "security: SecKeychainSearchCopyNext: User interaction is not allowed." >&2
+	exit 36
+fi
 item="$FAKE_KEYCHAIN/$3.$5"
 [[ -f "$item" ]] || { echo "security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain." >&2; exit 44; }
 cat "$item"
@@ -330,6 +395,8 @@ exit "${FAKE_CONFIGURE_STATUS:-0}"
 
 LINKED = (
     "images/shared/clear-quarantine.sh",
+    "scripts/orchestrator-service.sh",
+    "scripts/linux/orchestrator-service.sh",
     "hooks/spawn-runner",
     "hooks/linux/spawn-runner",
     "scripts/lib.sh",
@@ -412,6 +479,21 @@ class HostCase(unittest.TestCase):
         if self.linux:
             return (self.lxd / "instances" / vm).exists()
         return (self.tart_home / "vms" / vm).is_dir()
+
+    def start_job(self, name, job):
+        """A fake runner job under launchd label or systemd unit <job>, reaped as
+        soon as it exits (so kill -0 doesn't see a zombie)."""
+        script = write_executable(self.tmp / "fake-job", FAKE_JOB)
+        child = subprocess.Popen(["bash", str(script), name], env=self.env())
+        threading.Thread(target=child.wait, daemon=True).start()
+        self.children.append(child)
+        (self.out / "jobs").mkdir(exist_ok=True)
+        (self.out / "jobs" / job).write_text(f"{child.pid}\n")
+        return child.pid
+
+    def events(self):
+        path = self.out / "events"
+        return path.read_text().splitlines() if path.exists() else []
 
     def claim(self, vm, order_id="ORD-other", pid=None, age_minutes=0):
         claim_dir = self.runners / vm
@@ -528,6 +610,22 @@ class SpawnRunnerCase(HostCase):
         result = self.run_hook()
         self.assertEqual(result.returncode, 1)
         self.assertEqual(self.submits(), [])
+
+
+class StopBudgetTests(unittest.TestCase):
+    """The host's stop budgets against the guest's own (static guest files, read
+    here): a VM stop outlasts the runner's drain, and a job outlasts its VM stop."""
+
+    def test_the_host_waits_longer_than_the_guest_drains(self):
+        with (REPO / "images/macos/files/com.agent-images.runner.plist").open("rb") as plist:
+            macos_drain = plistlib.load(plist)["ExitTimeOut"]
+        unit = (REPO / "images/android/files/agent-runner.service").read_text()
+        linux_drain = int(re.search(r"^TimeoutStopSec=(\d+)$", unit, re.M).group(1))
+        drain = int(lib_value("RUNNER_DRAIN_SEC"))
+        self.assertEqual((macos_drain, linux_drain), (drain, drain))
+        vm_stop = int(lib_value("VM_STOP_TIMEOUT_SEC"))
+        self.assertGreaterEqual(vm_stop - drain, 30, "time for the guest OS to shut down")
+        self.assertGreater(int(lib_value("RUNNER_JOB_STOP_SEC")), vm_stop)
 
 
 class TartSpawnRunnerTests(SpawnRunnerCase):
@@ -680,17 +778,80 @@ class LxdRunnerOnceTests(RunnerOnceCase):
         self.assertIn("LXD answers again", log)
         self.assert_released()
 
+    def test_sigterm_while_lxd_is_down_keeps_the_claim(self):
+        # Releasing the name would leave a VM that may be running with no claim.
+        child = self.start()
+        self.wait_for_log(child, "waiting for its session to finish")
+        (self.lxd / "down").write_text("always")
+        child.send_signal(signal.SIGTERM)
+        status, log = self.finish(child)
+        self.assertEqual(status, 130, log)
+        self.assertEqual([call for call in self.calls("lxc") if call.startswith(("stop", "delete"))], [])
+        self.assertTrue((self.runners / "runner-1").exists(), "claim kept for reclaim")
+        self.assertIn("keeping its claim for reclaim", log)
+
+    def test_sigterm_rides_out_a_short_lxd_restart(self):
+        child = self.start()
+        self.wait_for_log(child, "waiting for its session to finish")
+        (self.lxd / "down").write_text("3")
+        child.send_signal(signal.SIGTERM)
+        status, log = self.finish(child)
+        self.assertEqual(status, 130, log)
+        self.assertEqual(self.stops(), [f"stop --timeout {VM_STOP_TIMEOUT} runner-1"])
+        self.assert_released()
+
+    def test_lxd_down_for_too_long_gives_up_and_keeps_the_claim(self):
+        child = self.start(LXD_DOWN_LIMIT_MIN="1")
+        self.wait_for_log(child, "waiting for its session to finish")
+        (self.lxd / "down").write_text("always")
+        status, log = self.finish(child)
+        self.assertEqual(status, 1, log)
+        self.assertIn("LXD hasn't answered for 1 minutes; giving up", log)
+        self.assertTrue((self.runners / "runner-1").exists())
+
+
+class StopRunnersCase(HostCase):
+    """orchestrator-service.sh stop-runners: every runner job is signalled before
+    the first has finished stopping its VM, so N runners take one stop budget."""
+
+    def job_name(self, vm):
+        return f"agent-images-{vm}.service" if self.linux else f"com.agent-images.{vm}"
+
+    def test_signals_every_runner_before_waiting(self):
+        vms = ("runner-1", "runner-2", "runner-3")
+        for vm in vms:
+            self.claim(vm, pid=self.start_job(vm, self.job_name(vm)))
+        script = self.tree / ("scripts/linux/orchestrator-service.sh" if self.linux
+                              else "scripts/orchestrator-service.sh")
+        result = subprocess.run(["bash", str(script), "stop-runners"], env=self.env(),
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        events = self.events()
+        signalled = [index for index, event in enumerate(events) if event.startswith("signal")]
+        finished = [index for index, event in enumerate(events) if event.startswith("finished")]
+        self.assertEqual((len(signalled), len(finished)), (3, 3), events)
+        self.assertLess(max(signalled), min(finished), events)
+        self.assertEqual(list(self.runners.iterdir()), [], "every name released")
+
+
+class TartStopRunnersTests(StopRunnersCase):
+    pass
+
+
+class LxdStopRunnersTests(StopRunnersCase):
+    linux = True
+
 
 class ReclaimCase(HostCase):
     """reclaim_stale_runners: deletes VMs whose runner job is gone and releases
     their names, but spares a live job's claim and a fresh claim with no PID."""
 
-    def reclaim(self, *args):
+    def reclaim(self, *args, **env):
         lib = self.tree / ("scripts/linux/lib.sh" if self.linux else "scripts/lib.sh")
         result = subprocess.run(
             ["bash", "-c", 'set -euo pipefail; source "$1"; shift; reclaim_stale_runners "$@"', "_",
              str(lib), *args],
-            env=self.env(), capture_output=True, text=True, timeout=30)
+            env=self.env(**env), capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         return result
 
@@ -754,9 +915,38 @@ class TartReclaimTests(ReclaimCase):
         self.assertIn(f"stop --timeout {VM_STOP_TIMEOUT} runner-1", self.calls("tart"))
         self.assert_reclaimed("runner-1")
 
+    def test_running_vms_stop_side_by_side(self):
+        runs = []
+        for vm in ("runner-1", "runner-2"):
+            self.claim(vm, pid=self.dead_pid())
+            self.add_vm(vm)
+            runs.append(subprocess.Popen([str(self.bin / "tart"), "run", "--no-graphics", vm], env=self.env()))
+            self.children.append(runs[-1])
+        deadline = time.monotonic() + 10
+        while not all((self.tart_home / f"vms/{vm}/running").exists() for vm in ("runner-1", "runner-2")):
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.05)
+        self.reclaim(FAKE_STOP_DELAY="0.5")
+        events = self.events()
+        starts = [index for index, event in enumerate(events) if event.startswith("stop-start")]
+        ends = [index for index, event in enumerate(events) if event.startswith("stop-end")]
+        self.assertEqual((len(starts), len(ends)), (2, 2), events)
+        self.assertLess(max(starts), min(ends), events)
+        self.assert_reclaimed("runner-1")
+        self.assert_reclaimed("runner-2")
+
 
 class LxdReclaimTests(ReclaimCase):
     linux = True
+
+    def test_lxd_down_keeps_the_claim(self):
+        self.claim("runner-1", pid=self.dead_pid())
+        self.add_vm("runner-1")
+        (self.lxd / "down").write_text("always")
+        result = self.reclaim()
+        self.assertIn("LXD isn't answering; keeping the claim", result.stderr)
+        self.assertTrue((self.runners / "runner-1").exists())
+        self.assertNotIn("delete --force runner-1", self.calls("lxc"))
 
     def assert_reclaimed(self, vm):
         super().assert_reclaimed(vm)
@@ -832,6 +1022,18 @@ class VmConfigureCase(HostCase):
         self.assertIn("RUNNER_LABEL=", runner_env)
         self.assertNotIn(ENV_KEY, result.stdout + result.stderr)
 
+    def test_a_host_keys_account_is_not_a_vm_name(self):
+        for vm in ("orchestrator", "default", "host", "host-work"):
+            with self.subTest(vm=vm):
+                (self.tree / f"vms/{vm}.env").write_text("AGENT=claude\n")
+                self.set_key(vm, "sk-ant-cc-a.host.key")
+                result = subprocess.run(["bash", str(self.configure), vm], env=self.env(),
+                                        capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("name the VM something else", result.stderr)
+                self.assertEqual(self.guest_calls(), [])
+                self.assertFalse(self.guest_secret.exists())
+
     def test_a_work_order_needs_no_key(self):
         self.work_order.write_text(WORK_ORDER + "\n")
         result = self.run_configure(ENVIRONMENT_SECRET_FILE=str(self.work_order), EPHEMERAL="true")
@@ -858,7 +1060,13 @@ class VmConfigureCase(HostCase):
 
 
 class TartVmConfigureTests(VmConfigureCase):
-    pass
+    def test_a_locked_keychain_says_so(self):
+        self.set_key(self.VM, "sk-ant-cc-a.separate.key")
+        result = self.run_configure(FAKE_KEYCHAIN_LOCKED="1")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("the login keychain is locked", result.stderr)
+        self.assertNotIn("takes a work order or its own", result.stderr, "it has one; the keychain is locked")
+        self.assertEqual(self.guest_calls(), [])
 
 
 class LxdVmConfigureTests(VmConfigureCase):
@@ -927,12 +1135,14 @@ class BuildImageTests(HostCase):
         self.assertEqual(len(self.publishes()), 1)
         self.assertNotEqual(self.live_image(), self.LIVE)
 
-    def test_allow_stderr_from_env_file_is_ignored(self):
-        # Only the environment: a line in .env would publish every bad build.
-        (self.tree / ".env").write_text("ALLOW_STDERR=1\n")
-        result = self.build(FAKE_PROVISIONER_STDERR="W: a warning")
+    def test_allow_stderr_in_env_file_is_refused(self):
+        # make reads .env and exports it to every target, so the script sees it
+        # in its environment too; a line there would publish every bad build.
+        (self.tree / ".env").write_text("LINUX_BASE_IMAGE=ubuntu:24.04\nALLOW_STDERR=1\n")
+        result = self.build(FAKE_PROVISIONER_STDERR="W: a warning", ALLOW_STDERR="1")
         self.assertEqual(result.returncode, 1)
-        self.assertEqual(self.publishes(), [])
+        self.assertIn("ALLOW_STDERR is set in .env", result.stderr)
+        self.assertEqual(self.calls("lxc"), [], "refused before anything started")
 
     def test_stages_the_shared_list(self):
         self.assertEqual(self.build().returncode, 0)
@@ -960,6 +1170,8 @@ class HostQuarantineTests(HostCase):
     def test_clears_an_anthropic_signed_claude(self):
         result = self.clear()
         self.assertEqual(result.returncode, 0, result.stderr)
+        # Through the host's log, so the orchestrator's log line has its timestamp.
+        self.assertRegex(result.stdout, r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ cleared Homebrew's quarantine on ")
         self.assertEqual(quarantined(self.out), [])
         self.assertEqual(len(self.calls("codesign")), 1)
 
@@ -970,7 +1182,7 @@ class HostQuarantineTests(HostCase):
         self.assertEqual(quarantined(self.out), [str(self.bin / "claude")])
 
 
-del SpawnRunnerCase, RunnerOnceCase, ReclaimCase, VmConfigureCase
+del SpawnRunnerCase, RunnerOnceCase, ReclaimCase, VmConfigureCase, StopRunnersCase
 
 if __name__ == "__main__":
     unittest.main()

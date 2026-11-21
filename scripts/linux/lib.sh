@@ -44,6 +44,19 @@ vm_listed() {
 	grep -Fxq -- "$1" <<<"$names"
 }
 
+# vm_listed, asked again for about half a minute while LXD doesn't answer: a
+# snap refresh restarts it. Same statuses; 2 means it still didn't answer.
+vm_listed_patiently() {
+	local attempt listed
+	for attempt in 1 2 3 4 5 6; do
+		listed=0
+		vm_listed "$1" || listed=$?
+		((listed == 2)) || return "$listed"
+		((attempt == 6)) || sleep 5
+	done
+	return 2
+}
+
 # Waits until lxd-agent answers, so lxc exec works.
 wait_for_guest() {
 	local target_vm="$1" timeout="${2:-180}" waited=0
@@ -77,26 +90,23 @@ guest_write() {
 runner_unit() { printf 'agent-images-%s.service' "$1"; }
 
 # Deletes runner VMs whose runner-once unit is gone (a host crash, a killed
-# unit) and releases their names. Same contract as the macOS version.
-# Usage: reclaim_stale_runners [grace-minutes]
+# unit) and releases their names. Same contract as the macOS version. A name is
+# released only once LXD says its VM is gone: while LXD doesn't answer, the claim
+# stays for the next reclaim.
+# Usage: reclaim_stale_runners [grace-minutes] (see stale_runner_claims)
 reclaim_stale_runners() {
-	local grace_minutes="${1:-2}" claim_dir claim_vm claim_pid
-	for claim_dir in "$RUNNERS_DIR"/runner-*/; do
-		[[ -d "$claim_dir" ]] || continue
-		claim_vm="$(basename "$claim_dir")"
-		claim_pid="$(cat "$claim_dir/pid" 2>/dev/null || true)"
-		if [[ -n "$claim_pid" ]] && kill -0 "$claim_pid" 2>/dev/null; then
-			continue
-		fi
-		if [[ -z "$claim_pid" ]] && ((grace_minutes > 0)) &&
-			[[ -n "$(find "$claim_dir" -maxdepth 0 -mmin "-$grace_minutes")" ]]; then
-			continue
-		fi
+	local grace_minutes="${1:-2}" claim_vm listed
+	for claim_vm in $(stale_runner_claims "$grace_minutes"); do
 		log "$claim_vm: reclaiming (its runner job is gone)"
 		systemctl --user stop "$(runner_unit "$claim_vm")" >/dev/null 2>&1 || true
-		if vm_exists "$claim_vm"; then
+		listed=0
+		vm_listed_patiently "$claim_vm" || listed=$?
+		if ((listed == 0)); then
 			lxc delete --force "$claim_vm"
+		elif ((listed == 2)); then
+			log "$claim_vm: LXD isn't answering; keeping the claim for the next reclaim" >&2
+			continue
 		fi
-		rm -rf "$claim_dir"
+		rm -rf "${RUNNERS_DIR:?}/$claim_vm"
 	done
 }

@@ -29,14 +29,18 @@ runner_names() {
 	return 0
 }
 
-# SIGTERM each runner unit; runner-once stops and deletes its VM, and any session
-# on it requeues. systemctl stop waits for the unit, up to its TimeoutStopSec.
+# SIGTERM every runner unit; runner-once stops and deletes its VM, and any session
+# on it requeues. A plain systemctl stop would wait for each unit in turn, so
+# signal them all (--no-block), then wait for them together (wait_for_runner_jobs).
 stop_runners() {
-	local vm
+	local vm pid pids=()
 	for vm in $(runner_names); do
+		pid="$(cat "$RUNNERS_DIR/$vm/pid" 2>/dev/null || true)"
+		[[ -z "$pid" ]] || pids+=("$pid")
 		log "$vm: stopping"
-		systemctl --user stop "$(runner_unit "$vm")" >/dev/null 2>&1 || true
+		systemctl --user stop --no-block "$(runner_unit "$vm")" >/dev/null 2>&1 || true
 	done
+	((${#pids[@]} == 0)) || wait_for_runner_jobs "${pids[@]}"
 	reclaim_stale_runners
 }
 
