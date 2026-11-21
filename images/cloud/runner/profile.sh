@@ -23,7 +23,8 @@ export TENV_AUTO_INSTALL=true
 # The rest is the toolsets': PATH (with Homebrew ahead of the system, and
 # CARGO_HOME's bin at the back through the rust toolset's profile), what they
 # recorded, and Claude Code's gh shim in front (images/toolsets/toolset-profile.sh).
-# The Dockerfile sets the same PATH for what starts without this profile.
+# The Dockerfile's ENV PATH holds only the fixed part (~/bin, Homebrew), for what
+# starts without bash.
 agent_toolset_profile="${AGENT_TOOLSET_PROFILE:-/etc/agent-images/toolset-profile.sh}"
 # shellcheck source=images/toolsets/toolset-profile.sh
 [ -f "$agent_toolset_profile" ] && . "$agent_toolset_profile"

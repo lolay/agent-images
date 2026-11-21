@@ -61,7 +61,9 @@ if [ -n "$agent_set_path" ]; then
 	export PATH
 fi
 # Every time, so each shell has the toolsets' variables (DISPLAY, JAVA_HOME,
-# ANDROID_HOME, the gis environment's).
+# ANDROID_HOME, the gis environment's). A fragment changes PATH only while
+# agent_set_path is set: once PATH is the caller's, it stays as the caller left
+# it (install-toolset.sh's toolset_env sets it too).
 for agent_file in "$AGENT_TOOLSETS_DIR"/*.profile.sh; do
 	# shellcheck source=/dev/null
 	[ -f "$agent_file" ] && . "$agent_file"

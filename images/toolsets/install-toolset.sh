@@ -8,7 +8,8 @@
 #   smoke.sh     its smoke test, the least real work that shows the toolchain
 #                works (toolset-checks.sh; specs/gcp.md, m4);
 #   profile.sh   environment for every session shell, sourced by both images'
-#                profiles (toolset-profile.sh) after their own;
+#                profiles (toolset-profile.sh) after their own; it changes PATH
+#                only while agent_set_path is set (toolset-profile.sh);
 #   path.txt     directories for the front of every session's PATH, after ~/bin
 #                and before Homebrew's (toolset-profile.sh).
 # Each installed toolset is recorded in record_dir with those files. install.sh
@@ -25,7 +26,8 @@
 # apt_install_options (what every apt
 # install of a package list takes; images/cloud/base/apt-prepare.sh sources this
 # file for it, so the base's install and the lock's simulation take them too),
-# install_apt <file> (a packages.txt), install_apt_packages <package|.deb>...,
+# package_list <file> (the packages a packages.txt names), install_apt <file>
+# (installs them), install_apt_packages <package|.deb>...,
 # github_latest <releases URL> (the newest release's tag;
 # scripts/cloud/lock.sh sources this file for it too, so the build and the lock
 # read a release the same way) and toolset_env <name>... (what the toolsets a
@@ -143,10 +145,14 @@ install_apt_packages() {
 	fi
 }
 
-# install_apt <file>: the packages a list names, one per line, with # comments.
+# package_list <file>: the packages a list (a packages.txt) names, one per
+# line, with # comments; one per line out.
+package_list() { sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$1"; }
+
+# install_apt <file>: the packages a list names.
 install_apt() {
 	local packages
-	mapfile -t packages < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$1")
+	mapfile -t packages < <(package_list "$1")
 	install_apt_packages "${packages[@]}"
 }
 
@@ -162,23 +168,32 @@ github_latest() {
 
 # toolset_env <name>...: what the named toolsets recorded, as a session gets it
 # (toolset-profile.sh): their PATH entries (<name>.path) in front of PATH, and
-# their profiles (<name>.profile.sh) sourced. For a toolset's install.sh, in
-# place of an image's profile, which a toolset can't count on: android-go's
-# gomobile needs the go toolset's bin and the android toolset's NDK. Each must be
-# installed already, or be the toolset installing, which records as it goes.
+# their profiles (<name>.profile.sh) sourced, each in the record's file order as
+# there, with agent_set_path set, so a profile adds to PATH as at a session's
+# start. For a toolset's install.sh, in place of an image's profile, which a
+# toolset can't count on: android-go's gomobile needs the go toolset's bin and
+# the android toolset's NDK. Each must be installed already, or be the toolset
+# installing, which records as it goes.
 toolset_env() {
-	local name dir="${TOOLSET_RECORD_DIR:?}" entry front=""
+	# shellcheck disable=SC2034 # the profiles read agent_set_path
+	local name file entry front="" dir="${TOOLSET_RECORD_DIR:?}" agent_set_path=1
 	for name in "$@"; do
 		[[ "$name" == "${TOOLSET_LOG_NAME:-}" ]] || grep -qxF "$name" "$dir/toolsets.txt" 2>/dev/null ||
 			die "toolset_env: $name isn't installed: install it first"
-		if [[ -f "$dir/$name.path" ]]; then
-			# One directory per line, # starts a comment, as toolset-profile.sh reads it.
-			while IFS= read -r entry || [[ -n "$entry" ]]; do
-				[[ -z "$entry" || "$entry" == "#"* ]] || front="${front:+$front:}$entry"
-			done <"$dir/$name.path"
-		fi
+	done
+	for file in "$dir"/*.path; do
+		name="$(basename "$file" .path)"
+		[[ -f "$file" && " $* " == *" $name "* ]] || continue
+		# One directory per line, # starts a comment, as toolset-profile.sh reads it.
+		while IFS= read -r entry || [[ -n "$entry" ]]; do
+			[[ -z "$entry" || "$entry" == "#"* ]] || front="${front:+$front:}$entry"
+		done <"$file"
+	done
+	for file in "$dir"/*.profile.sh; do
+		name="$(basename "$file" .profile.sh)"
+		[[ -f "$file" && " $* " == *" $name "* ]] || continue
 		# shellcheck source=/dev/null
-		[[ ! -f "$dir/$name.profile.sh" ]] || . "$dir/$name.profile.sh"
+		. "$file"
 	done
 	PATH="${front:+$front:}$PATH"
 	export PATH
@@ -277,7 +292,8 @@ for name in "$@"; do
 		# Exported in a subshell, so they reach this install.sh and what it runs,
 		# but not the later toolsets' Homebrew and installers.
 		(
-			export -f log die apt apt_update apt_install_options install_apt install_apt_packages github_latest toolset_env
+			export -f log die apt apt_update apt_install_options package_list install_apt install_apt_packages github_latest \
+				toolset_env
 			TOOLSET_LOG_NAME="$name" TOOLSET_RECORD_DIR="$record_dir" bash "$dir/install.sh"
 		)
 		# Any brew command it ran refilled Homebrew's cache.

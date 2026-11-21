@@ -63,12 +63,14 @@ sudo rm -f /etc/apt/apt.conf.d/50agent-snapshot /etc/apt/apt.conf.d/40agent-buil
 sudo bash /tmp/images/apt-pins.sh remove
 SCRIPT
 
-# The profile's PATH (images/toolsets/toolset-profile.sh): Homebrew, and the
-# rust toolset's rustup proxies where a type installs it, ahead of the system.
 # Non-interactive bash (`bash -c`, scripts) reads neither profile nor bashrc,
-# only BASH_ENV.
+# only BASH_ENV, so every bash, the entrypoint's included, gets the profile's
+# PATH (images/toolsets/toolset-profile.sh) with the toolsets' entries (rustup's
+# proxies where a type installs rust). ENV PATH is only its fixed part, ~/bin
+# and Homebrew ahead of the system, for what starts without bash; the toolsets'
+# entries come from their records alone.
 ENV BASH_ENV=/etc/profile.d/agent-images.sh
-ENV PATH=/home/ubuntu/bin:/home/ubuntu/.local/bin:/home/linuxbrew/.linuxbrew/opt/rustup/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV PATH=/home/ubuntu/bin:/home/ubuntu/.local/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Claude Code with its native installer (~/.local/bin/claude): an exact version,
 # or a channel.

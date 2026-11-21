@@ -94,6 +94,16 @@ if [ -z "\${DISPLAY:-}" ] && command -v Xvfb >/dev/null 2>&1; then
 		done
 	fi
 fi
+
+# What the toolsets recorded under /etc/agent-images/toolsets
+# (images/toolsets/install-toolset.sh): their variables, JAVA_HOME among them,
+# after the display's start above. Not their PATH changes, which they make only
+# while images/toolsets/toolset-profile.sh sets PATH up: this PATH is the one
+# above, rustup's proxies and Homebrew's.
+for agent_file in /etc/agent-images/toolsets/*.profile.sh; do
+	[ -f "\$agent_file" ] && . "\$agent_file"
+done
+unset agent_file
 EOF
 # Interactive shells that aren't login shells read ~/.bashrc only.
 grep -qF zz-agent-images.sh /root/.bashrc ||

@@ -71,7 +71,10 @@ jobs:
             set -uo pipefail
             failed=0
             agent-toolset-checks versions || failed=1
-            for name in $(agent-toolset-checks smoke-list); do
+            # A failed or empty list must not pass as no smoke tests to run.
+            smokes="$(agent-toolset-checks smoke-list)" || { echo "::error::agent-toolset-checks smoke-list failed"; exit 1; }
+            [ -n "$smokes" ] || { echo "::error::no toolset recorded a smoke test"; exit 1; }
+            for name in $smokes; do
               agent-toolset-checks smoke "$name" || { echo "::error::$name smoke test failed"; failed=1; }
             done
             exit "$failed"'
