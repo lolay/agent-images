@@ -8,8 +8,10 @@
 # The front of PATH is ~/bin, ~/.local/bin, the toolsets' PATH entries (<name>.path),
 # then Homebrew ahead of the system, as `brew shellenv` puts it, so python3 and the
 # session tools are Homebrew's rather than Ubuntu's. Then the toolsets' profile
-# fragments (<name>.profile.sh), which can add to the back of PATH (the rust and go
-# toolsets' install bins), and Claude Code's gh shim last, in front of everything.
+# fragments (<name>.profile.sh), which can change PATH by what's set when it's
+# sourced (the jvm toolset puts JAVA_HOME's bin first, the rust and go toolsets
+# add their install bins at the back), and Claude Code's gh shim last, in front
+# of everything.
 #
 #   HOMEBREW_PREFIX       brew shellenv's name for the prefix (default
 #                         /home/linuxbrew/.linuxbrew); the tests point it at a fake one

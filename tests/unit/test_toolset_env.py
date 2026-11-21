@@ -61,11 +61,11 @@ class ProfileAssemblyTests(unittest.TestCase):
             (self.record / f"{name}.path").write_text(f"# written by install.sh\n{path}\n")
 
     def test_both_images_put_the_recorded_paths_between_home_and_homebrew(self):
-        (self.record / "jvm.path").write_text("/usr/lib/jvm/java-21/bin\n")
+        (self.record / "gis.path").write_text("/opt/gis/bin\n")
         (self.record / "android.path").write_text("/opt/sdk/platform-tools\n\n/opt/sdk/emulator\n")
         self.record_real("rust", path=f"{self.BREW}/opt/rustup/bin")
         front = [f"{self.HOME}/bin", f"{self.HOME}/.local/bin", "/opt/sdk/platform-tools", "/opt/sdk/emulator",
-                 "/usr/lib/jvm/java-21/bin", f"{self.BREW}/opt/rustup/bin", f"{self.BREW}/bin", f"{self.BREW}/sbin",
+                 "/opt/gis/bin", f"{self.BREW}/opt/rustup/bin", f"{self.BREW}/bin", f"{self.BREW}/sbin",
                  "/usr/bin", "/bin"]
         for image in PROFILES:
             with self.subTest(image=image):
@@ -89,20 +89,36 @@ class ProfileAssemblyTests(unittest.TestCase):
                 self.assertEqual(path, f"{self.HOME}/bin:{self.HOME}/.local/bin:{self.BREW}/bin:{self.BREW}/sbin"
                                        ":/usr/bin:/bin")
 
-    def test_go_takes_the_first_gopath_entrys_bin(self):
+    def back_of_path(self, image, setup):
+        out = self.run_profile(image, f'{setup}; . "$PROFILE"; printf %s "$PATH"', times=0)
+        return out.split(":")[-1]
+
+    def test_go_takes_gobin_or_the_first_gopath_entrys_bin(self):
         self.record_real("go")
         for image in PROFILES:
             with self.subTest(image=image):
-                out = self.run_profile(image, 'export GOPATH=/work/go:/other; . "$PROFILE"; printf %s "$PATH"',
-                                       times=0)
-                self.assertEqual(out.split(":")[-1], "/work/go/bin")
+                self.assertEqual(self.back_of_path(image, "export GOPATH=/work/go:/other"), "/work/go/bin")
+                self.assertEqual(self.back_of_path(image, "export GOPATH=/work/go GOBIN=/work/gobin"), "/work/gobin")
+                self.assertEqual(self.back_of_path(image, "unset GOPATH GOBIN"), f"{self.HOME}/go/bin")
+
+    def test_rust_takes_cargo_install_root_or_cargo_homes_bin(self):
+        self.record_real("rust")
+        home = {"cloud": "/scratch/cache/cargo", "android": f"{self.HOME}/.cargo"}
+        for image in PROFILES:
+            with self.subTest(image=image):
+                self.assertEqual(self.back_of_path(image, "export CARGO_INSTALL_ROOT=/work/cargo-root"),
+                                 "/work/cargo-root/bin")
+                self.assertEqual(self.back_of_path(image, "unset CARGO_INSTALL_ROOT"), f"{home[image]}/bin")
 
     def test_a_path_the_caller_took_over_is_left_as_it_is(self):
         # A test puts a fake first and runs a bash script; on the cloud images that
         # bash sources the profile again (BASH_ENV), with the marker already set.
         self.record_real("rust", path=f"{self.BREW}/opt/rustup/bin")
         self.record_real("go")
-        (self.record / "jvm.path").write_text("/usr/lib/jvm/java-21/bin\n")
+        (self.record / "gis.path").write_text("/opt/gis/bin\n")
+        jdk = self.tmp / "jdk"
+        result = install_jvm(self.tmp, self.record, jdk)
+        self.assertEqual(result.returncode, 0, result.stderr)
         for image in PROFILES:
             with self.subTest(image=image):
                 out = self.run_profile(image, 'export PATH=/fake:/usr/bin; . "$PROFILE"; printf %s "$PATH"')
@@ -121,13 +137,9 @@ class ProfileAssemblyTests(unittest.TestCase):
                     self.assertEqual(len(path), len(set(path)), f"duplicates in {path}")
 
 
-class JvmRecordTests(unittest.TestCase):
-    """The jvm toolset records the JDK its packages.txt installed as JAVA_HOME and
-    its bin, whatever javac is first on PATH."""
-
-    # dpkg -L as the real one answers it: each named package's files, and an
-    # error for a package that isn't installed or an option it doesn't know.
-    FAKE_DPKG = r"""
+# dpkg -L as the real one answers it: each named package's files, and an error
+# for a package that isn't installed or an option it doesn't know.
+FAKE_DPKG = r"""
 [[ "$1" == -L ]] || { echo "dpkg: error: unknown option $1" >&2; exit 2; }
 shift
 (($# > 0)) || { echo "dpkg-query: --listfiles needs at least one package name" >&2; exit 2; }
@@ -140,42 +152,57 @@ for package in "$@"; do
 	[[ -n "${FAKE_JDK_NO_JAVAC:-}" ]] || printf '%s\n' "$FAKE_JDK/bin/javac"
 done
 """
-    PACKAGES = [entry for entry in (line.split("#")[0].strip()
+JVM_PACKAGES = [entry for entry in (line.split("#")[0].strip()
                                     for line in (TOOLSETS / "jvm/packages.txt").read_text().splitlines()) if entry]
+
+
+def fake_jdk(jdk):
+    for tool in ("java", "javac"):
+        write_executable(jdk / "bin" / tool, 'echo "openjdk version \\"21.0.9\\"" >&2\n')
+
+
+def install_jvm(tmp, record, jdk, *, first_javac=None, **env):
+    """Runs the jvm toolset's install.sh into record, with apt's JDK at jdk (made
+    here) and first_javac, if given, first on PATH. Only what install.sh runs is
+    on PATH, so the host's own JDK and dpkg (this repo's sessions run on the
+    image) can't stand in for the fakes."""
+    fake_jdk(jdk)
+    work = tmp / "jvm-install"
+    for name in ("bin", "tools", "first"):
+        (work / name).mkdir(parents=True, exist_ok=True)
+    write_executable(work / "bin/sudo", FAKE_SUDO)
+    write_executable(work / "bin/dpkg", FAKE_DPKG)
+    for tool in ("cat", "dirname", "grep", "sed", "tee", "head"):
+        if not (work / "tools" / tool).exists():
+            (work / "tools" / tool).symlink_to(shutil.which(tool))
+    if first_javac and not (work / "first/javac").exists():
+        (work / "first/javac").symlink_to(first_javac)
+    record.mkdir(exist_ok=True)
+    # The helpers as install-toolset.sh exports them, with the fakes' PATH.
+    script = (f'source "{INSTALL_TOOLSET}"; export -f log die package_list; '
+              f'PATH="{work}/first:{work}/bin:{work}/tools" exec "$BASH" "{TOOLSETS}/jvm/install.sh"')
+    settings = {"TOOLSET_RECORD_DIR": str(record), "TOOLSET_LOG_NAME": "jvm",
+                "FAKE_JDK": str(jdk), "FAKE_JDK_PACKAGE": JVM_PACKAGES[0], **env}
+    return subprocess.run(["bash", "-c", script], env=base_env(tmp, work / "bin", **settings),
+                          stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+
+
+class JvmRecordTests(unittest.TestCase):
+    """The jvm toolset records the JDK its packages.txt installed as JAVA_HOME's
+    default, whatever javac is first on PATH, and puts JAVA_HOME's bin first."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp)
         self.record = self.tmp / "record"
-        self.record.mkdir()
-        self.bin = self.tmp / "bin"
-        write_executable(self.bin / "sudo", FAKE_SUDO)
-        write_executable(self.bin / "dpkg", self.FAKE_DPKG)
         self.jdk = self.tmp / "jvm/java-21-openjdk-test"
         # Another JDK's javac first on PATH: a hosted runner's Temurin, a
         # Homebrew openjdk.
         self.other = self.tmp / "jvm/temurin-17"
-        for jdk in (self.jdk, self.other):
-            for tool in ("java", "javac"):
-                write_executable(jdk / "bin" / tool, 'echo "openjdk version \\"21.0.9\\"" >&2\n')
-        self.first = self.tmp / "first"
-        self.first.mkdir()
-        (self.first / "javac").symlink_to(self.other / "bin/javac")
-        # Only what install.sh runs, so the host's own JDK and dpkg (this repo's
-        # sessions run on the image) can't stand in for the fakes.
-        self.tools = self.tmp / "tools"
-        self.tools.mkdir()
-        for tool in ("dirname", "grep", "sed", "tee", "head"):
-            (self.tools / tool).symlink_to(shutil.which(tool))
+        fake_jdk(self.other)
 
     def install(self, **env):
-        # The helpers as install-toolset.sh exports them, with the fakes' PATH.
-        script = (f'source "{INSTALL_TOOLSET}"; export -f log die package_list; '
-                  f'PATH="{self.first}:{self.bin}:{self.tools}" exec "$BASH" "{TOOLSETS}/jvm/install.sh"')
-        settings = {"TOOLSET_RECORD_DIR": str(self.record), "TOOLSET_LOG_NAME": "jvm",
-                    "FAKE_JDK": str(self.jdk), "FAKE_JDK_PACKAGE": self.PACKAGES[0], **env}
-        return subprocess.run(["bash", "-c", script], env=base_env(self.tmp, self.bin, **settings),
-                              stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+        return install_jvm(self.tmp, self.record, self.jdk, first_javac=self.other / "bin/javac", **env)
 
     def java_home(self, **env):
         result = subprocess.run(["/bin/sh", "-c", f'. "{self.record}/jvm.profile.sh"; printf %s "$JAVA_HOME"'],
@@ -183,18 +210,41 @@ done
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
 
+    def session_path(self, then='. "$PROFILE"', **env):
+        """A session's PATH from the cloud profile over this record."""
+        settings = {"HOME": "/home/agent", "PATH": "/usr/bin:/bin", "HOMEBREW_PREFIX": "/opt/brew",
+                    "AGENT_SCRATCH": "/scratch", "AGENT_TOOLSETS_DIR": str(self.record),
+                    "AGENT_TOOLSET_PROFILE": str(TOOLSET_PROFILE), "AGENT_GH_SHIM_PROFILE": str(self.tmp / "no-shim"),
+                    "PROFILE": str(PROFILES["cloud"]), **env}
+        result = subprocess.run(["/bin/sh", "-c", f'{then}; printf %s "$PATH"'], env=settings,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.split(":")
+
     def test_records_the_packages_jdk_not_the_first_javac(self):
-        self.assertEqual(len(self.PACKAGES), 1, "jvm/packages.txt names one JDK")
+        self.assertEqual(len(JVM_PACKAGES), 1, "jvm/packages.txt names one JDK")
         result = self.install()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.java_home(), str(self.jdk))
-        self.assertEqual((self.record / "jvm.path").read_text(), f"{self.jdk}/bin\n")
         self.assertIn(f"JAVA_HOME {self.jdk}", result.stdout)
 
     def test_a_sessions_own_java_home_wins(self):
         # The cloud images source the profile again in every bash (BASH_ENV).
         self.assertEqual(self.install().returncode, 0)
         self.assertEqual(self.java_home(JAVA_HOME="/opt/other-jdk"), "/opt/other-jdk")
+
+    def test_java_homes_bin_goes_first_once(self):
+        self.assertEqual(self.install().returncode, 0)
+        self.assertEqual(self.session_path()[:2], [f"{self.jdk}/bin", "/home/agent/bin"])
+        # Another JDK's JAVA_HOME brings its own java and javac, not the packaged ones.
+        path = self.session_path(JAVA_HOME="/opt/jdk-17")
+        self.assertEqual(path[0], "/opt/jdk-17/bin")
+        self.assertNotIn(f"{self.jdk}/bin", path)
+        # A shell that sets PATH up again (login, or the session hook) keeps one copy.
+        again = 'for i in 1 2 3; do unset AGENT_PROFILE_PATH_DONE; . "$PROFILE"; done'
+        path = self.session_path(then=again)
+        self.assertEqual(path[0], f"{self.jdk}/bin")
+        self.assertEqual(len(path), len(set(path)), f"duplicates in {path}")
 
     def test_a_package_that_isnt_installed_fails_the_install(self):
         result = self.install(FAKE_JDK_PACKAGE="some-other-jdk")
@@ -264,6 +314,16 @@ class ToolsetEnvTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("==> user: /opt/another/bin:/opt/base/bin:/opt/base/sbin", result.stdout)
 
+    def test_the_jvm_records_java_comes_first(self):
+        # As the android toolset's install.sh reads it (toolset_env jvm android).
+        jdk = self.tmp / "jdk"
+        self.assertEqual(install_jvm(self.tmp, self.record, jdk).returncode, 0)
+        (self.record / "toolsets.txt").write_text("jvm\n")
+        self.toolset("user", 'toolset_env jvm\nlog "$JAVA_HOME $(command -v java)"\n')
+        result = self.install("user")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"==> user: {jdk} {jdk}/bin/java", result.stdout)
+
     def test_a_toolset_not_installed_yet_is_refused(self):
         self.toolset("user", "toolset_env base\n")
         result = self.install("user")
@@ -276,6 +336,21 @@ class ToolsetEnvTests(unittest.TestCase):
         result = self.install("self")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("==> self: /opt/self", result.stdout)
+
+
+class RunnerEnvPathTests(unittest.TestCase):
+    """What doesn't read the profile (`docker exec <c> cargo`, a child that isn't
+    bash) gets the runner Dockerfile's ENV PATH, which must find rustup's
+    keg-only proxies where install-toolset.sh's Homebrew puts them."""
+
+    def test_env_path_has_rustups_proxies(self):
+        brew = subprocess.run(["bash", "-c", f'source "{INSTALL_TOOLSET}"; brew_path'], env={"PATH": "/usr/bin:/bin"},
+                              capture_output=True, text=True, timeout=30, check=True).stdout
+        prefix = brew.removesuffix("/bin/brew")
+        dockerfile = (REPO / "images/cloud/runner/Dockerfile").read_text()
+        env_path = re.search(r"^ENV PATH=(\S+)$", dockerfile, re.M).group(1).split(":")
+        self.assertIn(f"{prefix}/opt/rustup/bin", env_path)
+        self.assertLess(env_path.index(f"{prefix}/opt/rustup/bin"), env_path.index(f"{prefix}/bin"))
 
 
 class PromiseTests(unittest.TestCase):

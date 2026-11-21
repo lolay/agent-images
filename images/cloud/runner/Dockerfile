@@ -65,12 +65,13 @@ SCRIPT
 
 # Non-interactive bash (`bash -c`, scripts) reads neither profile nor bashrc,
 # only BASH_ENV, so every bash, the entrypoint's included, gets the profile's
-# PATH (images/toolsets/toolset-profile.sh) with the toolsets' entries (rustup's
-# proxies where a type installs rust). ENV PATH is only its fixed part, ~/bin
-# and Homebrew ahead of the system, for what starts without bash; the toolsets'
-# entries come from their records alone.
+# PATH (images/toolsets/toolset-profile.sh) with the toolsets' entries. ENV PATH
+# is for what doesn't read the profile (`docker exec <c> cargo --version`, a
+# child that isn't bash): ~/bin and Homebrew ahead of the system, and rustup's
+# proxies, which are keg-only, so cargo and rustc are found there too. On a type
+# without the rust toolset that directory doesn't exist, which is harmless.
 ENV BASH_ENV=/etc/profile.d/agent-images.sh
-ENV PATH=/home/ubuntu/bin:/home/ubuntu/.local/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV PATH=/home/ubuntu/bin:/home/ubuntu/.local/bin:/home/linuxbrew/.linuxbrew/opt/rustup/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Claude Code with its native installer (~/.local/bin/claude): an exact version,
 # or a channel.
