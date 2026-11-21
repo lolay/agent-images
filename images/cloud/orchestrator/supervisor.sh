@@ -8,6 +8,11 @@
 #     token), written to a file per type in /dev/shm, mode 600; each orchestrator
 #     is pointed at its own file only. A type whose secret can't be read is
 #     retried; the others start anyway;
+#   - readiness: a type starts only once it has something to spawn, its Cloud
+#     Run job agent-<type> or, for BACKEND=compute, an image in family
+#     agent-<type>. Until then it's checked again every RUNNER_WAIT_SEC, on the
+#     same loop that retries secrets, so the deploy needn't hold the
+#     orchestrator back for a type whose first build failed (r1.f3);
 #   - supervision: restart an orchestrator that exits, with backoff; prefix each
 #     one's log lines with its type; on SIGTERM, pass it to every orchestrator at
 #     once and exit when they have (they drain for 70 s; the host's docker stop
@@ -40,6 +45,8 @@ set -euo pipefail
 # Where the memory log reads smaps_rollup from; tests point it at a fake tree.
 : "${AGENT_PROC_ROOT:=/proc}"
 : "${SECRET_RETRY_SEC:=60}"
+# How often a type with no job or image yet is checked again.
+: "${RUNNER_WAIT_SEC:=300}"
 : "${RESTART_MIN_SEC:=5}"
 : "${RESTART_MAX_SEC:=60}"
 # A run this long counts as healthy, so the next restart starts from the minimum.
@@ -60,7 +67,7 @@ gcp_load_env || {
 	log "no project.env in $AGENT_GCP_ENV_DIR"
 	exit 1
 }
-: "${PROJECT_NUMBER:?}"
+: "${PROJECT_NUMBER:?}" "${PROJECT_ID:?}" "${REGION:?}"
 mapfile -t types < <(gcp_types)
 if ((${#types[@]} == 0)); then
 	log "no runner types in $AGENT_GCP_ENV_DIR"
@@ -118,8 +125,8 @@ compute_types=()
 for type in "${types[@]}"; do
 	[[ "$(gcp_backend "$type")" == compute ]] && compute_types+=("$type")
 done
-if ((${#compute_types[@]} > 0)) && [[ -z "${ZONE:-}" || -z "${PROJECT_ID:-}" ]]; then
-	log "reaper: no PROJECT_ID or ZONE in project.env; not reaping ${compute_types[*]}"
+if ((${#compute_types[@]} > 0)) && [[ -z "${ZONE:-}" ]]; then
+	log "reaper: no ZONE in project.env; not reaping ${compute_types[*]}"
 	compute_types=()
 fi
 
@@ -215,8 +222,46 @@ done
 mkdir -p "$SUPERVISOR_SECRETS_DIR"
 chmod 700 "$SUPERVISOR_SECRETS_DIR"
 
+# runner_ready <type>: whether the type has something to spawn: its Cloud Run
+# job, or an image in its family. Only a 404 says no: on any other answer it
+# can't tell, logs why and says yes, and the hook reports a real problem per
+# session as before. "Not yet" is logged once, and its end once.
+declare -A waiting=()
+runner_ready() {
+	local type="$1" token what url
+	if [[ "$(gcp_backend "$type")" == compute ]]; then
+		what="image in family $(gcp_image_family "$type")"
+		url="$GCP_COMPUTE_URL/compute/v1/projects/$PROJECT_ID/global/images/family/$(gcp_image_family "$type")"
+	else
+		what="Cloud Run job agent-$type"
+		url="$GCP_RUN_URL/v2/projects/$PROJECT_ID/locations/$REGION/jobs/agent-$type"
+	fi
+	token="$(gcp_token)" || {
+		log "$type: no access token to check for its $what; starting its orchestrator anyway"
+		return 0
+	}
+	gcp_call "$token" GET "$url"
+	case "$GCP_STATUS" in
+	200)
+		[[ -z "${waiting[$type]:-}" ]] || log "$type: its $what is there now"
+		unset "waiting[$type]"
+		;;
+	404)
+		[[ -n "${waiting[$type]:-}" ]] ||
+			log "$type: no $what yet; not starting its orchestrator until there is (checking every ${RUNNER_WAIT_SEC}s)"
+		waiting[$type]=1
+		return 1
+		;;
+	*) log "$type: can't check for its $what (HTTP $GCP_STATUS: $(gcp_error)); starting its orchestrator anyway" ;;
+	esac
+}
+
 start_type() {
 	local type="$1" now="$2" secret_file="$SUPERVISOR_SECRETS_DIR/$1" pid
+	if ! runner_ready "$type"; then
+		next_start[$type]=$((now + RUNNER_WAIT_SEC))
+		return
+	fi
 	if ! fetch_secret "$type" "$secret_file"; then
 		next_start[$type]=$((now + SECRET_RETRY_SEC))
 		return

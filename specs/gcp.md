@@ -873,6 +873,14 @@ it's one process per type inside one container:
   supervisor passes each orchestrator only its own, and the hook unsets it before
   doing anything else. A type whose secret can't be read is retried; the others
   start anyway.
+- **Readiness:** a type's orchestrator starts only once the type has something to
+  spawn: its Cloud Run job `agent-<type>`, or for a compute type an image in family
+  `agent-<type>`. A type without one is logged and skipped, as `DEPLOY=false` is, but
+  checked again every `RUNNER_WAIT_SEC` (5 minutes) on the supervisor's loop rather
+  than only at the next restart, and started once it's there. Only a 404 holds a type
+  back: any other answer is logged and the orchestrator starts, and the hook reports
+  a real problem per session. This is what lets the deploy's orchestrator job run
+  whether or not a type's build failed (r1.f3).
 - **Supervision:** restart any orchestrator that exits; forward `SIGTERM` to all of
   them; prefix each one's log lines with its type. Every 5 minutes it logs each
   orchestrator's memory (`Pss` from `/proc/<pid>/smaps_rollup`, with its child
@@ -886,7 +894,12 @@ it's one process per type inside one container:
 - **Deploys:** a push to `main` that touches `hooks/gcp/**`, `images/cloud/orchestrator/**`,
   `infra/gcp/*.env`, or the two files its build mounts from elsewhere
   (`images/cloud/base/apt-build.conf`, `images/toolsets/install-toolset.sh`) rebuilds it and restarts it on the host. Sessions in flight are
-  unaffected: they belong to runners, not to the orchestrator.
+  unaffected: they belong to runners, not to the orchestrator. The deploy's
+  orchestrator job runs after the types and VM images, whether they passed or
+  failed: a failed type keeps its old job or image, or, on its first deploy, has
+  none, and the supervisor waits for it (readiness, above), so one broken type
+  doesn't hold back the others' hook and env changes. Running after them only
+  means a new type's first deploy finds its job when the supervisor starts.
 
 One process for all types would mean one environment for all types, with the hook
 picking an image per session. That loses the explicit choice in the picker, and

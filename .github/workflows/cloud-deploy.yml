@@ -335,15 +335,16 @@ jobs:
           retention-days: 90
           if-no-files-found: error
 
-  # After the types and VM images, so a first deploy creates the job or image
-  # before the orchestrator can spawn into it; skipped if one failed, and the
-  # next push retries.
+  # Whatever the types and VM images did: the supervisor starts a type's
+  # orchestrator only once its job or image family exists, and checks a missing
+  # one again every RUNNER_WAIT_SEC (supervisor.sh), so one failed type can't
+  # hold back the others' hook and env changes (r1.f3). It still runs after
+  # them, so a new type's first deploy finds its job when the supervisor starts
+  # rather than a check later.
   orchestrator:
     needs: [plan, types, vm-images]
     if: >-
-      always() && needs.plan.result == 'success' && needs.plan.outputs.orchestrator == 'true'
-      && (needs.types.result == 'success' || needs.types.result == 'skipped')
-      && (needs.vm-images.result == 'success' || needs.vm-images.result == 'skipped')
+      !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.orchestrator == 'true'
     runs-on: ubuntu-24.04
     environment: production
     permissions:

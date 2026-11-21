@@ -17,6 +17,8 @@ from fake_gcp import FakeGcp
 from support import REPO, base_env, write_executable
 
 SUPERVISOR = REPO / "images/cloud/orchestrator/supervisor.sh"
+PROJECT_ENV = "PROJECT_ID=lolay-agents\nPROJECT_NUMBER=613087327945\nREGION=us-central1\n"
+JOBS = "projects/lolay-agents/locations/us-central1/jobs"
 
 # Records how it was started, logs a line on each stream, and drains on SIGTERM
 # the way the orchestrator does.
@@ -52,13 +54,15 @@ class SupervisorCase(unittest.TestCase):
         self.out.mkdir()
         self.env_dir = self.tmp / "infra"
         self.env_dir.mkdir()
-        (self.env_dir / "project.env").write_text("PROJECT_ID=lolay-agents\nPROJECT_NUMBER=613087327945\n")
+        (self.env_dir / "project.env").write_text(PROJECT_ENV)
         (self.env_dir / "linux.env").write_text("MIN_IDLE=0\nEXPECTED_SPAWN_SECONDS=180\n")
         (self.env_dir / "gis.env").write_text("MIN_IDLE=1\n")
         self.secrets = self.tmp / "secrets"
         self.claude = write_executable(self.tmp / "bin/fake-claude", FAKE_CLAUDE)
         self.gcp = FakeGcp().__enter__()
         self.gcp.state.secrets.update({"claude-env-linux": "linux-key", "claude-env-gis": "gis-key"})
+        self.add_job("linux")
+        self.add_job("gis")
         self.lines = []
         self.process = None
         self.reader = None
@@ -76,6 +80,16 @@ class SupervisorCase(unittest.TestCase):
             self.process.stdout.close()
         self.gcp.__exit__(None, None, None)
         subprocess.run(["rm", "-rf", str(self.tmp)], check=True)
+
+    def add_job(self, runner_type):
+        """The type's Cloud Run job, as the deploy writes it."""
+        name = f"{JOBS}/agent-{runner_type}"
+        self.gcp.state.jobs[name] = {"name": name}
+
+    def add_image(self, runner_type):
+        """An image in the compute type's family, as vm-promote leaves it."""
+        name = f"agent-{runner_type}-20261106-abc"
+        self.gcp.state.images[name] = {"name": name, "family": f"agent-{runner_type}", "diskSizeGb": "100"}
 
     def start(self, **env):
         settings = {
@@ -215,6 +229,58 @@ class StartTests(SupervisorCase):
         self.wait_for(lambda: any(line.startswith("supervisor: no runner type left to start") for line in self.lines), what="the error")
 
 
+class ReadinessTests(SupervisorCase):
+    """A type starts once its job or image family exists (r1.f3)."""
+
+    def test_a_type_with_no_job_waits_and_the_others_start(self):
+        del self.gcp.state.jobs[f"{JOBS}/agent-gis"]
+        self.start(RUNNER_WAIT_SEC="1")
+        self.wait_for(lambda: self.starts("linux"), what="linux")
+        waiting = ("supervisor: gis: no Cloud Run job agent-gis yet; not starting its orchestrator "
+                   "until there is (checking every 1s)")
+        self.wait_for(lambda: waiting in self.lines, what="the gis wait line")
+        self.wait_for(lambda: len(self.gcp.requests("GET", "/jobs/agent-gis")) >= 3, what="gis checked again")
+        self.assertEqual(self.starts("gis"), [])
+        self.assertEqual(self.lines.count(waiting), 1, "logged once, not on every check")
+        self.assertEqual(self.gcp.requests("GET", "/secrets/claude-env-gis/"), [], "no secret fetched for it")
+        # It keeps its health port, so linux's doesn't move when it starts.
+        self.assertIn("--health-port 18081", self.start_record("linux")["args"])
+        self.add_job("gis")
+        self.wait_for(lambda: self.starts("gis"), what="gis once its job exists")
+        self.assertIn("supervisor: gis: its Cloud Run job agent-gis is there now", self.lines)
+        self.assertIn("--health-port 18080", self.start_record("gis")["args"])
+        self.stop()
+
+    def test_a_compute_type_waits_for_an_image_in_its_family(self):
+        (self.env_dir / "project.env").write_text(PROJECT_ENV + "ZONE=us-central1-a\n")
+        (self.env_dir / "android.env").write_text("BACKEND=compute\n")
+        self.gcp.state.secrets["claude-env-android"] = "android-key"
+        # A job named for it is no use to a compute type.
+        self.add_job("android")
+        self.start(RUNNER_WAIT_SEC="1", REAPER_INTERVAL_SEC="3600")
+        self.wait_for(lambda: self.starts("linux") and self.starts("gis"), what="the Cloud Run types")
+        self.wait_for(
+            lambda: "supervisor: android: no image in family agent-android yet; not starting its orchestrator "
+                    "until there is (checking every 1s)" in self.lines,
+            what="the android wait line",
+        )
+        self.assertEqual(self.starts("android"), [])
+        self.add_image("android")
+        self.wait_for(lambda: self.starts("android"), what="android once its family has an image")
+        self.stop()
+
+    def test_an_answer_other_than_404_starts_it_anyway(self):
+        self.gcp.fail("GET", "/jobs/agent-gis", 503, "unavailable")
+        self.start(RUNNER_WAIT_SEC="3600")
+        self.wait_for(lambda: self.starts("linux") and self.starts("gis"), what="both types")
+        self.assertIn(
+            "supervisor: gis: can't check for its Cloud Run job agent-gis (HTTP 503: unavailable); "
+            "starting its orchestrator anyway",
+            self.lines,
+        )
+        self.stop()
+
+
 class SupervisionTests(SupervisorCase):
     def test_restarts_an_orchestrator_that_exits(self):
         self.start(FAKE_MODE_gis="exit")
@@ -245,6 +311,7 @@ class SupervisionTests(SupervisorCase):
         for name in ("alpha", "beta", "gamma"):
             (self.env_dir / f"{name}.env").write_text("MIN_IDLE=0\n")
             self.gcp.state.secrets[f"claude-env-{name}"] = f"{name}-key"
+            self.add_job(name)
         self.start(FAKE_DRAIN="0")
         types = ("alpha", "beta", "gamma", "gis", "linux")
         self.wait_for(lambda: all(self.starts(name) for name in types), what="five types")
@@ -335,10 +402,10 @@ def vm(name, status="RUNNING", age_sec=60, work_order=True, type_="android"):
 class ReaperTests(SupervisorCase):
     def setUp(self):
         super().setUp()
-        (self.env_dir / "project.env").write_text(
-            "PROJECT_ID=lolay-agents\nPROJECT_NUMBER=613087327945\nZONE=us-central1-a\n")
+        (self.env_dir / "project.env").write_text(PROJECT_ENV + "ZONE=us-central1-a\n")
         (self.env_dir / "android.env").write_text("BACKEND=compute\nMAX_RUN_DURATION_SEC=3600\n")
         self.gcp.state.secrets["claude-env-android"] = "android-key"
+        self.add_image("android")
 
     def instances(self):
         return self.gcp.state.instances
