@@ -1,8 +1,17 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "GitHub Actions only, pinned to commit SHAs (specs/design.md, the CI gate). Image contents track latest through the lock and m5's watch, not Renovate (specs/gcp.md).",
+  "description": "GitHub Actions, pinned to commit SHAs (specs/design.md, the CI gate), and the tools CI installs (scripts/ci/tools.env). Image contents track latest through the lock and m5's watch, not Renovate (specs/gcp.md).",
   "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
-  "enabledManagers": ["github-actions"],
+  "enabledManagers": ["github-actions", "custom.regex"],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "CI's tool versions: one KEY=version line each in scripts/ci/tools.env, under a `# renovate: datasource=... depName=...` comment (r1.f16, f17). Their releases are tagged v<version>.",
+      "managerFilePatterns": ["/^scripts/ci/tools\\.env$/"],
+      "matchStrings": ["# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n[A-Z_]+=(?<currentValue>\\S+)"],
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    }
+  ],
   "timezone": "America/Los_Angeles",
   "schedule": ["* 0-5 * * 1"],
   "minimumReleaseAge": "7 days",
@@ -21,6 +30,13 @@
       "matchUpdateTypes": ["major"],
       "groupName": "GitHub Actions (major)",
       "automerge": false
+    },
+    {
+      "description": "CI's tools (scripts/ci/tools.env), as the Actions: one weekly PR for minor and patch bumps, merged without review once ci and cloud-build pass. Majors get their own PR and wait for review.",
+      "matchManagers": ["custom.regex"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "CI tools",
+      "automerge": true
     },
     {
       "description": "Ubuntu runners stay on the images' Ubuntu (r1.f18): every image moves to 26.04 together once Cloud Run's driver supports a CUDA with an ubuntu26.04 image (13.3 or later; it is 13.0), and the runners move with them. Until then 26.04 runners buy nothing, since builds run in Docker.",

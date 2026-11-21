@@ -49,9 +49,12 @@ current.
 The CI gate is the exception. GitHub Actions are pinned to full commit SHAs, with the
 release tag in a comment: a tag can be moved, and the deploy jobs run these actions
 holding the production identity. Renovate (`.github/renovate.json`) bumps them in one
-weekly pull request that merges once CI passes; majors wait for review. CI installs the
-Packer version that `required_version` asks for, so a failing `make ci` points at a
-change in this repo rather than a tool update.
+weekly pull request that merges once CI passes; majors wait for review. The tools CI
+installs (Packer) are pinned the same way: one version each in `scripts/ci/tools.env`,
+which every workflow reads and Renovate bumps in its own weekly pull request, so a
+failing `make ci` points at a change in this repo rather than a tool update, and two
+workflows can't validate the same files at different versions. A template's
+`required_version` is its floor, and CI's Packer must meet it.
 
 ## 2. Constraints
 

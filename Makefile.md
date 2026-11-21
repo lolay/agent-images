@@ -153,7 +153,7 @@ step. It passes `--var image_ref=$(IMAGE_REF)` so the image check follows `.env`
 | --- | --- |
 | `host` | Apple Silicon, `make`, `tart` ≥ 2.38, `security`, `.env` |
 | `default` (run host) | `claude` (and, as a warning, that Homebrew's quarantine is off it), `vms/runner.env`, the Keychain environment secret, a login keychain this session can read (it stays locked over SSH), the `IMAGE_REF` image; FileVault state (info only) |
-| `build` | `packer` ≥ 1.16.1, the Packer Tart plugin, `python3`, `shellcheck`, `shfmt`, `plutil` |
+| `build` | `packer` (its floor is `required_version` in `images/macos/plugins.pkr.hcl`, which `make init` enforces), the Packer Tart plugin, `python3`, `shellcheck`, `shfmt`, `plutil` |
 | `session` (a cloud runner session, where `AGENT_TYPE` is set) | `shellcheck`, `shfmt`, `go`, `python3`: what the session gate, `cloud-lint` and `cloud-test`, needs, and nothing more, so it passes on the linux image |
 | `session-android` (a session, `MODE=android`) | `session` plus `packer`, for `cloud-lint MODE=android` |
 | `linux` (Linux host) | x86_64, VT-x/AMD-V, nested KVM, `make`, `.env`, `lxc`, a ZFS storage pool, the `IMAGE_REF` image, `claude`, `vms/runner.env`, the environment secret file, lingering |
