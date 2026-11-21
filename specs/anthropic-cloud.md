@@ -80,9 +80,9 @@ when that line, the allowed hosts or the week change, so a merged change to
 04:37 had none of #31's `/usr/local/bin` links, which merged at 04:46. To pick
 up a change at once, edit the environment's setup script (a comment line is
 enough); the next session rebuilds. So a session says when it's behind: the
-script records a fingerprint of `scripts/anthropic/setup.sh` and
-`images/toolsets` (`git ls-files -s`, so committed content only) with the
-checkout's path, and the SessionStart hook compares it with the session's fresh
+script records a fingerprint of its inputs (`scripts/anthropic/setup.sh`,
+`images/toolsets`, and linux's Dockerfile chain with the libraries that read
+it; `git ls-files -s`, so committed content only) with the checkout's path, and the SessionStart hook compares it with the session's fresh
 checkout. On a mismatch it shows a notice and tells the session to pass it on.
 
 Checked 2026-11-06 in a session that ran the script (208.7 s): the session-start
@@ -246,7 +246,10 @@ Gives an Anthropic environment `agent-linux`'s tools, and records how fast its
 sessions start.
 
 `scripts/anthropic/setup.sh` installs `agent-linux`'s toolsets in `agent-linux`'s
-order, with the same `install-toolset.sh`, timing each into
+order, read from its Dockerfiles' build chain (`cloud_toolsets linux` in
+`scripts/cloud/lib.sh`, base's `core` first) rather than a copy of the list, so a
+toolset added to `linux` or `base` reaches this environment too (`setup.sh toolsets`
+prints the list), with the same `install-toolset.sh`, timing each into
 `/var/log/agent-images-setup.tsv`. The environment's setup script is one line, and
 agent-images must be one of the session's repositories:
 

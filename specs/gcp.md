@@ -770,8 +770,9 @@ releases, Rust, Terraform and a custom source for Claude, with grouped pull requ
 and auto-merge. It doesn't resolve an apt dependency closure or snapshot, or Homebrew
 on Linux, so the resolver script has to exist anyway, and two bump systems feeding
 one lock is worse than one (owner, 2026-11-06). Renovate does handle the GitHub
-Actions, which are pinned by SHA ([design.md](design.md), the CI gate), and only
-those (`enabledManagers` in `.github/renovate.json`).
+Actions, which are pinned by SHA ([design.md](design.md), the CI gate), and the tools
+CI itself installs (`scripts/ci/tools.env`, through a custom regex manager), and only
+those (`enabledManagers` in `.github/renovate.json`); never what an image contains.
 
 ## Pinning a dependency
 

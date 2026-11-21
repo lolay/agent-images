@@ -284,6 +284,40 @@ class GithubEnvTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("no ", result.stderr)
 
+    def test_a_named_file_is_read_the_same_way(self):
+        # tools.env goes through it too (ci.yml, cloud-build, the deploy).
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        env_file = tmp / "tools.env"
+        env_file.write_text("# renovate: datasource=x depName=y\nPACKER_VERSION=\"1.16.2\"\nexport SHFMT_VERSION='3.14.1'\n")
+        result = subprocess.run(["bash", str(self.SCRIPT), str(env_file)], capture_output=True, text=True,
+                                env={"PATH": "/usr/bin:/bin"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(parse_github_env(result.stdout), {"PACKER_VERSION": "1.16.2", "SHFMT_VERSION": "3.14.1"})
+        self.assertEqual(self.github_env_args(str(tmp / "missing.env")).returncode, 1)
+        self.assertEqual(self.github_env_args("a", "b").returncode, 2)
+
+    def github_env_args(self, *args):
+        return subprocess.run(["bash", str(self.SCRIPT), *args], capture_output=True, text=True,
+                              env={"PATH": "/usr/bin:/bin"})
+
+    def test_it_stays_bash_3_2_where_macos_runs_it(self):
+        # ci.yml runs it on macOS, whose /bin/bash is 3.2: no bash 4 builtins or
+        # expansions, and the GCP library only for project.env.
+        text = "\n".join(line for line in self.SCRIPT.read_text().splitlines() if not line.lstrip().startswith("#"))
+        for bash4 in (r"\bmapfile\b", r"\breadarray\b", r"declare\s+-A", r"local\s+-A", r"\$\{[^}]*(,,|\^\^)", r"\bcoproc\b"):
+            with self.subTest(construct=bash4):
+                self.assertNotRegex(text, bash4)
+
+    def test_no_workflow_greps_an_env_file(self):
+        # Every env file reaches $GITHUB_ENV through the helper (r1.f33), tools.env
+        # included: a grep keeps a quoted value's quotes.
+        for workflow in sorted((REPO / ".github/workflows").glob("*.yml")):
+            for number, line in enumerate(workflow.read_text().splitlines(), 1):
+                if ".env" in line and "GITHUB_ENV" in line and "github-env.sh" not in line:
+                    self.fail(f"{workflow.name}:{number} loads an env file itself; "
+                              f"use scripts/cloud/github-env.sh: {line.strip()}")
+
     def test_workflows_read_project_env_only_through_it(self):
         # Any other mention (grep, sed, cat, source) is a second reader that can
         # drift from the shell's reading; the helper is the one (r1.f33). A paths

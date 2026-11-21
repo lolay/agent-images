@@ -6,9 +6,11 @@
 #   bash agent-images/scripts/anthropic/setup.sh
 #
 # It runs as root, one directory above the session's repositories, so
-# agent-images must be one of them. It installs the same toolsets as
-# images/cloud/linux/Dockerfile with the same installer, timing each into
-# /var/log/agent-images-setup.tsv.
+# agent-images must be one of them. It installs agent-linux's toolsets, read
+# from its Dockerfiles' build chain (base's too) as the image builds them, with
+# the same installer, timing each into /var/log/agent-images-setup.tsv.
+# `setup.sh toolsets` prints that list, and `setup.sh fingerprint-inputs` the
+# paths a session's stale-environment notice compares; neither changes anything.
 #
 # Homebrew won't run as root outside a container it recognizes, and Anthropic's
 # VM isn't one (no /.dockerenv), so Homebrew is owned by the stock image's
@@ -16,11 +18,48 @@
 # as ubuntu.
 set -euo pipefail
 
-readonly toolsets=(core native jvm browser display node python go rust proto terraform)
 readonly log=/var/log/agent-images-setup.tsv
 readonly user=ubuntu
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly here
+
+# agent-linux's toolsets in install order, from the one parser the image's
+# build and deploy use (r1.f34): a toolset added to linux or base reaches this
+# environment too. It reads paths relative to the repo root.
+# shellcheck source=scripts/cloud/lib.sh
+source "$here/scripts/cloud/lib.sh"
+mapfile -t toolsets < <(cd "$here" && cloud_toolsets linux)
+readonly toolsets
+if ((${#toolsets[@]} == 0)); then
+	printf 'setup.sh: no toolsets found for linux in %s/images/cloud\n' "$here" >&2
+	exit 1
+fi
+
+# What a session's notice compares (build-fingerprint, below): this script, the
+# toolsets, and what the toolset list is read from (linux's Dockerfile chain
+# and the libraries that parse it). A change to the chain itself (a new FROM)
+# changes a Dockerfile already in the list.
+fingerprint_inputs=(scripts/anthropic/setup.sh images/toolsets scripts/cloud/lib.sh hooks/gcp/lib.sh)
+while read -r dir; do
+	fingerprint_inputs+=("images/cloud/$dir/Dockerfile")
+done < <(cd "$here" && cloud_chain linux)
+readonly fingerprint_inputs
+
+case "${1:-}" in
+"") ;;
+toolsets)
+	printf '%s\n' "${toolsets[@]}"
+	exit 0
+	;;
+fingerprint-inputs)
+	printf '%s\n' "${fingerprint_inputs[@]}"
+	exit 0
+	;;
+*)
+	printf 'usage: setup.sh [toolsets | fingerprint-inputs]\n' >&2
+	exit 2
+	;;
+esac
 
 now() { date +%s.%N; }
 mark() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >>"$log"; }
@@ -124,13 +163,13 @@ install -d -m 755 /opt/agent-images/libexec
 
 # Anthropic rebuilds its environment cache only when the environment's own
 # setup script changes, not when this repo's does, so a session can start from
-# a build of an older setup.sh or older toolsets. The build records a
-# fingerprint of both, from git's blob hashes, and the hook compares it with the
-# session's fresh checkout.
-cat >/opt/agent-images/libexec/build-fingerprint <<'EOF'
+# a build of older inputs. The build records a fingerprint of every input, from
+# git's blob hashes, and the hook compares it with the session's fresh checkout.
+# The inputs are fingerprint_inputs, above.
+cat >/opt/agent-images/libexec/build-fingerprint <<EOF
 #!/bin/sh
 # Prints the fingerprint of an agent-images checkout's setup inputs.
-git -C "$1" ls-files -s scripts/anthropic/setup.sh images/toolsets 2>/dev/null |
+git -C "\$1" ls-files -s ${fingerprint_inputs[*]} 2>/dev/null |
 	sha256sum | cut -d' ' -f1
 EOF
 chmod 755 /opt/agent-images/libexec/build-fingerprint
@@ -141,8 +180,7 @@ cat >/opt/agent-images/libexec/session-env <<'EOF'
 #!/bin/sh
 # SessionStart hook (scripts/anthropic/setup.sh): every Bash tool command
 # sources the agent-images profile fragment, and the session hears when its
-# environment was built from an older setup.sh or older toolsets than its
-# checkout's.
+# environment was built from older setup inputs than its checkout's.
 cat >/dev/null
 if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
 	grep -qF zz-agent-images.sh "$CLAUDE_ENV_FILE" 2>/dev/null ||
@@ -153,7 +191,7 @@ read -r built checkout </opt/agent-images/build-fingerprint || exit 0
 [ -d "$checkout/.git" ] || exit 0
 now="$(/opt/agent-images/libexec/build-fingerprint "$checkout")"
 [ -n "$now" ] && [ "$now" != "$built" ] || exit 0
-message="agent-images: this environment was built from an older scripts/anthropic/setup.sh or images/toolsets than this checkout's, and Anthropic's cache won't rebuild on its own. To update it, edit the environment's setup script (a comment line is enough); the next session reruns it."
+message="agent-images: this environment was built from older setup inputs (scripts/anthropic/setup.sh, images/toolsets or linux's Dockerfiles) than this checkout's, and Anthropic's cache won't rebuild on its own. To update it, edit the environment's setup script (a comment line is enough); the next session reruns it."
 printf '{"systemMessage":"%s","hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s Tell the user this before starting work."}}\n' "$message" "$message"
 EOF
 chmod 755 /opt/agent-images/libexec/session-env

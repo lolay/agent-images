@@ -76,17 +76,17 @@ tracks the latest and pins only on breakage
 | Component | Version | Where it's set |
 | --- | --- | --- |
 | Tart | 2.38.0 (2.39+ recommended: fixes `tart list` while runners run) | Host install (`brew install openai/tools/tart`) |
-| Packer | 1.16.1 | `required_version` in `images/macos/plugins.pkr.hcl` |
+| Packer | CI: `PACKER_VERSION`; build hosts: Homebrew's, at least the template's floor | `scripts/ci/tools.env` (every workflow reads it; Renovate bumps it); the floor is `required_version` in `images/macos/plugins.pkr.hcl` |
 | packer-plugin-tart | 1.21.0 | `~> 1.21` in `images/macos/plugins.pkr.hcl` |
 | Base image | `macos-<host codename>-xcode:latest`, today `macos-golden-gate-xcode` | Not pinned: `make build` pulls the newest Xcode image for the host's macOS (`MACOS_CODENAME_<major>` in the Makefile) |
 | Claude Code | `claude-code@latest` cask (2.1.286) | `images/macos/Brewfile`; the Claude runner upgrades it at each start |
 | Image packages | xcodegen 2.46.0, xcbeautify 3.2.1, swiftlint 0.65.1, swiftformat 0.63.1, sops 3.13.3, age 1.3.2, nowline 0.11.0 and triage 0.4.0 (`lolay/tap`), asccli 0.18.6 (command `asc`) | `images/macos/Brewfile`; current release at build time |
-| shellcheck / shfmt | 0.11.0 / 3.14.1 | Build host tools for `make lint` |
+| shellcheck / shfmt | CI: `SHELLCHECK_VERSION` / `SHFMT_VERSION`; build hosts: Homebrew's | `scripts/ci/tools.env` (`scripts/ci/install-lint-tools.sh` installs them in both workflows; Renovate bumps them); build host tools for `make lint` |
 | actions/checkout | v7.0.1 | `.github/workflows/ci.yml`, `.github/workflows/android-image-smoke.yml` |
 | Linux host | Ubuntu 24.04 Server, LXD snap `latest/stable` (refreshes held; `make build` refreshes) | `scripts/linux/host-setup.sh` |
 | Android image (Linux host) | `ubuntu:24.04`; OpenJDK 21; Android command-line tools 23.0, emulator 37.1.11, platform and x86_64 Google APIs image `android-37.0`, build-tools 37.0.0; NDK r30, Gradle 9.8.2 (2026-11-06) | `images/android/toolsets.txt` (the toolsets in `images/toolsets`; the SDK is the `android` toolset's `install.sh`): newest stable at build time |
 | Linux toolchains | Node 26.13.0, pnpm 12.16.1, Python 3.15.2, uv 0.13.7, Go 1.27.3, Rust 1.99.1 (rustup stable), protoc 36.2, buf 1.75.0, grpcurl 1.9.4, Terraform 1.17.1 (tenv), tflint 0.65.0, actionlint 1.7.12, shellcheck 0.11.0, shfmt 3.14.1, nowline 0.12.1, triage 0.5.0 (2026-11-05) | The `images/toolsets` Brewfiles and install scripts. The Cloud Run types build at their lock's versions (`images/cloud/<type>/versions.lock`, which the lock watch moves: [specs/gcp.md](specs/gcp.md#the-lock), "The lock"); the Android image takes the newest stable at build time |
-| hashicorp/setup-packer | v3.4.0 (installs Packer 1.16.1) | `.github/workflows/ci.yml` |
+| hashicorp/setup-packer | v3.4.0 (installs Packer at `PACKER_VERSION` from `scripts/ci/tools.env`) | `.github/workflows/ci.yml`, `cloud-build.yml`, `cloud-deploy.yml` |
 
 ## Build (build host)
 
