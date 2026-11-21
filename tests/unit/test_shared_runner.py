@@ -465,6 +465,34 @@ class WatchdogTests(unittest.TestCase):
         self.assertEqual(len(self.pkill_calls()), 1, "once at the threshold, not every 30 s")
         self.assertEqual(self.counter().read_text().strip(), "3")
 
+    def test_reads_quoted_settings_as_the_shell_does(self):
+        # The cloud entrypoint writes runner.env with printf %q; read with sed, a
+        # quoted WATCHDOG_ACTION was 'terminate', quotes and all, so never acted (r1.f33).
+        base_dir = subprocess.run(
+            ["bash", "-c", 'printf %q "$1"', "-", str(self.tmp / "ws")],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        self.runner_env.write_text(f"AGENT=claude\nCLAUDE_BASE_DIR={base_dir}\nWATCHDOG_ACTION='terminate'\n")
+        self.run_watchdog()
+        result = self.run_watchdog()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("stopping the runner so the session requeues", result.stderr)
+        self.assertEqual(len(self.pkill_calls()), 1)
+
+    def test_a_runner_env_that_does_not_source_is_warned_about(self):
+        # Its WATCHDOG_ACTION=terminate is lost; the fallback to log mustn't be silent.
+        self.runner_env.write_text(f"CLAUDE_BASE_DIR={self.tmp / 'ws'}\nWATCHDOG_ACTION=terminate\nif then\n")
+        self.run_watchdog()
+        result = self.run_watchdog()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"{self.runner_env} doesn't source; using the defaults", result.stderr)
+        self.assertEqual(self.pkill_calls(), [])
+
+    def test_a_runner_env_that_sources_gives_no_warning(self):
+        self.runner_env.write_text(f"AGENT=claude\nCLAUDE_BASE_DIR={self.tmp / 'ws'}\n")
+        result = self.run_watchdog()
+        self.assertNotIn("doesn't source", result.stderr)
+
     def test_log_only_by_default(self):
         self.runner_env.write_text(f"AGENT=claude\nCLAUDE_BASE_DIR={self.tmp / 'ws'}\n")
         self.run_watchdog()
@@ -657,6 +685,9 @@ class ComputeChainTests(unittest.TestCase):
         bin_dir.mkdir()
         shutil.copy(CLAUDE_SH, bin_dir / "agent-runner-claude")
         self.gcp = FakeGcp().__enter__()
+        # The family's image the hook sizes the boot disk from (r1.f20).
+        self.gcp.state.images["agent-android-1"] = {"name": "agent-android-1", "family": "agent-android",
+                                                    "diskSizeGb": "100"}
 
     def tearDown(self):
         self.gcp.__exit__(None, None, None)

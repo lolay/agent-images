@@ -15,6 +15,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlsplit
 
 TOKEN = "fake-token-1234"
+# project.env's zone: where a VM a test puts in State.instances without a "zone" is.
+DEFAULT_ZONE = "us-central1-a"
+# Zones aggregatedList always reports: one with no VMs carries a warning in
+# place of an instances list, as the real API's do.
+EMPTY_ZONES = ("europe-west1-b",)
 
 
 @dataclass
@@ -44,6 +49,10 @@ class State:
     compute_operations: dict = field(default_factory=dict)
     operation_errors: dict = field(default_factory=dict)  # resource name -> error code
     pending_operations: bool = False
+    # Cloud Run operations: full name -> body once done. A write to a job listed
+    # in run_operation_errors (by its short name) finishes with that message.
+    run_operations: dict = field(default_factory=dict)
+    run_operation_errors: dict = field(default_factory=dict)  # job name -> error message
     operations: int = 0
     requests: list = field(default_factory=list)
     failures: dict = field(default_factory=dict)  # (method, path suffix) -> (status, body)
@@ -164,11 +173,22 @@ def route(state: State, request: Request):
         return route_jobs(state, request)
 
     if request.method == "GET" and "/operations/" in path and path.startswith("/v2/"):
-        return 200, {"name": path.removeprefix("/v2/"), "done": True, "response": {}}
+        body = state.run_operations.get(path.removeprefix("/v2/"))
+        return (200, body) if body else (404, {"error": {"message": f"operation {path} not found"}})
 
     if request.method == "POST" and path.endswith(":run") and "/jobs/" in path:
         job = path.rsplit("/", 1)[1].removesuffix(":run")
         parent = path.split("/jobs/")[0].removeprefix("/v2/")
+        try:
+            body = request.json()
+        except ValueError:
+            return 400, {"error": {"message": "Invalid JSON payload received."}}
+        # The real API runs a job with no overrides, but the runner's container
+        # can't register without the work order, so here that's a refusal.
+        names = {item.get("name") for override in body.get("overrides", {}).get("containerOverrides", [])
+                 for item in override.get("env", []) if item.get("value")}
+        if not {"SELF_HOSTED_RUNNER_ENVIRONMENT_SECRET", "RUNNER_LABEL"} <= names:
+            return 400, {"error": {"message": "fake: a run with no work order or runner label override"}}
         return 200, {
             "name": f"{parent}/operations/op-1",
             "metadata": {"name": f"{parent}/executions/{job}-abc12"},
@@ -220,38 +240,64 @@ def route_compute(state: State, request: Request):
         state.compute_operations[name] = body
         return 200, body
 
+    def matching_instances():
+        wanted = request.query.get("filter", "")
+        return [i for i in state.instances.values() if all(
+            term.strip("()") in _filter_terms(i) for term in wanted.split(" AND ") if term)]
+
     if rest[:1] == ["operations"] and request.method == "GET":
         body = state.compute_operations.get(rest[1])
         return (200, body) if body else (404, {"error": {"message": "no such operation"}})
 
+    # aggregatedList: every zone's VMs, keyed "zones/<zone>". A zone with none
+    # carries a warning instead of an instances list, as the real API's do.
+    if segments[2] == "aggregated":
+        if rest != ["instances"] or request.method != "GET":
+            return 404, {"error": {"message": f"no fake for {request.method} {path}"}}
+        items = {}
+        for instance in matching_instances():
+            items.setdefault(f"zones/{_zone(instance)}", {"instances": []})["instances"].append(instance)
+        for zone in EMPTY_ZONES:
+            items.setdefault(f"zones/{zone}", {"warning": {"code": "NO_RESULTS_ON_PAGE"}})
+        return 200, {"items": items}
+
     if rest[:1] == ["instances"]:
+        zone = segments[3]
         if len(rest) == 1 and request.method == "POST":
-            body = request.json()
+            try:
+                body = request.json()
+            except ValueError:
+                return 400, {"error": {"code": 400, "message": "Invalid JSON payload received.",
+                                       "errors": [{"reason": "parseError"}]}}
             name = body["name"]
+            refused = _refuse_boot_disk(state, body)
+            if refused:
+                return refused
             if name in state.instances:
                 return 409, {"error": {"code": 409, "message": f"{name} already exists",
                                        "errors": [{"reason": "alreadyExists"}]}}
             if name not in state.operation_errors:
                 state.instances[name] = {
                     **body,
+                    "zone": f"https://www.googleapis.com/compute/v1/{scope}",
                     "status": "RUNNING",
                     "creationTimestamp": "2026-11-06T10:00:00.000-08:00",
                     "metadata": {**body.get("metadata", {}), "fingerprint": "fp-1"},
                 }
             return operation(name, "insert")
         if len(rest) == 1 and request.method == "GET":
-            wanted = request.query.get("filter", "")
-            items = [i for i in state.instances.values() if all(
-                term.strip("()") in _filter_terms(i) for term in wanted.split(" AND ") if term)]
+            items = [i for i in matching_instances() if _zone(i) == zone]
             return 200, {"items": items} if items else {}
         name = rest[1]
-        if name not in state.instances:
-            return 404, {"error": {"message": f"instance {name} not found"}}
+        # A VM is found only in its own zone.
+        if name not in state.instances or _zone(state.instances[name]) != zone:
+            return 404, {"error": {"message": f"instance {name} not found in {zone}"}}
         instance = state.instances[name]
         if len(rest) == 2 and request.method == "GET":
             return 200, instance
         if len(rest) == 2 and request.method == "DELETE":
-            del state.instances[name]
+            if name not in state.operation_errors:
+                del state.instances[name]
             return operation(name, "delete")
         if rest[2:] == ["setMetadata"] and request.method == "POST":
             body = request.json()
@@ -275,10 +321,10 @@ def route_compute(state: State, request: Request):
                 term in _filter_terms(i) for term in wanted.split(" AND ") if term)]
             return 200, {"items": items} if items else {}
         if rest[1] == "family" and request.method == "GET":
-            family = [i for i in state.images.values() if i.get("family") == rest[2]]
-            if not family:
+            image = _family_image(state, rest[2])
+            if image is None:
                 return 404, {"error": {"message": f"no image in family {rest[2]}"}}
-            return 200, sorted(family, key=lambda i: i.get("creationTimestamp", ""))[-1]
+            return 200, image
         name = rest[1]
         if name not in state.images:
             return 404, {"error": {"message": f"image {name} not found"}}
@@ -292,6 +338,39 @@ def route_compute(state: State, request: Request):
             return 200, state.images[name]
 
     return 404, {"error": {"message": f"no fake for {request.method} {scope} {rest}"}}
+
+
+def _family_image(state: State, family: str):
+    """The family's latest image, as images.getFromFamily answers, or None."""
+    images = [i for i in state.images.values() if i.get("family") == family]
+    return sorted(images, key=lambda i: i.get("creationTimestamp", ""))[-1] if images else None
+
+
+def _refuse_boot_disk(state: State, body: dict):
+    """What the real instances.insert says about the boot disk's source image:
+    404 when it doesn't exist, 400 when the disk is smaller than the image."""
+    boot = next((d for d in body.get("disks", []) if d.get("boot")), None)
+    params = (boot or {}).get("initializeParams", {})
+    source = params.get("sourceImage", "")
+    if not source:
+        return None
+    if "/images/family/" in source:
+        image = _family_image(state, source.rsplit("/", 1)[1])
+    else:
+        image = state.images.get(source.rsplit("/", 1)[1])
+    if image is None:
+        return 404, {"error": {"code": 404, "message": f"The resource '{source}' was not found",
+                               "errors": [{"reason": "notFound"}]}}
+    image_gb, disk_gb = image.get("diskSizeGb"), params.get("diskSizeGb")
+    if image_gb and disk_gb and int(disk_gb) < int(image_gb):
+        return 400, {"error": {"code": 400, "errors": [{"reason": "invalid"}], "message": (
+            f"Invalid value for field 'resource.disks[0].initializeParams.diskSizeGb': '{disk_gb}'. "
+            f"Requested disk size cannot be smaller than the image size ({image_gb} GB)")}}
+    return None
+
+
+def _zone(instance: dict) -> str:
+    return instance.get("zone", DEFAULT_ZONE).rsplit("/", 1)[-1]
 
 
 def _filter_terms(instance: dict) -> set:
@@ -312,8 +391,16 @@ def route_jobs(state: State, request: Request):
 
     def operation():
         state.operations += 1
+        name = f"{parent}/operations/op-{state.operations}"
+        done = {"name": name, "done": True}
+        message = state.run_operation_errors.get(path.rsplit("/", 1)[1])
+        if message:
+            done["error"] = {"code": 13, "message": message}
+        else:
+            done["response"] = {}
+        state.run_operations[name] = done
         # Not done yet, so the caller has to poll it.
-        return {"name": f"{parent}/operations/op-{state.operations}", "done": False}
+        return {"name": name, "done": False}
 
     if path.endswith("/jobs"):
         return 200, {"jobs": list(state.jobs.values())}

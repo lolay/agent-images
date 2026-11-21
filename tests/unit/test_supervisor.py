@@ -17,16 +17,37 @@ from fake_gcp import FakeGcp
 from support import REPO, base_env, write_executable
 
 SUPERVISOR = REPO / "images/cloud/orchestrator/supervisor.sh"
+PROJECT_ENV = "PROJECT_ID=lolay-agents\nPROJECT_NUMBER=613087327945\nREGION=us-central1\n"
+JOBS = "projects/lolay-agents/locations/us-central1/jobs"
 
-# Records how it was started, logs a line on each stream, and drains on SIGTERM
-# the way the orchestrator does.
-FAKE_CLAUDE = r"""
+ORCHESTRATOR_ARGS = REPO / "images/cloud/orchestrator/orchestrator-args.sh"
+CHECK_FLAGS = REPO / "scripts/cloud/check-orchestrator-flags.sh"
+
+# Refuses what the real CLI would: another command, a flag the supervisor's one
+# list doesn't have (the deploy checks that list against the real --help), or a
+# flag with no value (r1.f10). Then records how it was started, logs a line on
+# each stream, and drains on SIGTERM the way the orchestrator does.
+FAKE_CLAUDE = f'source "{ORCHESTRATOR_ARGS}"\n' + r"""
+if [[ "${1:-} ${2:-}" != "self-hosted-runner orchestrator" ]]; then
+	echo "error: unknown command '$*'" >&2
+	exit 1
+fi
+mapfile -t allowed < <(orchestrator_flags)
 type="$RUNNER_TYPE"
 trap 'echo term >>"$FAKE_OUT/$type.term.$$"; sleep "${FAKE_DRAIN:-0.3}"; exit 0' TERM
 secret_file=""
-args=("$@")
-for ((i = 0; i < ${#args[@]}; i++)); do
-	[[ "${args[i]}" == --environment-secret-file ]] && secret_file="${args[i + 1]}"
+args=("${@:3}")
+for ((i = 0; i < ${#args[@]}; i += 2)); do
+	flag="${args[i]}"
+	if [[ " ${allowed[*]} " != *" $flag "* ]]; then
+		echo "error: unknown option '$flag'" >&2
+		exit 1
+	fi
+	if ((i + 1 >= ${#args[@]})) || [[ "${args[i + 1]}" == -* || -z "${args[i + 1]}" ]]; then
+		echo "error: option '$flag' argument missing" >&2
+		exit 1
+	fi
+	[[ "$flag" == --environment-secret-file ]] && secret_file="${args[i + 1]}"
 done
 # Written whole, then moved into place: the test reads it as soon as it exists.
 {
@@ -52,13 +73,15 @@ class SupervisorCase(unittest.TestCase):
         self.out.mkdir()
         self.env_dir = self.tmp / "infra"
         self.env_dir.mkdir()
-        (self.env_dir / "project.env").write_text("PROJECT_ID=lolay-agents\nPROJECT_NUMBER=613087327945\n")
+        (self.env_dir / "project.env").write_text(PROJECT_ENV)
         (self.env_dir / "linux.env").write_text("MIN_IDLE=0\nEXPECTED_SPAWN_SECONDS=180\n")
         (self.env_dir / "gis.env").write_text("MIN_IDLE=1\n")
         self.secrets = self.tmp / "secrets"
         self.claude = write_executable(self.tmp / "bin/fake-claude", FAKE_CLAUDE)
         self.gcp = FakeGcp().__enter__()
         self.gcp.state.secrets.update({"claude-env-linux": "linux-key", "claude-env-gis": "gis-key"})
+        self.add_job("linux")
+        self.add_job("gis")
         self.lines = []
         self.process = None
         self.reader = None
@@ -76,6 +99,16 @@ class SupervisorCase(unittest.TestCase):
             self.process.stdout.close()
         self.gcp.__exit__(None, None, None)
         subprocess.run(["rm", "-rf", str(self.tmp)], check=True)
+
+    def add_job(self, runner_type):
+        """The type's Cloud Run job, as the deploy writes it."""
+        name = f"{JOBS}/agent-{runner_type}"
+        self.gcp.state.jobs[name] = {"name": name}
+
+    def add_image(self, runner_type):
+        """An image in the compute type's family, as vm-promote leaves it."""
+        name = f"agent-{runner_type}-20261106-abc"
+        self.gcp.state.images[name] = {"name": name, "family": f"agent-{runner_type}", "diskSizeGb": "100"}
 
     def start(self, **env):
         settings = {
@@ -215,6 +248,104 @@ class StartTests(SupervisorCase):
         self.wait_for(lambda: any(line.startswith("supervisor: no runner type left to start") for line in self.lines), what="the error")
 
 
+class ReadinessTests(SupervisorCase):
+    """A type starts once its job or image family exists (r1.f3)."""
+
+    def test_a_type_with_no_job_waits_and_the_others_start(self):
+        del self.gcp.state.jobs[f"{JOBS}/agent-gis"]
+        self.start(RUNNER_WAIT_SEC="1")
+        self.wait_for(lambda: self.starts("linux"), what="linux")
+        waiting = ("supervisor: gis: no Cloud Run job agent-gis yet; not starting its orchestrator "
+                   "until there is (checking every 1s)")
+        self.wait_for(lambda: waiting in self.lines, what="the gis wait line")
+        self.wait_for(lambda: len(self.gcp.requests("GET", "/jobs/agent-gis")) >= 3, what="gis checked again")
+        self.assertEqual(self.starts("gis"), [])
+        self.assertEqual(self.lines.count(waiting), 1, "logged once, not on every check")
+        self.assertEqual(self.gcp.requests("GET", "/secrets/claude-env-gis/"), [], "no secret fetched for it")
+        # It keeps its health port, so linux's doesn't move when it starts.
+        self.assertIn("--health-port 18081", self.start_record("linux")["args"])
+        self.add_job("gis")
+        self.wait_for(lambda: self.starts("gis"), what="gis once its job exists")
+        self.assertIn("supervisor: gis: its Cloud Run job agent-gis is there now", self.lines)
+        self.assertIn("--health-port 18080", self.start_record("gis")["args"])
+        self.stop()
+
+    def test_a_compute_type_waits_for_an_image_in_its_family(self):
+        (self.env_dir / "project.env").write_text(PROJECT_ENV + "ZONE=us-central1-a\n")
+        (self.env_dir / "android.env").write_text("BACKEND=compute\n")
+        self.gcp.state.secrets["claude-env-android"] = "android-key"
+        # A job named for it is no use to a compute type.
+        self.add_job("android")
+        self.start(RUNNER_WAIT_SEC="1", REAPER_INTERVAL_SEC="3600")
+        self.wait_for(lambda: self.starts("linux") and self.starts("gis"), what="the Cloud Run types")
+        self.wait_for(
+            lambda: "supervisor: android: no image in family agent-android yet; not starting its orchestrator "
+                    "until there is (checking every 1s)" in self.lines,
+            what="the android wait line",
+        )
+        self.assertEqual(self.starts("android"), [])
+        self.add_image("android")
+        self.wait_for(lambda: self.starts("android"), what="android once its family has an image")
+        self.stop()
+
+    def test_sigterm_during_a_slow_readiness_check_starts_nothing_more(self):
+        # gis sorts first; its check takes 1.5 s, and the trap runs only once it
+        # returns. Then neither gis nor linux may start: they'd miss the drain.
+        self.gcp.state.delays["/jobs/agent-gis"] = 1.5
+        self.start()
+        self.wait_for(lambda: any(line.startswith("supervisor: runner types:") for line in self.lines),
+                      what="the supervisor to start")
+        time.sleep(0.5)
+        self.assertEqual(self.stop(), 0)
+        self.assertEqual(self.gcp.requests("GET", "/jobs/agent-linux"), [], "linux not even checked")
+        self.assertEqual(self.gcp.requests("GET", "/secrets/"), [], "no secret fetched")
+        self.assertFalse(any("started orchestrator" in line for line in self.lines), self.lines)
+        tokens = self.gcp.requests("GET", "/service-accounts/default/token")
+        self.assertEqual(len(tokens), 1)
+
+    def test_one_token_serves_the_check_and_the_secret(self):
+        self.start()
+        self.wait_for(lambda: self.starts("linux") and self.starts("gis"), what="both types")
+        self.assertEqual(len(self.gcp.requests("GET", "/service-accounts/default/token")), 2, "one per type")
+        self.stop()
+
+    def test_a_type_with_its_own_project_and_region_is_checked_there(self):
+        # The hook runs gis's job where its env file says; project.env's place
+        # has a job of that name too, which must not count.
+        (self.env_dir / "gis.env").write_text("MIN_IDLE=1\nPROJECT_ID=other-project\nREGION=europe-west1\n")
+        own = "/v2/projects/other-project/locations/europe-west1/jobs/agent-gis"
+        self.start(RUNNER_WAIT_SEC="1")
+        self.wait_for(lambda: self.starts("linux"), what="linux")
+        self.wait_for(lambda: len(self.gcp.requests("GET", own)) >= 2, what="gis checked in its own region twice")
+        self.assertEqual(self.starts("gis"), [])
+        self.assertEqual(self.gcp.requests("GET", f"/v2/{JOBS}/agent-gis"), [], "not project.env's region")
+        self.gcp.state.jobs[own.removeprefix("/v2/")] = {"name": own.removeprefix("/v2/")}
+        self.wait_for(lambda: self.starts("gis"), what="gis once its job exists in its region")
+        self.stop()
+
+    def test_a_compute_type_with_its_own_project_is_checked_there(self):
+        (self.env_dir / "project.env").write_text(PROJECT_ENV + "ZONE=us-central1-a\n")
+        (self.env_dir / "android.env").write_text("BACKEND=compute\nPROJECT_ID=other-project\n")
+        self.gcp.state.secrets["claude-env-android"] = "android-key"
+        self.add_image("android")
+        self.start(REAPER_INTERVAL_SEC="3600")
+        self.wait_for(lambda: self.starts("android"), what="android")
+        families = [request.path for request in self.gcp.requests("GET", "/images/family/")]
+        self.assertEqual(families, ["/compute/v1/projects/other-project/global/images/family/agent-android"])
+        self.stop()
+
+    def test_an_answer_other_than_404_starts_it_anyway(self):
+        self.gcp.fail("GET", "/jobs/agent-gis", 503, "unavailable")
+        self.start(RUNNER_WAIT_SEC="3600")
+        self.wait_for(lambda: self.starts("linux") and self.starts("gis"), what="both types")
+        self.assertIn(
+            "supervisor: gis: can't check for its Cloud Run job agent-gis (HTTP 503: unavailable); "
+            "starting its orchestrator anyway",
+            self.lines,
+        )
+        self.stop()
+
+
 class SupervisionTests(SupervisorCase):
     def test_restarts_an_orchestrator_that_exits(self):
         self.start(FAKE_MODE_gis="exit")
@@ -245,6 +376,7 @@ class SupervisionTests(SupervisorCase):
         for name in ("alpha", "beta", "gamma"):
             (self.env_dir / f"{name}.env").write_text("MIN_IDLE=0\n")
             self.gcp.state.secrets[f"claude-env-{name}"] = f"{name}-key"
+            self.add_job(name)
         self.start(FAKE_DRAIN="0")
         types = ("alpha", "beta", "gamma", "gis", "linux")
         self.wait_for(lambda: all(self.starts(name) for name in types), what="five types")
@@ -335,10 +467,10 @@ def vm(name, status="RUNNING", age_sec=60, work_order=True, type_="android"):
 class ReaperTests(SupervisorCase):
     def setUp(self):
         super().setUp()
-        (self.env_dir / "project.env").write_text(
-            "PROJECT_ID=lolay-agents\nPROJECT_NUMBER=613087327945\nZONE=us-central1-a\n")
+        (self.env_dir / "project.env").write_text(PROJECT_ENV + "ZONE=us-central1-a\n")
         (self.env_dir / "android.env").write_text("BACKEND=compute\nMAX_RUN_DURATION_SEC=3600\n")
         self.gcp.state.secrets["claude-env-android"] = "android-key"
+        self.add_image("android")
 
     def instances(self):
         return self.gcp.state.instances
@@ -415,6 +547,157 @@ class NoComputeTypesTests(SupervisorCase):
         time.sleep(1.5)
         self.assertEqual(self.gcp.requests(contains="/compute/"), [])
         self.stop()
+
+
+def flags():
+    listed = subprocess.run(
+        ["bash", "-c", f'source "{ORCHESTRATOR_ARGS}"; orchestrator_flags'],
+        capture_output=True, text=True, check=True,
+    )
+    return listed.stdout.split()
+
+
+def help_text(flags_listed):
+    """--help as the CLI prints it: an option line per flag, padded to the description."""
+    lines = ["Usage: claude self-hosted-runner orchestrator [options]", "", "Options:"]
+    lines += [f"  {flag} <value>".ljust(40) + "what it does" for flag in flags_listed]
+    lines.append("  -h, --help".ljust(40) + "display help for command")
+    return "\n".join(lines) + "\n"
+
+
+# docker as the check runs it: `run --rm --entrypoint claude <image>
+# self-hosted-runner orchestrator --help` and nothing else, printing $FAKE_HELP,
+# or failing as a pull does when $FAKE_PULL_FAILS is set.
+FAKE_DOCKER = r"""
+expected="run --rm --entrypoint claude ${FAKE_IMAGE} self-hosted-runner orchestrator --help"
+if [[ "$*" != "$expected" ]]; then
+	echo "docker: fake: unexpected call: $*" >&2
+	exit 125
+fi
+if [[ -n "${FAKE_PULL_FAILS:-}" ]]; then
+	echo "docker: Error response from daemon: pull access denied for ${FAKE_IMAGE}" >&2
+	exit 125
+fi
+cat "$FAKE_HELP"
+"""
+
+IMAGE = "registry.example/agent-orchestrator@sha256:abc"
+
+
+class FlagCheckTests(unittest.TestCase):
+    """scripts/cloud/check-orchestrator-flags.sh: the check of the supervisor's
+    flags against an orchestrator image's own Claude (r1.f10)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(subprocess.run, ["rm", "-rf", str(self.tmp)], check=True)
+        write_executable(self.tmp / "bin/docker", FAKE_DOCKER)
+
+    def check(self, text, *args, **env):
+        (self.tmp / "help.txt").write_text(text)
+        return subprocess.run(
+            ["bash", str(CHECK_FLAGS), *(args or (IMAGE,))], capture_output=True, text=True, timeout=30,
+            env=base_env(self.tmp, self.tmp / "bin", FAKE_HELP=str(self.tmp / "help.txt"), FAKE_IMAGE=IMAGE, **env),
+        )
+
+    def test_the_supervisor_passes_the_flags_in_the_list(self):
+        self.assertEqual(flags(), [
+            "--hooks-dir", "--environment-secret-file", "--min-idle", "--expected-spawn-seconds",
+            "--health-port", "--hook-timeout", "--shutdown-drain-sec",
+        ])
+
+    def test_passes_when_every_flag_is_listed(self):
+        result = self.check(help_text(flags()))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("all 7 flags the supervisor passes are listed", result.stdout)
+
+    def test_fails_when_a_flag_is_missing(self):
+        for missing in flags():
+            with self.subTest(missing=missing):
+                result = self.check(help_text([flag for flag in flags() if flag != missing]))
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(f"lists no {missing}, which the supervisor passes", result.stderr)
+
+    def test_a_flag_named_only_in_a_description_is_missing(self):
+        # A renamed flag's old name in the new one's description isn't the flag.
+        others = [flag for flag in flags() if flag != "--environment-secret-file"]
+        text = help_text(others) + "  --secret-file <path>".ljust(40) + "replaces --environment-secret-file\n"
+        result = self.check(text)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("lists no --environment-secret-file", result.stderr)
+
+    def test_fails_with_no_help_text(self):
+        result = self.check("")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("--help printed nothing", result.stderr)
+
+    def test_an_image_that_wont_run_fails_with_dockers_error(self):
+        # Not as seven missing flags (the help text was docker's error).
+        result = self.check(help_text(flags()), FAKE_PULL_FAILS="1")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f"couldn't run {IMAGE}'s claude self-hosted-runner orchestrator --help", result.stderr)
+        self.assertIn("pull access denied", result.stderr)
+        self.assertNotIn("lists no", result.stderr)
+
+    def test_takes_exactly_one_image(self):
+        result = self.check(help_text(flags()), IMAGE, "extra")
+        self.assertEqual(result.returncode, 2)
+
+
+class FlagCheckWiringTests(unittest.TestCase):
+    """Where the workflows run the check: the deploy before the host takes the
+    image, and the pull request check on the image it built (r1.f10)."""
+
+    @staticmethod
+    def step(job, name):
+        text = job[job.index(f"      - name: {name}"):]
+        return text[:text.find("\n      - ", 1)]
+
+    def test_the_deploy_checks_before_pointing_the_host_at_the_image(self):
+        workflow = (REPO / ".github/workflows/cloud-deploy.yml").read_text()
+        job = workflow[workflow.index("\n  orchestrator:\n"):workflow.index("\n  prune:\n")]
+        check = self.step(job, "Check the supervisor's flags")
+        self.assertIn('scripts/cloud/check-orchestrator-flags.sh "$ARTIFACT_REGISTRY/agent-orchestrator@$digest"',
+                      check)
+        self.assertLess(job.index("check-orchestrator-flags.sh"), job.index("scripts/cloud/deploy.sh orchestrator"))
+        self.assertLess(job.index("id: bake"), job.index("check-orchestrator-flags.sh"))
+
+    def test_the_pull_request_checks_the_orchestrator_it_built(self):
+        workflow = (REPO / ".github/workflows/cloud-build.yml").read_text()
+        job = workflow[workflow.index("\n  build:\n"):workflow.index("\n  gate:\n")]
+        check = self.step(job, "Check the supervisor's flags")
+        self.assertIn("if: matrix.target == 'orchestrator'", check)
+        # make cloud-build's local tag (REGISTRY empty, TAG local).
+        self.assertIn("run: scripts/cloud/check-orchestrator-flags.sh agent-orchestrator:local", check)
+        self.assertLess(job.index('make cloud-build TYPE="$TARGET"'), job.index("check-orchestrator-flags.sh"))
+        bake = (REPO / "images/cloud/docker-bake.hcl").read_text()
+        self.assertIn('result = [REGISTRY == "" ? "agent-${name}:${TAG}"', bake)
+        self.assertRegex(bake, r'variable "TAG" \{\n  default = "local"\n\}')
+
+
+class FakeClaudeTests(unittest.TestCase):
+    """The fake refuses what the real CLI would, so a flag outside the list fails here."""
+
+    def run_fake(self, *args):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(subprocess.run, ["rm", "-rf", str(tmp)], check=True)
+        claude = write_executable(tmp / "claude", FAKE_CLAUDE)
+        return subprocess.run([str(claude), *args], capture_output=True, text=True, timeout=10,
+                              env={"PATH": os.environ["PATH"], "RUNNER_TYPE": "linux", "FAKE_OUT": str(tmp)})
+
+    def test_refuses_an_unknown_flag(self):
+        result = self.run_fake("self-hosted-runner", "orchestrator", "--pool-secret-file", "/x")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("unknown option '--pool-secret-file'", result.stderr)
+
+    def test_refuses_a_flag_without_its_value(self):
+        result = self.run_fake("self-hosted-runner", "orchestrator", "--min-idle", "--health-port", "1")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("option '--min-idle' argument missing", result.stderr)
+
+    def test_refuses_another_command(self):
+        result = self.run_fake("self-hosted-runner", "runner")
+        self.assertEqual(result.returncode, 1)
 
 
 if __name__ == "__main__":

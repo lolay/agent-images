@@ -113,9 +113,9 @@ CLOUD_WORKFLOWS := $(wildcard .github/workflows/cloud-*.yml) .github/workflows/l
 ACTIONLINT_VERSION := v1.7.12
 # TYPE=all builds every type and the orchestrator (CLOUD_TARGETS).
 TYPE ?= linux
-# The orchestrator's Claude Code: an exact version or a channel. Runner types
-# take theirs from their lock (scripts/cloud/bake.sh).
-CLAUDE_VERSION ?= latest
+# CLAUDE_VERSION=<version or channel> builds the orchestrator with that Claude
+# Code; unset, it takes the bake file's ORCHESTRATOR_CLAUDE_VERSION, the newest.
+# Runner types take theirs from their lock (scripts/cloud/bake.sh).
 
 SHELL_SCRIPTS := $(wildcard $(MACOS_DIR)/scripts/*.sh $(MACOS_DIR)/files/*.sh \
                    $(SHARED_DIR)/*.sh $(SHARED_DIR)/runners/*.sh $(SHARED_DIR)/claude/hooks/*.sh \
@@ -352,7 +352,7 @@ cloud-smoke: ## Check a built image's toolset record, then run its binary checks
 define CLOUD_LINT_ANDROID
 packer init $(ANDROID_GCE_DIR) >/dev/null
 packer fmt -check -recursive $(ANDROID_GCE_DIR)
-packer validate -var project_id=check -var zone=check -var network=check -var subnetwork=check -var image_name=agent-android-check -var commit=check $(ANDROID_GCE_DIR)
+packer validate -var project_id=check -var zone=check -var network=check -var subnetwork=check -var image_name=agent-android-check -var image_family=agent-android-check -var commit=check $(ANDROID_GCE_DIR)
 endef
 
 cloud-lint: ## Lint the cloud scripts, workflows and settings; MODE=android adds the android Packer template (no writes; needs Go, and Packer for android)

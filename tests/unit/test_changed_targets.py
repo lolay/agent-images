@@ -308,6 +308,17 @@ class ChangedTargetsTests(unittest.TestCase):
         self.assertTrue(result["orchestrator"])
         self.assertEqual(result["types"], [])
 
+    def test_renaming_a_type_prunes_the_old_one_and_builds_the_new(self):
+        # git diff reports an unchanged file under a new name as a rename (R100),
+        # not a deletion, unless told not to (r1.f7).
+        self.git("mv", "infra/gcp/linux-gpu.env", "infra/gcp/linux-cuda.env")
+        self.commit("rename linux-gpu")
+        status = self.git("diff", "--name-status", self.base, self.head())
+        self.assertTrue(status.startswith("R100"), status)
+        result = self.targets()
+        self.assertTrue(result["prune"])
+        self.assertEqual(result["types"], [{"type": "linux-cuda", "build": True}])
+
 
 class ComputeTypeTests(ChangedTargetsTests):
     """With a Compute Engine type (BACKEND=compute): android, built by Packer from images/android."""

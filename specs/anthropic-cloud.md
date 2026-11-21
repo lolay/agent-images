@@ -223,7 +223,7 @@ member's sessions in a shared environment read its variables" ([secrets.md](secr
 
 | | Anthropic `cloud_default` | `agent-linux` |
 | --- | --- | --- |
-| Claude Code | Preinstalled at `/opt/claude-code`, version set by Anthropic | Native installer at image build (`CLAUDE_VERSION`, default latest), one layer rebuilt per release |
+| Claude Code | Preinstalled at `/opt/claude-code`, version set by Anthropic | Native installer at image build, at the version the type's lock records (`docker-bake.hcl`'s `CLAUDE_VERSION` is the constraint the lock resolves), one layer rebuilt per release |
 | `~/.claude/CLAUDE.md` | None from the image; a setup script can write one | Generated from the installed toolsets, plus the machine's facts (no sudo, storage, time limit) |
 | Hooks from the image | Anthropic's: setup-script-failure notice, git stop check | The shared Stop push reminder and the cloud SessionStart hook (outputs folder, session notice, storage facts) |
 | Plugins and skills | The account's claude.ai plugins, synced in at start | Whatever the runner seeds from the image's `~/.claude`; whether claude.ai also syncs account plugins into self-hosted sessions isn't confirmed yet |

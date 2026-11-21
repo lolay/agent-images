@@ -15,8 +15,9 @@ locals {
 }
 
 source "googlecompute" "android" {
-  project_id              = var.project_id
-  zone                    = var.zone
+  project_id = var.project_id
+  zone       = var.zone
+  # Why 24.04: images/cloud/docker-bake.hcl, beside the base target's BASE_IMAGE.
   source_image_family     = "ubuntu-2404-lts-amd64"
   source_image_project_id = ["ubuntu-os-cloud"]
   machine_type            = var.machine_type

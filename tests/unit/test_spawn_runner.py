@@ -1,5 +1,6 @@
 """hooks/gcp/spawn-runner against the fake GCP endpoints."""
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -8,7 +9,7 @@ import unittest
 from pathlib import Path
 
 from fake_gcp import FakeGcp
-from support import REPO, base_env
+from support import REPO, base_env, write_executable
 
 HOOK = REPO / "hooks/gcp/spawn-runner"
 WORK_ORDER = "eyJhbGciOi.work-order.signature"
@@ -16,6 +17,7 @@ ORDER_ID = "ORD0123456789abcdef"
 RUN_PATH = "/v2/projects/lolay-agents/locations/us-central1/jobs/agent-linux:run"
 INSTANCES_PATH = "/compute/v1/projects/lolay-agents/zones/us-central1-a/instances"
 INSTANCE = "agent-android-ord0123456789abcdef"
+LIVE_IMAGE = "agent-android-20261106-abc123def456"
 
 
 class SpawnRunnerTests(unittest.TestCase):
@@ -134,12 +136,73 @@ class SpawnRunnerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertEqual(self.gcp.state.requests, [])
 
+    def test_an_unreadable_work_order_submits_nothing_and_retries(self):
+        # A directory passes the -s check, and jq can't read it: an empty body
+        # would start a runner with no work order and log it as started (r1.f14).
+        self.work_order.unlink()
+        self.work_order.mkdir()
+        result = self.run_hook()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("can't read the work order file", result.stderr)
+        self.assertNotIn("started", result.stdout)
+        self.assertNotIn("created VM", result.stdout)
+        self.assertEqual(self.gcp.requests("POST", ":run"), [])
+        self.assertEqual(self.gcp.requests("POST", INSTANCES_PATH), [])
+        self.assertNotIn(self.marker_key(), self.gcp.state.objects, "a retry can submit again")
+
+    def env_dir_without(self, key):
+        """A copy of infra/gcp with <key> taken out of whichever env file sets it."""
+        env_dir = Path(tempfile.mkdtemp(dir=self.tmp))
+        removed = 0
+        for source in (REPO / "infra/gcp").glob("*.env"):
+            lines = source.read_text().splitlines()
+            kept = [line for line in lines if not line.startswith(f"{key}=")]
+            removed += len(lines) - len(kept)
+            (env_dir / source.name).write_text("\n".join(kept) + "\n")
+        self.assertGreater(removed, 0, f"no env file sets {key}")
+        return env_dir
+
+    # Settings every backend reads (project.env's).
+    REQUIRED = ("PROJECT_ID", "REGION", "ORDER_BUCKET")
+
+    def test_a_missing_setting_does_not_retry(self):
+        # A retry would find it missing too, so it's a broken setup: exit 2 (r1.f22).
+        for key in self.REQUIRED:
+            with self.subTest(key=key):
+                self.gcp.state.requests.clear()
+                result = self.run_hook(AGENT_GCP_ENV_DIR=str(self.env_dir_without(key)))
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(f"{key} is not set; set it in infra/gcp/project.env", result.stderr)
+                self.assertEqual(self.gcp.state.requests, [], "nothing submitted")
+
+    def test_a_missing_orchestrator_variable_does_not_retry(self):
+        for key in ("CLAUDE_RUNNER_WORK_ORDER_FILE", "CLAUDE_RUNNER_ORDER_ID"):
+            with self.subTest(key=key):
+                result = self.run_hook(**{key: None})
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(f"{key} is not set; the orchestrator sets it", result.stderr)
+                self.assertEqual(self.gcp.state.requests, [])
+
 
 class SpawnComputeTests(SpawnRunnerTests):
     """The compute backend (infra/gcp/android.env): a Compute Engine VM per order."""
 
+    def setUp(self):
+        super().setUp()
+        # The family's live image, built at android.env's DISK_GB.
+        self.gcp.state.images[LIVE_IMAGE] = {
+            "name": LIVE_IMAGE, "family": "agent-android", "diskSizeGb": "100",
+            "creationTimestamp": "2026-11-06T10:00:00.000-08:00",
+        }
+
     def run_hook(self, **env):
         return super().run_hook(**{"RUNNER_TYPE": "android", "GCP_POLL_SEC": "0.1", **env})
+
+    # And the VM's, checked before the marker, not in create_instance after it.
+    REQUIRED = SpawnRunnerTests.REQUIRED + (
+        "ZONE", "NETWORK", "SUBNET", "RUNNER_SERVICE_ACCOUNT",
+        "MACHINE_TYPE", "DISK_GB", "DISK_TYPE", "MAX_RUN_DURATION_SEC",
+    )
 
     def insert(self):
         inserts = self.gcp.requests("POST", INSTANCES_PATH)
@@ -287,6 +350,73 @@ class SpawnComputeTests(SpawnRunnerTests):
         self.assertEqual(result.returncode, 2)
         self.assertIn("retire margin (40000 s) must be less than the hard stop (34200 s)", result.stderr)
         self.assertEqual(self.gcp.state.requests, [], "nothing created")
+
+    def boot_disk(self):
+        return self.insert()["disks"][0]["initializeParams"]
+
+    def test_a_lowered_disk_size_waits_for_the_next_image(self):
+        # The live image was built at 100 GB, and a disk can't be smaller than its
+        # image (the fake refuses it, as the API does): the lower size applies
+        # from the next build (r1.f20).
+        env_dir = self.android_env_dir("DISK_GB=50")
+        result = self.run_hook(AGENT_GCP_ENV_DIR=str(env_dir))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.boot_disk()["diskSizeGb"], "100")
+        self.assertIn("DISK_GB=50 is below agent-android's image (100 GB)", result.stdout)
+
+    def test_a_disk_size_above_the_image_is_kept(self):
+        self.gcp.state.images[LIVE_IMAGE]["diskSizeGb"] = "60"
+        result = self.run_hook()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.boot_disk()["diskSizeGb"], "100")
+        self.assertNotIn("is below", result.stdout)
+
+    def test_a_failed_vm_request_is_not_blamed_on_the_work_order(self):
+        # gcp_instance_body's jq fails (it alone passes --arg machine); the work
+        # order file is fine, so the message must say what did fail.
+        jq_bin = self.tmp / "jq-bin"
+        write_executable(jq_bin / "jq", (
+            'if [[ " $* " == *" --arg machine "* ]]; then echo "jq: error: fake" >&2; exit 5; fi\n'
+            f'exec {shutil.which("jq")} "$@"\n'))
+        result = self.run_hook(PATH=f"{jq_bin}:{os.environ['PATH']}")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn(f"can't build VM {INSTANCE}'s request from infra/gcp/android.env", result.stderr)
+        self.assertNotIn("work order", result.stderr)
+        self.assertEqual(self.gcp.requests("POST", INSTANCES_PATH), [])
+        self.assertNotIn(self.marker_key(), self.gcp.state.objects, "a retry can submit again")
+
+    def test_no_image_in_the_family_does_not_retry(self):
+        self.gcp.state.images.clear()
+        result = self.run_hook()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("reading image family agent-android: HTTP 404", result.stderr)
+        self.assertEqual(self.gcp.requests("POST", INSTANCES_PATH), [])
+        self.assertNotIn(self.marker_key(), self.gcp.state.objects)
+
+    def test_every_compute_type_takes_the_family_named_for_it(self):
+        # No setting names it: each compute type's VMs come from agent-<type>.
+        for path in sorted((REPO / "infra/gcp").glob("*.env")):
+            type_ = path.stem
+            if type_ == "project" or "BACKEND=compute" not in path.read_text():
+                continue
+            with self.subTest(type=type_):
+                env_dir = self.tmp / f"infra-{type_}"
+                env_dir.mkdir()
+                shutil.copy(REPO / "infra/gcp/project.env", env_dir)
+                # And a second compute type, named otherwise, from the same file.
+                shutil.copy(path, env_dir / f"{type_}.env")
+                shutil.copy(path, env_dir / "robot.env")
+                self.gcp.state.images["agent-robot-1"] = {"name": "agent-robot-1", "family": "agent-robot"}
+                for runner_type in (type_, "robot"):
+                    self.gcp.state.requests.clear()
+                    self.gcp.state.objects.clear()
+                    self.gcp.state.instances.clear()
+                    self.gcp.state.images.setdefault(
+                        f"agent-{type_}-1", {"name": f"agent-{type_}-1", "family": f"agent-{type_}"})
+                    result = self.run_hook(RUNNER_TYPE=runner_type, AGENT_GCP_ENV_DIR=str(env_dir))
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(self.boot_disk()["sourceImage"],
+                                     f"projects/lolay-agents/global/images/family/agent-{runner_type}")
 
     def test_an_unknown_backend_does_not_retry(self):
         env_dir = self.tmp / "infra"
