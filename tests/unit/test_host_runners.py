@@ -1051,6 +1051,17 @@ class VmConfigureCase(HostCase):
         self.assertEqual(result.returncode, 1)
         self.assertEqual(self.guest_calls(), [])
 
+    def test_a_work_order_that_is_a_directory_fails_before_touching_the_guest(self):
+        # -s holds for a non-empty directory, which the guest write reads as nothing.
+        directory = self.tmp / "work-order-dir"
+        directory.mkdir()
+        (directory / "x").write_text(WORK_ORDER)
+        result = self.run_configure(ENVIRONMENT_SECRET_FILE=str(directory), EPHEMERAL="true")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("not a file", result.stderr)
+        self.assertEqual(self.guest_calls(), [])
+        self.assertFalse(self.guest_secret.exists())
+
     def test_the_orchestrator_still_reads_default(self):
         # orchestrator-run.sh's lookup: account orchestrator, else default.
         self.set_key("default", ENV_KEY)
@@ -1113,6 +1124,17 @@ class LxdVmConfigureTests(VmConfigureCase):
                 self.assertEqual(self.guest_calls(), [])
                 self.assertFalse(self.guest_secret.exists())
                 subprocess.run(["rm", "-rf", str(self.secrets())], check=True)
+
+    def test_a_vm_key_that_is_a_directory_fails_before_touching_the_guest(self):
+        # $(<dir) reads a directory as "" and succeeds; an orchestrator key that
+        # isn't "" then passes the copy check and "" would reach the guest.
+        self.set_key("default", ENV_KEY)
+        self.unreadable(f"claude-environment-secret.{self.VM}")
+        result = self.run_configure()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("can't read", result.stderr)
+        self.assertEqual(self.guest_calls(), [])
+        self.assertFalse(self.guest_secret.exists())
 
     def host_secret(self, account):
         lib = self.tree / "scripts/linux/lib.sh"

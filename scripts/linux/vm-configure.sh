@@ -59,14 +59,19 @@ esac
 # left as it was. Not host_secret, which falls back to the orchestrator's file.
 vm_secret=""
 if [[ -n "${ENVIRONMENT_SECRET_FILE:-}" ]]; then
-	[[ -s "$ENVIRONMENT_SECRET_FILE" ]] || die "$ENVIRONMENT_SECRET_FILE is missing or empty"
+	# A file, not just a non-empty path: -s holds for a directory, which the
+	# guest write would then read as nothing.
+	[[ -f "$ENVIRONMENT_SECRET_FILE" && -s "$ENVIRONMENT_SECRET_FILE" ]] ||
+		die "$ENVIRONMENT_SECRET_FILE is missing, empty or not a file"
 else
 	is_host_secret_account "$vm" &&
 		die "$vm names a host key's account (orchestrator, default, host, host-*); name the VM something else"
 	vm_secret_file="$SECRETS_DIR/claude-environment-secret.$vm"
-	[[ -s "$vm_secret_file" ]] ||
+	[[ -e "$vm_secret_file" ]] ||
 		die "no $vm_secret_file: $vm takes a work order or its own environment key, never the orchestrator's; run make secret-set NAME=claude-environment-secret VM=$vm"
-	vm_secret="$(<"$vm_secret_file")"
+	# cat, not $(<...), which reads a directory as an empty value and succeeds.
+	vm_secret="$(cat -- "$vm_secret_file")" || die "can't read $vm_secret_file"
+	[[ -n "$vm_secret" ]] || die "$vm_secret_file is empty"
 	# The copy check needs the orchestrator's key: only "there is none" (2) skips
 	# it; an unreadable file stops here, or a copy would pass as a different key.
 	status=0

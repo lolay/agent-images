@@ -60,7 +60,10 @@ esac
 # left as it was.
 vm_secret=""
 if [[ -n "${ENVIRONMENT_SECRET_FILE:-}" ]]; then
-	[[ -s "$ENVIRONMENT_SECRET_FILE" ]] || die "$ENVIRONMENT_SECRET_FILE is missing or empty"
+	# A file, not just a non-empty path: -s holds for a directory, which the
+	# guest write would then read as nothing.
+	[[ -f "$ENVIRONMENT_SECRET_FILE" && -s "$ENVIRONMENT_SECRET_FILE" ]] ||
+		die "$ENVIRONMENT_SECRET_FILE is missing, empty or not a file"
 else
 	is_host_secret_account "$vm" &&
 		die "$vm names the Keychain account of a host key (orchestrator, default, host, host-*); name the VM something else"
