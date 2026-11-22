@@ -57,16 +57,99 @@ gcp_deploys() { [[ "$(gcp_type_setting "$1" DEPLOY true)" != false ]]; }
 # image build, so renaming it broke every spawn until then (r1.f20).
 gcp_image_family() { printf 'agent-%s\n' "$1"; }
 
+# gcp_project_keys: every key project.env sets, one per line, sorted. These
+# are the project keys a type's env file may not set (gcp_check_type). The list
+# is project.env's own rather than a copy here: project.env is Terraform's
+# outputs for the one project and holds nothing per type (its header says so),
+# and the reaper and Cloud Run deploys read it alone, so a type's override of
+# any key in it would reach spawn-runner and job-spec.sh but not them (#161). A
+# new Terraform output is covered the day it's copied in. The keys are what
+# sourcing the file sets in an empty shell, not a parse of its lines, so
+# indentation or several assignments on one line can't hide one.
+gcp_project_keys() {
+	local file="$AGENT_GCP_ENV_DIR/project.env"
+	[[ -f "$file" ]] || return 0
+	# Both shells run one command before listing, so the shell's own variables
+	# (PIPESTATUS, set after the first) are the same on both sides.
+	LC_ALL=C comm -13 <(gcp_shell_variables true) <(gcp_shell_variables source "$file")
+}
+
+# gcp_shell_variables <command...>: the variable names an empty bash has after
+# running the command (its output discarded), sorted.
+gcp_shell_variables() {
+	env -i bash --norc --noprofile -c '"$@" >/dev/null 2>&1; compgen -v' _ "$@" | LC_ALL=C sort
+}
+
+# gcp_type_project_keys <type>: the project keys infra/gcp/<type>.env itself
+# sets, one per line. Not gcp_type_setting: that layers project.env underneath,
+# and the callers have it loaded already, so every type would look as if it set
+# them. Two passes over the type's file: once with the project keys unset, which
+# finds any assignment, even to project.env's own value; and once over
+# project.env, which finds an assignment that only fires on project.env's
+# values (`[[ $REGION == us-central1 ]] && REGION=us-east1`). Each sources
+# without -e and -u, and ignores the status, as gcp_load_env's source runs for
+# spawn-runner: a line that reads an unset key, or fails, after setting one
+# mustn't hide what the file set. Each pass runs as each reader loads the file:
+# with RUNNER_TYPE exported (the hook, from the supervisor) and without it
+# (job-spec.sh, deploy.sh), and the type as $1, as gcp_load_env's source sees
+# it. This catches a mistake in a reviewed file, not an author evading the
+# check: a condition on anything else (the time, the host) isn't chased.
+gcp_type_project_keys() {
+	local keys=() over runner
+	mapfile -t keys < <(gcp_project_keys)
+	((${#keys[@]} > 0)) || return 0
+	for runner in "" "$1"; do
+		for over in unset project; do
+			gcp_type_sets_keys "$1" "$over" "$runner" "${keys[@]}"
+		done
+	done | awk '!seen[$0]++'
+}
+
+# gcp_type_sets_keys <type> unset|project <RUNNER_TYPE or ""> <key...>: the
+# keys the type's file sets, sourced over nothing (unset) or over project.env
+# (project, where only a changed value counts), with RUNNER_TYPE exported when
+# given. A subshell, so nothing leaks into the caller.
+gcp_type_sets_keys() { (
+	# RUNNER_TYPE by an indirect name: spawn-runner sources this file and reads
+	# RUNNER_TYPE, and shellcheck would take a change here for one there (SC2031).
+	local type="$1" over="$2" key runner_var=RUNNER_TYPE
+	unset "$runner_var"
+	[[ -z "$3" ]] || export "$runner_var=$3"
+	shift 3
+	declare -A before=()
+	unset "$@"
+	# -a as gcp_load_env sources: a condition that reads a key in a subprocess
+	# sees what it would there.
+	set +eu -a
+	if [[ "$over" == project ]]; then
+		# shellcheck source=/dev/null
+		source "$AGENT_GCP_ENV_DIR/project.env" >/dev/null 2>&1
+		for key in "$@"; do before[$key]="${!key-}"; done
+	fi
+	# shellcheck source=/dev/null
+	source "$AGENT_GCP_ENV_DIR/$type.env" "$type" >/dev/null 2>&1
+	for key in "$@"; do
+		if [[ "$over" == project ]]; then
+			[[ "${!key-}" == "${before[$key]}" ]] || printf '%s\n' "$key"
+		elif [[ -v "$key" ]]; then
+			printf '%s\n' "$key"
+		fi
+	done
+); }
+
 # gcp_check_type <type>: fail, with the one reason on stderr, when the type's env
 # file is something the pipeline can't serve: DEPLOY=false on a BACKEND=compute
 # type, which deploy.sh would build and promote with no orchestrator to serve
-# it; or an IMAGE_FAMILY, which nothing reads (gcp_image_family). That one is
-# refused rather than ignored: a rename that silently did nothing would look as
-# if it had worked. Every reader of the rules calls this: deploy.sh refuses the
-# type, the supervisor skips it, and `make cloud-test` runs it over the real
-# infra/gcp/*.env, so a bad file fails its pull request rather than reaching
-# the host (an env-file-only change plans no type deploy, r3.f2).
+# it; an IMAGE_FAMILY, which nothing reads (gcp_image_family); or a project key
+# (gcp_project_keys), which only some readers would honor. The last two are
+# refused rather than ignored: a setting that silently did nothing, or did it in
+# half the pipeline, would look as if it had worked. Every reader of the rules
+# calls this: deploy.sh refuses the type, the supervisor skips it, and
+# `make cloud-test` runs it over the real infra/gcp/*.env, so a bad file fails
+# its pull request rather than reaching the host (an env-file-only change plans
+# no type deploy, r3.f2).
 gcp_check_type() {
+	local key
 	if [[ "$(gcp_backend "$1")" == compute ]] && ! gcp_deploys "$1"; then
 		printf '%s: DEPLOY=false is for Cloud Run types only, not BACKEND=compute (a Compute Engine type would be built and promoted with no orchestrator to serve it); remove it from infra/gcp/%s.env\n' "$1" "$1" >&2
 		return 1
@@ -74,6 +157,12 @@ gcp_check_type() {
 	if [[ -n "$(gcp_type_setting "$1" IMAGE_FAMILY "")" ]]; then
 		printf "%s: IMAGE_FAMILY is not a setting: a type's image family is always %s; remove it from infra/gcp/%s.env\n" \
 			"$1" "$(gcp_image_family "$1")" "$1" >&2
+		return 1
+	fi
+	key="$(gcp_type_project_keys "$1" | head -n 1)"
+	if [[ -n "$key" ]]; then
+		printf "%s: %s is a project key: it belongs in infra/gcp/project.env only, which the reaper and Cloud Run deploys read alone; remove it from infra/gcp/%s.env\n" \
+			"$1" "$key" "$1" >&2
 		return 1
 	fi
 }

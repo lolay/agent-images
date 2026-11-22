@@ -129,8 +129,24 @@ class RunnerSettingsTests(unittest.TestCase):
         self.assertIsNone(self.upgrade("BACKEND=compute\n"), "no REBUILD is nightly")
 
 
+# The project keys the Owner decided a type's env file may not set (#161). The
+# guard reads its list from project.env (gcp_project_keys); this only checks
+# that list still holds them.
+DECIDED_PROJECT_KEYS = ("PROJECT_ID", "PROJECT_NUMBER", "REGION", "ZONE", "NETWORK", "SUBNET", "ARTIFACT_REGISTRY")
+
+
+def project_keys() -> list[str]:
+    result = subprocess.run(
+        ["bash", "-c", f'set -euo pipefail; source "{REPO}/hooks/gcp/lib.sh"; gcp_project_keys'],
+        capture_output=True, text=True, check=True,
+        env={"PATH": "/usr/bin:/bin", "AGENT_GCP_ENV_DIR": str(REPO / "infra/gcp")},
+    )
+    return result.stdout.split()
+
+
 class CheckTypeTests(unittest.TestCase):
-    """gcp_check_type: the one reader of the DEPLOY=false-on-compute rule."""
+    """gcp_check_type: the one reader of the rules for what a type's env file may
+    set (DEPLOY=false on compute, IMAGE_FAMILY, the project keys)."""
 
     def check(self, env_dir: Path, type_: str) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -182,6 +198,109 @@ class CheckTypeTests(unittest.TestCase):
                 f"{type_}: IMAGE_FAMILY is not a setting: a type's image family is always agent-{type_}; "
                 f"remove it from infra/gcp/{type_}.env\n",
             )
+
+    def test_refuses_a_project_key_in_any_env_file(self):
+        # deploy.sh and the reaper read project.env alone, so a type's override of
+        # a project key would reach spawn-runner but not them (#161).
+        keys = project_keys()
+        for decided in DECIDED_PROJECT_KEYS:
+            self.assertIn(decided, keys, "a key the Owner refused in #161 left project.env")
+        for key in keys:
+            with self.subTest(key=key):
+                env_dir = Path(tempfile.mkdtemp())
+                self.addCleanup(shutil.rmtree, env_dir)
+                shutil.copytree(REPO / "infra/gcp", env_dir, dirs_exist_ok=True)
+                types = sorted(path.stem for path in env_dir.glob("*.env") if path.stem != "project")
+                for type_ in types:
+                    with (env_dir / f"{type_}.env").open("a") as file:
+                        file.write(f"{key}=other\n")
+                refused = self.refused_types(env_dir)
+                self.assertEqual(sorted(refused), types)
+                for type_, message in refused.items():
+                    self.assertEqual(
+                        message,
+                        f"{type_}: {key} is a project key: it belongs in infra/gcp/project.env only, which "
+                        f"the reaper and Cloud Run deploys read alone; remove it from infra/gcp/{type_}.env\n",
+                    )
+
+    def test_refuses_a_project_key_set_empty_or_exported(self):
+        env_dir = self.fixture(empty="ZONE=\n", exported="export REGION=us-east1\n")
+        (env_dir / "project.env").write_text("PROJECT_ID=p\nREGION=r\nZONE=z\n")
+        for type_, key in (("empty", "ZONE"), ("exported", "REGION")):
+            with self.subTest(type=type_):
+                result = self.check(env_dir, type_)
+                self.assertEqual(result.returncode, 1)
+                self.assertTrue(result.stderr.startswith(f"{type_}: {key} is a project key"), result.stderr)
+
+    def test_a_line_that_reads_a_key_or_fails_does_not_hide_a_set_key(self):
+        # spawn-runner's gcp_load_env sources without -u and ignores the status,
+        # so it keeps REGION from both files; the check must see it too.
+        env_dir = self.fixture(
+            reads="SA=runner@${PROJECT_ID}.iam\nREGION=us-east1\n",
+            fails="REGION=us-east1\nfalse\n",
+        )
+        (env_dir / "project.env").write_text("PROJECT_ID=p\nREGION=r\n")
+        for type_ in ("reads", "fails"):
+            with self.subTest(type=type_):
+                result = self.check(env_dir, type_)
+                self.assertEqual(result.returncode, 1)
+                self.assertTrue(result.stderr.startswith(f"{type_}: REGION is a project key"), result.stderr)
+
+    def test_an_override_that_fires_only_on_project_env_values_is_refused(self):
+        # Sourced with the keys unset, the condition is false; gcp_load_env
+        # sources it over project.env, where it moves REGION (Copilot on #162).
+        env_dir = self.fixture(conditional='if [[ "${REGION:-}" == r ]]; then REGION=us-east1; fi\n')
+        (env_dir / "project.env").write_text("PROJECT_ID=p\nREGION=r\n")
+        result = self.check(env_dir, "conditional")
+        self.assertEqual(result.returncode, 1)
+        self.assertTrue(result.stderr.startswith("conditional: REGION is a project key"), result.stderr)
+
+    def test_an_override_whose_condition_reads_a_key_in_a_subprocess_is_refused(self):
+        # gcp_load_env sources with -a, so a subprocess sees project.env's REGION
+        # (Copilot's second round on #162).
+        env_dir = self.fixture(
+            subprocess='if [[ "$(bash -c \'printf %s "${REGION:-}"\')" == r ]]; then REGION=us-east1; fi\n'
+        )
+        (env_dir / "project.env").write_text("PROJECT_ID=p\nREGION=r\n")
+        result = self.check(env_dir, "subprocess")
+        self.assertEqual(result.returncode, 1)
+        self.assertTrue(result.stderr.startswith("subprocess: REGION is a project key"), result.stderr)
+
+    def test_an_override_on_how_the_hook_loads_the_file_is_refused(self):
+        # The hook has RUNNER_TYPE exported and gcp_load_env's source sees the
+        # type as $1 (Copilot's third round on #162).
+        env_dir = self.fixture(
+            runner='if [[ "${RUNNER_TYPE:-}" == runner ]]; then REGION=us-east1; fi\n',
+            positional='if [[ "${1:-}" == positional ]]; then REGION=us-east1; fi\n',
+        )
+        (env_dir / "project.env").write_text("PROJECT_ID=p\nREGION=r\n")
+        for type_ in ("runner", "positional"):
+            with self.subTest(type=type_):
+                result = self.check(env_dir, type_)
+                self.assertEqual(result.returncode, 1)
+                self.assertTrue(result.stderr.startswith(f"{type_}: REGION is a project key"), result.stderr)
+
+    def test_project_keys_are_what_project_env_sets_however_written(self):
+        env_dir = self.fixture()
+        (env_dir / "project.env").write_text("# comment\nPROJECT_ID=p\n  NETWORK=n\nexport A=1 B=2\n")
+        result = subprocess.run(
+            ["bash", "-c", f'set -euo pipefail; source "{REPO}/hooks/gcp/lib.sh"; gcp_project_keys'],
+            capture_output=True, text=True, env={"PATH": "/usr/bin:/bin", "AGENT_GCP_ENV_DIR": str(env_dir)},
+        )
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertEqual(result.stdout.split(), ["A", "B", "NETWORK", "PROJECT_ID"])
+
+    def test_project_keys_already_loaded_do_not_count_as_the_types(self):
+        # The supervisor and deploy.sh have project.env exported when they call it.
+        script = f'set -euo pipefail; source "{REPO}/hooks/gcp/lib.sh"; gcp_load_env'
+        for type_ in sorted(path.stem for path in (REPO / "infra/gcp").glob("*.env") if path.stem != "project"):
+            with self.subTest(type=type_):
+                result = subprocess.run(
+                    ["bash", "-c", f"{script}; gcp_check_type {type_}"],
+                    capture_output=True, text=True,
+                    env={"PATH": "/usr/bin:/bin", "AGENT_GCP_ENV_DIR": str(REPO / "infra/gcp")},
+                )
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
 
     def test_image_family_is_agent_type(self):
         result = subprocess.run(
