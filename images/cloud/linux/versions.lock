@@ -325,11 +325,11 @@ brew merve 1.2.2_5
 brew mpdecimal 4.0.1
 brew nbytes 0.1.5
 brew ncurses 6.6
-brew node 26.13.1_2
+brew node 26.13.1_3
 brew openldap 2.7.2
 brew openssl@4 4.1.0
 brew pcre2 10.49
-brew pnpm 12.21.0
+brew pnpm 12.23.0
 brew pre-commit 4.7.0_2
 brew protobuf 36.2
 brew python@3.15 3.15.2
@@ -339,7 +339,7 @@ brew ruff 0.17.6
 brew rustup 1.29.3
 brew shellcheck 0.11.0
 brew shfmt 3.14.1
-brew simdjson 5.2.0
+brew simdjson 5.3.0
 brew simdutf 9.4.0
 brew sops 3.13.3
 brew sqlite 3.54.1
