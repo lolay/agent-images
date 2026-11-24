@@ -178,8 +178,8 @@ apt libsensors5 1:3.6.0-9build1
 apt libsframe1 2.42-4ubuntu2.10
 apt libsharpyuv0 1.3.2-0.4build3
 apt libsm6 2:1.2.3-1build3
-apt libsqlite3-0 3.45.1-1ubuntu2.9
-apt libsqlite3-dev 3.45.1-1ubuntu2.9
+apt libsqlite3-0 3.45.1-1ubuntu2.11
+apt libsqlite3-dev 3.45.1-1ubuntu2.11
 apt libssh-4 0.10.6-2ubuntu0.6
 apt libssl-dev 3.0.13-0ubuntu3.16
 apt libstdc++-13-dev 13.3.0-6ubuntu2~24.04.1
@@ -265,7 +265,7 @@ apt python3.12 3.12.3-1ubuntu0.17
 apt python3.12-minimal 3.12.3-1ubuntu0.17
 apt readline-common 8.2-4build1
 apt rpcsvc-proto 1.4.2-0ubuntu7
-apt sqlite3 3.45.1-1ubuntu2.9
+apt sqlite3 3.45.1-1ubuntu2.11
 apt sudo 1.9.15p5-3ubuntu5.24.04.4
 apt time 1.9-0.2build1
 apt tzdata 2026f-0ubuntu0.24.04.1
@@ -281,11 +281,11 @@ apt xvfb 2:21.1.12-1ubuntu1.9
 apt xz-utils 5.6.1+really5.4.5-1ubuntu0.4
 apt zip 3.0-13ubuntu0.2
 apt zlib1g-dev 1:1.3.dfsg-3.1ubuntu2.3
-apt-snapshot - 20261123T232216Z
+apt-snapshot - 20261124T172212Z
 base - mirror.gcr.io/library/ubuntu:24.04@sha256:562111b88caa79c71391c0c4d3c2114a7d5c35915c20561fd893cb1e07929e6b
 brew abseil 20260817.0
 brew actionlint 1.7.12
-brew ada-url 4.1.1
+brew ada-url 4.1.1_1
 brew age 1.3.2
 brew brotli 1.2.1
 brew buf 1.75.0
@@ -321,11 +321,11 @@ brew llhttp 9.4.4
 brew lolay/tap/nowline 0.13.0
 brew lolay/tap/triage 0.5.0
 brew lz4 1.11.1
-brew merve 1.2.2_5
+brew merve 1.2.2_6
 brew mpdecimal 4.0.1
 brew nbytes 0.1.5
 brew ncurses 6.6
-brew node 26.13.1_3
+brew node 26.13.1_4
 brew openldap 2.7.2
 brew openssl@4 4.1.0
 brew pcre2 10.49
@@ -340,7 +340,7 @@ brew rustup 1.29.3
 brew shellcheck 0.11.0
 brew shfmt 3.14.1
 brew simdjson 5.3.0
-brew simdutf 9.4.0
+brew simdutf 9.5.0
 brew sops 3.13.3
 brew sqlite 3.54.1
 brew tenv 4.16.9
