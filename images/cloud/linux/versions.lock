@@ -294,7 +294,7 @@ brew c-ares 1.34.9
 brew ca-certificates 2026-11-05
 brew curl 8.23.0
 brew cyrus-sasl 2.1.28_4
-brew expat 2.10.0
+brew expat 2.11.0
 brew fmt 12.2.1
 brew gh 2.105.0
 brew gmp 6.3.0
