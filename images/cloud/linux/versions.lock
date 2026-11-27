@@ -354,5 +354,5 @@ brew zlib-ng-compat 2.3.3_1
 brew zstd 1.6.0
 claude - 2.1.332
 release tflint v0.66.0
-rust - 1.100.0
+rust - 1.100.1
 terraform - 1.17.2
